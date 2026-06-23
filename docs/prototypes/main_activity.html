@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Main Activity Prototype</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+        }
+        .tab-button {
+            flex: 1;
+            padding: 10px;
+            background: #f4f4f4;
+            border: none;
+            cursor: pointer;
+        }
+        .tab-button.active {
+            background: #4CAF50;
+            color: white;
+        }
+        .tab-pane {
+            display: none;
+        }
+        .tab-pane.active {
+            display: block;
+        }
+        .input-field {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 20px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .download-button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .download-button:hover {
+            background-color: #45a049;
+        }
+        .media-list {
+            margin-top: 20px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 10px;
+        }
+        .media-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+            cursor: pointer;
+        }
+        .media-item .media-thumbnail {
+            width: 50px;
+            height: 50px;
+            margin-right: 10px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+        }
+        .image-placeholder {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+        }
+        .video-placeholder {
+            background: linear-gradient(135deg, #2196F3, #1976D2);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Main Activity</h1>
+        <div class="tabs">
+            <button class="tab-button active" onclick="openTab(event, 'Download')">Download</button>
+            <button class="tab-button" onclick="openTab(event, 'Downloads')">Downloads</button>
+        </div>
+        <div class="tab-content">
+            <div id="Download" class="tab-pane active">
+                <input type="text" class="input-field" placeholder="Enter Tumblr post URL">
+                <button class="download-button">Download Media</button>
+            </div>
+            <div id="Downloads" class="tab-pane">
+                <div class="media-list">
+                    <h2>Downloaded Media</h2>
+                    <ul>
+                        <li class="media-item">
+                            <div class="media-thumbnail image-placeholder"></div>
+                            <span>Image 1</span>
+                        </li>
+                        <li class="media-item">
+                            <div class="media-thumbnail video-placeholder"></div>
+                            <span>Video 1</span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        function openTab(evt, tabName) {
+            var i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName("tab-pane");
+            for (i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = "none";
+            }
+            tablinks = document.getElementsByClassName("tab-button");
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].className = tablinks[i].className.replace(" active", "");
+            }
+            document.getElementById(tabName).style.display = "block";
+            evt.currentTarget.className += " active";
+        }
+    </script>
+</body>
+</html>
