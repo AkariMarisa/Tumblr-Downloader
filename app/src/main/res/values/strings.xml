@@ -12,4 +12,6 @@
     <string name="back">Back</string>
     <string name="copied_from_clipboard">Copied from clipboard</string>
     <string name="invalid_url">Invalid Tumblr URL</string>
+    <string name="login_hint">登录后返回本页即可继续解析</string>
+    <string name="login_done">Done</string>
 </resources>

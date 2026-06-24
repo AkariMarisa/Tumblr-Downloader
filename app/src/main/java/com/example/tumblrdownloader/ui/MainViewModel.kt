@@ -25,8 +25,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _autoPasteUrl = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val autoPasteUrl = _autoPasteUrl.asSharedFlow()
 
-    private val _parseMessage = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    val parseMessage = _parseMessage.asSharedFlow()
+    private val _parseEvent = MutableSharedFlow<ParseEvent>(extraBufferCapacity = 1)
+    val parseEvent = _parseEvent.asSharedFlow()
+
+    private var pendingLoginUrl: String? = null
 
     fun enqueueFromUrl(rawUrl: String): Boolean {
         val url = TumblrParser.firstTumblrUrl(rawUrl.trim()) ?: return false
@@ -36,14 +38,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 is TumblrShareParseResult.Success -> {
                     appendItems(result.media)
                 }
+
                 is TumblrShareParseResult.LoginRequired -> {
-                    _parseMessage.emit("${result.message} 你可在 Tumblr 网站确认该链接是否公开，或提供登录凭据后继续。")
+                    pendingLoginUrl = result.url.ifBlank { url }
+                    _parseEvent.emit(
+                        ParseEvent.LoginRequired(
+                            url = result.url.ifBlank { url },
+                            message = "${result.message} 登录后可重试。"
+                        )
+                    )
                 }
+
                 is TumblrShareParseResult.Error -> {
-                    _parseMessage.emit(result.message)
+                    _parseEvent.emit(ParseEvent.Message(result.message))
                 }
+
                 is TumblrShareParseResult.Empty -> {
-                    _parseMessage.emit(result.message)
+                    _parseEvent.emit(ParseEvent.Message(result.message))
                 }
             }
         }
@@ -51,10 +62,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return true
     }
 
+    fun retryPendingLoginUrl(): Boolean {
+        val url = pendingLoginUrl ?: return false
+        pendingLoginUrl = null
+        return enqueueFromUrl(url)
+    }
+
     private fun appendItems(candidates: List<ParsedTumblrMedia>) {
         if (candidates.isEmpty()) {
             viewModelScope.launch {
-                _parseMessage.emit("该链接未识别到可下载媒体")
+                _parseEvent.emit(ParseEvent.Message("该链接未识别到可下载媒体"))
             }
             return
         }
@@ -96,4 +113,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (item.id != itemId) item else item.copy(status = status, progress = progress)
         }
     }
+}
+
+sealed class ParseEvent {
+    data class Message(val text: String) : ParseEvent()
+    data class LoginRequired(val url: String, val message: String) : ParseEvent()
 }
