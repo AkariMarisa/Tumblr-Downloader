@@ -1,0 +1,34 @@
+.gradle/
+build/
+app/build/
+local.properties
+.DS_Store
+*.iml
+.idea/
+.gradle/
+/.kotlin/
+/.idea/
+out/
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+
+# Android/Gradle artifacts
+*.apk
+*.aab
+*.dex
+*.class
+
+# Keystores / signing
+*.jks
+*.keystore
+*.jks
+
+# Kotlin/Gradle caches
+*/.cxx/
+
+# macOS
+._*
+
