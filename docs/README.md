@@ -10,6 +10,8 @@ This Android application allows users to download images and videos from Tumblr 
 - Save media to a local directory
 - View downloaded media within the app
 - Automatically detect and download Tumblr links from the clipboard
+- Persist login cookies locally (with explicit in-app security notice) so private posts can be retried across restarts
+- Persist download history so completed/failed queue state and retry counts survive app restarts
 
 ## Project Structure
 
@@ -51,8 +53,8 @@ TumblrDownloader/
 ## To-Do
 
 - [ ] **Private content cookie test path**: Add a settings/input entry to paste logged-in Tumblr cookies (`cookie_name=value; ...`) so parse attempts can test posts that currently return login-required/404.
-- [ ] **Cookie persistence with privacy guardrails**: store cookies locally only, clear them on logout, and never upload to backend.
-- [ ] **Download record persistence**: save queue and retry status to Room so tasks survive process kill/reinstall.
+- [x] **Cookie persistence with privacy guardrails**: store cookies locally only, clear them on logout, and never upload to backend.
+- [x] **Download record persistence**: persist download queue/status/retry fields locally (SharedPreferences JSON) so records survive app restart.
 - [ ] **Adaptive rate-limit settings**: allow 500KB/s~2MB/s configurable and 1~1.5s inter-task gap.
 - [ ] **Parse diagnostics panel**: show parsed media count, candidate source type, and reason when empty.
 
@@ -63,7 +65,6 @@ TumblrDownloader/
 - **Retrofit**: For network requests
 - **Glide**: For image loading and caching
 - **ExoPlayer**: For video playback
-- **Room**: For local database storage
 
 ## UI Prototypes
 

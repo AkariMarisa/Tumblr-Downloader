@@ -15,4 +15,10 @@
     <string name="login_hint">登录后返回本页即可继续解析</string>
     <string name="login_done">Done</string>
     <string name="retry_download">重试下载</string>
+    <string name="clear_cookie">清除登录 Cookie</string>
+    <string name="cookie_security_title">Cookie 安全说明</string>
+    <string name="cookie_security_message">当前已检测到本地保存的 Tumblr 登录 Cookie，仅用于当前设备内访问解析，不会上传到任何服务器；请勿在公共设备长期保留，并可随时点击“清除登录 Cookie”移除。</string>
+    <string name="login_cookie_saved">登录状态已保存到本地，解析私密内容可直接复用。</string>
+    <string name="login_cookie_not_found">未检测到可保存的登录 Cookie，请确认已完成登录。</string>
+    <string name="cookies_cleared_toast">已清除本地 Cookie 记录</string>
 </resources>

@@ -12,6 +12,7 @@ import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
 
@@ -28,10 +29,23 @@ object TumblrParser {
     private val videoUrlRegex =
         Regex("https?://[^\"'\\s>]+\\.(?:mp4|m3u8|mov)(?:\\?[^\"'\\s>]*)?", RegexOption.IGNORE_CASE)
 
+    private val mediaUrlRegex =
+        Regex("https?://[^\"'\\s>]+\\.(?:jpg|jpeg|png|gif|webp|avif|mp4|m3u8|mov)(?:\\?[^\"'\\s>]*)?", RegexOption.IGNORE_CASE)
+
     private val imageMetaRegex =
         Regex("<meta[^>]+property=\"og:image\"[^>]+content=\"([^\"]+)\"", RegexOption.IGNORE_CASE)
     private val videoMetaRegex =
         Regex("<meta[^>]+property=\"og:video:url\"[^>]+content=\"([^\"]+)\"", RegexOption.IGNORE_CASE)
+
+    // Tumblrs usually embed the whole SSR payload in this block, easier to harvest true media URLs there.
+    private val initialStateScriptRegex = Regex(
+        "<script[^>]+id=['\"]___+INITIAL_STATE___+['\"][^>]*>(.*?)</script>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+    private val applicationJsonScriptRegex = Regex(
+        "<script[^>]+type=['\"]application/json['\"][^>]*>(.*?)</script>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
 
     private val httpClient by lazy {
         val builder = OkHttpClient.Builder()
@@ -104,7 +118,20 @@ object TumblrParser {
                     message = "oEmbed 返回 401/403，通常是私密/需要登陆的帖子。"
                 )
 
-                in 200..299 -> parseOEmbedBody(response.body, postUrl)
+                in 200..299 -> {
+                    val body = response.body.trimStart()
+                    if (response.finalUrl.contains("/login_required/") ||
+                        body.isBlank() ||
+                        (!body.startsWith("{") && !body.startsWith("["))
+                    ) {
+                        TumblrShareParseResult.LoginRequired(
+                            url = postUrl,
+                            message = "oEmbed 返回 HTML 或空响应，通常是登录态受限。"
+                        )
+                    } else {
+                        parseOEmbedBody(response.body, postUrl)
+                    }
+                }
                 in 300..399 -> TumblrShareParseResult.Error("oEmbed 重定向异常（${response.code}）")
                 else -> TumblrShareParseResult.Error("oEmbed 请求失败，HTTP ${response.code}")
             }
@@ -129,7 +156,7 @@ object TumblrParser {
                     if (embedded.isNotEmpty()) embedded else extractFromHtml(html)
                 }
                 else -> extractFromHtml(html)
-            }.toList().let(::dedupeAndNormalize)
+            }
 
             if (urls.isEmpty()) {
                 TumblrShareParseResult.Error("oEmbed 解析成功但未识别到可下载地址")
@@ -156,7 +183,7 @@ object TumblrParser {
         val response = httpGet(embedUrl)
         if (response.code !in 200..299) return emptyList()
 
-        return extractFromHtml(response.body).toList()
+        return extractFromHtml(response.body)
     }
 
     private fun extractEmbedUrl(html: String): String {
@@ -171,6 +198,13 @@ object TumblrParser {
         return runCatching {
             val response = httpGet(postUrl)
             if (response.code in 200..299) {
+                if (response.finalUrl.contains("/login_required/") || response.finalUrl.contains("/login/")) {
+                    return@runCatching TumblrShareParseResult.LoginRequired(
+                        url = postUrl,
+                        message = "页面返回登录重定向，通常是未公开/需登录内容。"
+                    )
+                }
+
                 val html = response.body
                 val source = normalizeShareUrl(postUrl)
                 val candidates = extractFromHtml(html)
@@ -193,10 +227,10 @@ object TumblrParser {
                     }
                     TumblrShareParseResult.Success(media)
                 }
-            } else if (response.code == 401 || response.code == 403) {
+            } else if (response.code == 401 || response.code == 403 || response.finalUrl.contains("/login_required/") || response.finalUrl.contains("/login/")) {
                 TumblrShareParseResult.LoginRequired(
                     url = postUrl,
-                    message = "页面返回 401/403，通常是私密/未公开内容。"
+                    message = "页面返回 401/403 或登录页，通常是私密/未公开内容。"
                 )
             } else {
                 TumblrShareParseResult.Error("页面请求失败，HTTP ${response.code}")
@@ -209,6 +243,8 @@ object TumblrParser {
 
     private fun extractFromHtml(html: String, preferVideo: Boolean = false): List<String> {
         val candidates = buildList {
+            addAll(extractFromInitialState(html))
+            addAll(extractFromJsonScripts(html))
             addAll(extractImageCandidates(html))
             addAll(extractVideoCandidates(html))
             if (!preferVideo) {
@@ -225,7 +261,79 @@ object TumblrParser {
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
                 .filter { isLikelyPostMedia(it) }
+                .distinct()
         )
+    }
+
+    private fun extractFromInitialState(html: String): List<String> {
+        val match = initialStateScriptRegex.find(html) ?: return emptyList()
+        val rawJson = match.groupValues.getOrNull(1).orEmpty()
+        return extractUrlsFromJsonText(rawJson)
+    }
+
+    private fun extractFromJsonScripts(html: String): List<String> {
+        return applicationJsonScriptRegex.findAll(html).flatMap { match ->
+            extractUrlsFromJsonText(match.groupValues.getOrNull(1).orEmpty()).asSequence()
+        }.toList()
+    }
+
+    private fun extractUrlsFromJsonText(jsonText: String): List<String> {
+        val urls = LinkedHashSet<String>()
+
+        extractFromRawText(jsonText).forEach(urls::add)
+
+        runCatching {
+            val root = JSONObject(jsonText)
+            collectMediaUrlsFromJson(root, urls)
+        }
+
+        return urls.toList().filter(::isLikelyPostMedia)
+    }
+
+    private fun collectMediaUrlsFromJson(value: Any?, urls: MutableSet<String>) {
+        when (value) {
+            null, JSONObject.NULL -> return
+            is JSONObject -> {
+                val keys = value.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    if (isNoiseJsonKey(key)) {
+                        continue
+                    }
+                    collectMediaUrlsFromJson(value.get(key), urls)
+                }
+            }
+            is JSONArray -> {
+                for (i in 0 until value.length()) {
+                    collectMediaUrlsFromJson(value.get(i), urls)
+                }
+            }
+            is String -> {
+                val trimmed = unescapeJsonText(value.trim())
+                if (isLikelyPostMedia(trimmed)) {
+                    mediaUrlRegex.findAll(trimmed).forEach { m ->
+                        m.value.let(urls::add)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun extractFromRawText(text: String): List<String> =
+        mediaUrlRegex.findAll(unescapeJsonText(text)).map { it.value }.toList()
+
+    private fun unescapeJsonText(raw: String): String =
+        raw
+            .replace("\\\\/", "/")
+            .replace("&quot;", "\"")
+            .replace("&#x2F;", "/")
+
+    private fun isNoiseJsonKey(key: String): Boolean {
+        return when (key.lowercase(Locale.ROOT)) {
+            "avatar", "avatars", "avatar_url", "userpic", "user_name", "userurl", "username",
+            "canonical_url", "blogavatar", "profile", "profile_url", "favicon", "icon", "og_image", "ogvideo", "actor", "author" -> true
+            else -> false
+        }
     }
 
     private fun extractFromMeta(regex: Regex, html: String): List<String> =
@@ -242,47 +350,108 @@ object TumblrParser {
         return lower.contains("log in") ||
             lower.contains("sign in") ||
             lower.contains("/login") ||
-            lower.contains("password")
+            lower.contains("password") ||
+            lower.contains("please login")
     }
 
     private fun isLikelyPostMedia(url: String): Boolean {
+        if (url.contains("media.tumblr.com").not()) return false
         val lower = url.lowercase(Locale.ROOT)
 
         if (lower.contains("avatar_")) return false
         if (lower.contains("/avatar/")) return false
-        if (lower.contains("/avatars/") && lower.contains("static.tumblr.com")) return false
+        if (lower.contains("/avatars/")) return false
+        if (lower.contains("/previews/")) return false
+        if (lower.contains("frame1")) return false
+        if (lower.contains("_c1")) return false
+
+        parseResolution(url)?.let { (w, h) ->
+            if ((w < 250 || h < 250) && !(lower.endsWith(".mp4") || lower.endsWith(".m3u8") || lower.endsWith(".mov"))) {
+                return false
+            }
+        }
 
         val host = Uri.parse(url).host?.lowercase(Locale.ROOT) ?: return false
         if (host.contains("assets.tumblr.com") || host.contains("static.tumblr.com")) return false
 
-        return host.endsWith("media.tumblr.com") ||
-            host.endsWith(".media.tumblr.com") ||
-            lower.contains("media.tumblr.com")
+        if (!(host.endsWith("media.tumblr.com") || lower.contains("media.tumblr.com"))) return false
+
+        // keep real image/video files only
+        return lower.contains(".jpg") || lower.contains(".jpeg") || lower.contains(".png") ||
+            lower.contains(".gif") || lower.contains(".webp") || lower.contains(".avif") ||
+            lower.contains(".mp4") || lower.contains(".m3u8") || lower.contains(".mov")
+    }
+
+    private val resolutionSegment = Regex("/s(\\d+)x(\\d+)", RegexOption.IGNORE_CASE)
+
+    private fun isLowResCandidate(url: String): Boolean {
+        val m = resolutionSegment.find(url) ?: return false
+        val w = m.groupValues[1].toIntOrNull() ?: return false
+        val h = m.groupValues[2].toIntOrNull() ?: return false
+        return w < 250 || h < 250
+    }
+
+    private fun parseResolution(url: String): Pair<Int, Int>? {
+        val m = resolutionSegment.find(url) ?: return null
+        return m.groupValues[1].toIntOrNull()?.let { w ->
+            m.groupValues[2].toIntOrNull()?.let { h -> w to h }
+        }
     }
 
     private fun dedupeAndNormalize(urls: List<String>): List<String> {
         val keepLatestByIdentity = LinkedHashMap<String, String>()
+        val keepScores = HashMap<String, Int>()
 
         urls.forEach { url ->
             val identity = mediaIdentity(url)
-            val existing = keepLatestByIdentity[identity]
-            if (existing == null || scoreMediaUrl(url) > scoreMediaUrl(existing)) {
+            val score = mediaPreferenceScore(url)
+            val existingScore = keepScores[identity]
+
+            if (existingScore == null || score > existingScore) {
                 keepLatestByIdentity[identity] = url
+                keepScores[identity] = score
             }
         }
 
-        return keepLatestByIdentity.values.toList()
+        val list = keepLatestByIdentity.values.toList()
+
+        return list
+    }
+
+    private fun mediaPreferenceScore(url: String): Int {
+        val lower = url.lowercase(Locale.ROOT)
+        var score = 0
+
+        // Host preference: prefer post media hosts.
+        score += when {
+            lower.contains("va.media.tumblr.com") -> 8_000_000
+            lower.contains("64.media.tumblr.com") -> 7_000_000
+            else -> 1_000_000
+        }
+
+        if (lower.contains("_c1")) score -= 150_000
+        if (lower.contains("previews/")) score -= 200_000
+        if (isLowResCandidate(url)) score -= 200_000
+
+        val resolution = parseResolution(url)
+        if (resolution != null) {
+            score += resolution.first * resolution.second
+        }
+
+        if (lower.contains(".mp4") || lower.contains(".m3u8") || lower.contains(".mov")) {
+            score += 2_000_000
+        }
+
+        return score + url.length
     }
 
     private fun mediaIdentity(url: String): String {
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return url
         val host = uri.host?.lowercase(Locale.ROOT).orEmpty()
-        val path = uri.path.orEmpty().replace(Regex("/s\\d+x\\d+(?:_c)?/"), "/")
-        return "${host.lowercase(Locale.ROOT)}$path"
-    }
-
-    private fun scoreMediaUrl(url: String): Int {
-        return url.length
+        val path = uri.path.orEmpty()
+            .replace(Regex("/s\\d+x\\d+(?:_c)?/"), "/")
+            .replace(Regex("/s\\d+x\\d+_[0-9a-z]+/"), "/")
+        return "$host$path"
     }
 
     private fun normalizeShareUrl(rawUrl: String): String {
@@ -302,7 +471,11 @@ object TumblrParser {
             .build()
 
         httpClient.newCall(request).execute().use { response: Response ->
-            HttpResponse(response.code, response.body?.string().orEmpty())
+            HttpResponse(
+                code = response.code,
+                body = response.body?.string().orEmpty(),
+                finalUrl = response.request.url.toString()
+            )
         }
     }
 
@@ -353,4 +526,4 @@ sealed class TumblrShareParseResult {
     data class Empty(val message: String) : TumblrShareParseResult()
 }
 
-private data class HttpResponse(val code: Int, val body: String)
+private data class HttpResponse(val code: Int, val body: String, val finalUrl: String)

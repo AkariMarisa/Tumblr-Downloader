@@ -7,7 +7,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.tumblrdownloader.model.DownloadItem
 import com.example.tumblrdownloader.model.DownloadStatus
 import com.example.tumblrdownloader.service.DownloadService
+import com.example.tumblrdownloader.utils.DownloadHistoryStore
 import com.example.tumblrdownloader.utils.ParsedTumblrMedia
+import com.example.tumblrdownloader.utils.TumblrCookieStore
 import com.example.tumblrdownloader.utils.TumblrParser
 import com.example.tumblrdownloader.utils.TumblrShareParseResult
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +21,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val appContext = getApplication<Application>()
 
     private val _downloads = MutableStateFlow<List<DownloadItem>>(emptyList())
     val downloads: StateFlow<List<DownloadItem>> = _downloads.asStateFlow()
@@ -34,8 +38,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val serviceProgressListener = object : DownloadService.ProgressListener {
         override fun onDownloadUpdate(item: DownloadItem) {
             viewModelScope.launch(Dispatchers.Main) {
-                _downloads.value = _downloads.value.map { existing ->
-                    if (existing.id == item.id) item else existing
+                updateDownloads { list ->
+                    list.map { existing -> if (existing.id == item.id) item else existing }
                 }
             }
         }
@@ -43,6 +47,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         DownloadService.progressListener = serviceProgressListener
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val restored = DownloadHistoryStore.load(appContext)
+            val normalized = restored.map {
+                if (it.status == DownloadStatus.DOWNLOADING) {
+                    it.copy(
+                        status = DownloadStatus.FAILED,
+                        progress = 0,
+                        errorMessage = "应用重启后状态已失效，可手动重试"
+                    )
+                } else {
+                    it
+                }
+            }
+            updateDownloads { normalized }
+        }
+
+        emitCookieStatusHint()
     }
 
     override fun onCleared() {
@@ -90,6 +112,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return enqueueFromUrl(url)
     }
 
+    fun clearSavedCookies() {
+        TumblrCookieStore.clear(appContext)
+        viewModelScope.launch {
+            _parseEvent.emit(ParseEvent.Message("已清除本地登录 Cookie（解析不再自动复用）"))
+        }
+    }
+
     private fun appendItems(candidates: List<ParsedTumblrMedia>) {
         if (candidates.isEmpty()) {
             viewModelScope.launch {
@@ -107,15 +136,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        _downloads.value = _downloads.value + added
+        updateDownloads { list -> list + added }
         added.forEach { item ->
             startDownload(item)
         }
     }
 
     private fun startDownload(item: DownloadItem) {
-        val context = getApplication<Application>()
-        val intent = Intent(context, DownloadService::class.java).apply {
+        val intent = Intent(appContext, DownloadService::class.java).apply {
             putExtra(DownloadService.EXTRA_ITEM_ID, item.id)
             putExtra(DownloadService.EXTRA_SOURCE_URL, item.sourceUrl)
             putExtra(DownloadService.EXTRA_MEDIA_URL, item.mediaUrl)
@@ -125,9 +153,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             putExtra(DownloadService.EXTRA_MAX_RETRIES, item.maxRetries)
         }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            context.startForegroundService(intent)
+            appContext.startForegroundService(intent)
         } else {
-            context.startService(intent)
+            appContext.startService(intent)
         }
     }
 
@@ -144,10 +172,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             retryCount = 0
         )
 
-        _downloads.value = _downloads.value.map {
-            if (it.id == itemId) retried else it
-        }
-
+        updateDownloads { list -> list.map { if (it.id == itemId) retried else it } }
         startDownload(retried)
     }
 
@@ -158,13 +183,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateProgress(itemId: String, progress: Int, status: DownloadStatus) {
-        _downloads.value = _downloads.value.map { item ->
-            if (item.id != itemId) item else item.copy(status = status, progress = progress)
+        updateDownloads { list ->
+            list.map { item ->
+                if (item.id != itemId) item else item.copy(status = status, progress = progress)
+            }
         }
+    }
+
+    private fun updateDownloads(transform: (List<DownloadItem>) -> List<DownloadItem>) {
+        val updated = transform(_downloads.value)
+        _downloads.value = updated
+        persistDownloads(updated)
+    }
+
+    private fun persistDownloads(items: List<DownloadItem>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            DownloadHistoryStore.save(appContext, items)
+        }
+    }
+
+    private fun emitCookieStatusHint() {
+        val showHint = TumblrCookieStore.hasSavedCookies(appContext) && TumblrCookieStore.shouldShowSecurityNotice(appContext)
+        if (!showHint) return
+
+        viewModelScope.launch {
+            _parseEvent.emit(ParseEvent.CookieSecurityNotice("检测到本地保存的登录 Cookie。用于解析私密内容，仅本地存储；如非本人设备请点击清除。"))
+        }
+        TumblrCookieStore.markSecurityNoticeShown(appContext)
     }
 }
 
 sealed class ParseEvent {
     data class Message(val text: String) : ParseEvent()
     data class LoginRequired(val url: String, val message: String) : ParseEvent()
+    data class CookieSecurityNotice(val text: String) : ParseEvent()
 }

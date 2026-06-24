@@ -33,6 +33,10 @@ import kotlin.random.Random
 
 class DownloadService : Service() {
 
+    interface ProgressListener {
+        fun onDownloadUpdate(item: DownloadItem)
+    }
+
     companion object {
         private const val CHANNEL_ID = "tumblr_download_channel"
         private const val NOTIFICATION_ID = 10001
@@ -49,10 +53,6 @@ class DownloadService : Service() {
         const val EXTRA_TITLE = "extra_title"
         const val EXTRA_RETRY_COUNT = "extra_retry_count"
         const val EXTRA_MAX_RETRIES = "extra_max_retries"
-
-        interface ProgressListener {
-            fun onDownloadUpdate(item: DownloadItem)
-        }
 
         @Volatile
         var progressListener: ProgressListener? = null
@@ -288,17 +288,18 @@ class DownloadService : Service() {
     }
 
     private fun parseIntent(intent: Intent?): DownloadItem? {
-        val id = intent?.getStringExtra(EXTRA_ITEM_ID).orEmpty()
-        val sourceUrl = intent?.getStringExtra(EXTRA_SOURCE_URL).orEmpty()
-        val mediaUrl = intent?.getStringExtra(EXTRA_MEDIA_URL).orEmpty()
-        val title = intent?.getStringExtra(EXTRA_TITLE)
+        val safeIntent = intent ?: return null
+        val id = safeIntent.getStringExtra(EXTRA_ITEM_ID).orEmpty()
+        val sourceUrl = safeIntent.getStringExtra(EXTRA_SOURCE_URL).orEmpty()
+        val mediaUrl = safeIntent.getStringExtra(EXTRA_MEDIA_URL).orEmpty()
+        val title = safeIntent.getStringExtra(EXTRA_TITLE)
         val type = runCatching {
-            com.example.tumblrdownloader.model.MediaType.valueOf(intent?.getStringExtra(EXTRA_TYPE).orEmpty())
+            com.example.tumblrdownloader.model.MediaType.valueOf(safeIntent.getStringExtra(EXTRA_TYPE).orEmpty())
         }.getOrDefault(com.example.tumblrdownloader.model.MediaType.UNKNOWN)
         if (id.isBlank() || mediaUrl.isBlank()) return null
 
-        val retryCount = intent.getIntExtra(EXTRA_RETRY_COUNT, 0)
-        val maxRetries = intent.getIntExtra(EXTRA_MAX_RETRIES, 3)
+        val retryCount = safeIntent.getIntExtra(EXTRA_RETRY_COUNT, 0)
+        val maxRetries = safeIntent.getIntExtra(EXTRA_MAX_RETRIES, 3)
 
         return DownloadItem(
             id = id,

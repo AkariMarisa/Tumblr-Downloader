@@ -53,6 +53,11 @@ class DownloadFragment : Fragment() {
             }
         }
 
+        binding.btnClearCookies.setOnClickListener {
+            viewModel.clearSavedCookies()
+            Toast.makeText(requireContext(), R.string.cookies_cleared_toast, Toast.LENGTH_SHORT).show()
+        }
+
         lifecycleScope.launch {
             viewModel.autoPasteUrl.collect { url ->
                 binding.etUrl.setText(url)
@@ -72,6 +77,10 @@ class DownloadFragment : Fragment() {
                     is ParseEvent.LoginRequired -> {
                         Toast.makeText(requireContext(), event.message, Toast.LENGTH_LONG).show()
                         loginLauncher.launch(TumblrLoginActivity.newIntent(requireContext(), event.url))
+                    }
+
+                    is ParseEvent.CookieSecurityNotice -> {
+                        Toast.makeText(requireContext(), event.text, Toast.LENGTH_LONG).show()
                     }
                 }
             }
