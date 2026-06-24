@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">Tumblr Downloader</string>
+    <string name="tab_download">Download</string>
+    <string name="tab_downloads">Downloads</string>
+    <string name="input_hint">Enter Tumblr post URL</string>
+    <string name="download_button">Download Media</string>
+    <string name="downloaded_media">Downloaded Media</string>
+    <string name="no_downloads">No downloads yet</string>
+    <string name="downloading">Downloading…</string>
+    <string name="completed">Completed</string>
+    <string name="failed">Failed</string>
+    <string name="back">Back</string>
+    <string name="copied_from_clipboard">Copied from clipboard</string>
+    <string name="invalid_url">Invalid Tumblr URL</string>
+</resources>
