@@ -11,6 +11,7 @@ import androidx.lifecycle.lifecycleScope
 import com.example.tumblrdownloader.R
 import com.example.tumblrdownloader.databinding.FragmentDownloadBinding
 import com.example.tumblrdownloader.ui.MainViewModel
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class DownloadFragment : Fragment() {
@@ -45,6 +46,14 @@ class DownloadFragment : Fragment() {
             viewModel.autoPasteUrl.collect { url ->
                 binding.etUrl.setText(url)
                 binding.etUrl.setSelection(url.length)
+            }
+        }
+
+        lifecycleScope.launch {
+            viewModel.parseMessage.collectLatest { message ->
+                if (message.isNotBlank()) {
+                    Toast.makeText(requireContext(), message, Toast.LENGTH_LONG).show()
+                }
             }
         }
     }

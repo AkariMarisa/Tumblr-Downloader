@@ -7,10 +7,13 @@ import androidx.lifecycle.viewModelScope
 import com.example.tumblrdownloader.model.DownloadItem
 import com.example.tumblrdownloader.model.DownloadStatus
 import com.example.tumblrdownloader.service.DownloadService
+import com.example.tumblrdownloader.utils.ParsedTumblrMedia
 import com.example.tumblrdownloader.utils.TumblrParser
+import com.example.tumblrdownloader.utils.TumblrShareParseResult
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
@@ -20,22 +23,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val downloads: StateFlow<List<DownloadItem>> = _downloads.asStateFlow()
 
     private val _autoPasteUrl = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    val autoPasteUrl = _autoPasteUrl
+    val autoPasteUrl = _autoPasteUrl.asSharedFlow()
+
+    private val _parseMessage = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val parseMessage = _parseMessage.asSharedFlow()
 
     fun enqueueFromUrl(rawUrl: String): Boolean {
         val url = TumblrParser.firstTumblrUrl(rawUrl.trim()) ?: return false
-        val items = TumblrParser.parseMediaCandidates(url)
 
-        if (items.isEmpty()) {
-            return false
+        viewModelScope.launch {
+            when (val result = TumblrParser.parseShareUrl(url)) {
+                is TumblrShareParseResult.Success -> {
+                    appendItems(result.media)
+                }
+                is TumblrShareParseResult.LoginRequired -> {
+                    _parseMessage.emit("${result.message} 你可在 Tumblr 网站确认该链接是否公开，或提供登录凭据后继续。")
+                }
+                is TumblrShareParseResult.Error -> {
+                    _parseMessage.emit(result.message)
+                }
+                is TumblrShareParseResult.Empty -> {
+                    _parseMessage.emit(result.message)
+                }
+            }
         }
 
-        val added = items.mapIndexed { index, mediaUrl ->
+        return true
+    }
+
+    private fun appendItems(candidates: List<ParsedTumblrMedia>) {
+        if (candidates.isEmpty()) {
+            viewModelScope.launch {
+                _parseMessage.emit("该链接未识别到可下载媒体")
+            }
+            return
+        }
+
+        val added = candidates.mapIndexed { index, media ->
             DownloadItem(
-                sourceUrl = url,
-                mediaUrl = mediaUrl,
-                title = "Item ${index + 1}",
-                type = TumblrParser.guessType(mediaUrl)
+                sourceUrl = media.sourceUrl,
+                mediaUrl = media.mediaUrl,
+                title = media.title.ifBlank { "Item ${index + 1}" },
+                type = media.type
             )
         }
 
@@ -54,8 +83,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 context.startService(intent)
             }
         }
-
-        return true
     }
 
     fun notifyFromClipboard(url: String) {
