@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import com.example.tumblrdownloader.BuildConfig
 import org.json.JSONObject
 import java.util.Locale
 
@@ -223,7 +224,9 @@ object TumblrParser {
     private fun resolveProxyAddress(): java.net.Proxy? {
         val proxyValue = System.getProperty("tumblr.proxy")
             ?: System.getenv("TUMBLR_DOWNLOADER_PROXY")
-        if (proxyValue.isNullOrBlank()) return null
+            ?: if (BuildConfig.DEBUG) "http://127.0.0.1:10809" else null
+
+        if (proxyValue.isBlank()) return null
 
         return runCatching {
             val uri = android.net.Uri.parse(proxyValue)
