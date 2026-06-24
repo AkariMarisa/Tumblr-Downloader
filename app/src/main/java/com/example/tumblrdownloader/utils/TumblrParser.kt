@@ -15,7 +15,7 @@ private const val TAG = "TumblrParser"
 
 object TumblrParser {
 
-    private val shareUrlRegex = Regex("(?i)^https?://(?:www\\.)?tumblr\\.com/[A-Za-z0-9_-]+/\\d+")
+    private val shareUrlRegex = Regex("(?i)^https?://(?:www\\.)?tumblr\\.com/[A-Za-z0-9_.-]+/\\d+")
     private val sourceParamRegex = Regex("([?&]source=[^&]+)")
 
     private val imageUrlRegex =
