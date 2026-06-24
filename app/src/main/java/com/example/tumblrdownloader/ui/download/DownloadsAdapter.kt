@@ -3,6 +3,7 @@ package com.example.tumblrdownloader.ui.download
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.core.content.ContextCompat
+import androidx.core.view.isVisible
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
@@ -13,7 +14,8 @@ import com.example.tumblrdownloader.model.DownloadStatus
 import com.example.tumblrdownloader.model.MediaType
 
 class DownloadsAdapter(
-    private val onClick: (DownloadItem) -> Unit
+    private val onClick: (DownloadItem) -> Unit,
+    private val onRetry: (DownloadItem) -> Unit
 ) : ListAdapter<DownloadItem, DownloadsAdapter.DownloadVH>(DIFF) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): DownloadVH {
@@ -34,6 +36,10 @@ class DownloadsAdapter(
             binding.tvStatus.text = item.status.name
             binding.tvProgress.text = "${item.progress}%"
 
+            if (item.status == DownloadStatus.FAILED && item.errorMessage.isNullOrBlank().not()) {
+                binding.tvProgress.text = item.errorMessage
+            }
+
             val thumbColor = when (item.type) {
                 MediaType.IMAGE -> ContextCompat.getColor(itemView.context, R.color.green_500)
                 MediaType.VIDEO -> ContextCompat.getColor(itemView.context, R.color.blue_500)
@@ -41,8 +47,14 @@ class DownloadsAdapter(
             }
             binding.vThumb.setBackgroundColor(thumbColor)
 
-            if (item.status == DownloadStatus.FAILED && item.errorMessage != null) {
-                binding.tvProgress.text = item.errorMessage
+            val canRetry = item.status == DownloadStatus.FAILED && item.retryCount >= item.maxRetries
+            binding.btnRetry.isVisible = canRetry
+            if (canRetry) {
+                binding.btnRetry.setOnClickListener {
+                    onRetry(item)
+                }
+            } else {
+                binding.btnRetry.setOnClickListener(null)
             }
 
             itemView.setOnClickListener { onClick(item) }

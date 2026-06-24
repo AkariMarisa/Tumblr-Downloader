@@ -43,4 +43,17 @@
             tools:text="0%" />
     </LinearLayout>
 
+    <ImageButton
+        android:id="@+id/btnRetry"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_marginStart="8dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@string/retry_download"
+        android:src="@android:drawable/ic_popup_sync"
+        android:tint="@color/blue_500"
+        android:visibility="gone"
+        android:padding="4dp"
+        tools:visibility="visible" />
+
 </LinearLayout>

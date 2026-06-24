@@ -20,7 +20,10 @@ class DownloadsFragment : Fragment() {
     private val binding get() = _binding!!
     private val viewModel: MainViewModel by activityViewModels()
 
-    private val adapter = DownloadsAdapter(::openViewer)
+    private val adapter = DownloadsAdapter(
+        onClick = ::openViewer,
+        onRetry = { item -> viewModel.retryDownload(item.id) }
+    )
 
     override fun onCreateView(
         inflater: LayoutInflater,

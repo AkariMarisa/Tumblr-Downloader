@@ -21,7 +21,9 @@ data class DownloadItem(
     val mediaUrl: String,
     val title: String,
     val type: MediaType,
-    var status: DownloadStatus = DownloadStatus.QUEUED,
-    var progress: Int = 0,
-    var errorMessage: String? = null
+    val status: DownloadStatus = DownloadStatus.QUEUED,
+    val progress: Int = 0,
+    val errorMessage: String? = null,
+    val retryCount: Int = 0,
+    val maxRetries: Int = 3
 )

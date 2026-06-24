@@ -10,6 +10,7 @@ import com.example.tumblrdownloader.service.DownloadService
 import com.example.tumblrdownloader.utils.ParsedTumblrMedia
 import com.example.tumblrdownloader.utils.TumblrParser
 import com.example.tumblrdownloader.utils.TumblrShareParseResult
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +30,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val parseEvent = _parseEvent.asSharedFlow()
 
     private var pendingLoginUrl: String? = null
+
+    private val serviceProgressListener = object : DownloadService.ProgressListener {
+        override fun onDownloadUpdate(item: DownloadItem) {
+            viewModelScope.launch(Dispatchers.Main) {
+                _downloads.value = _downloads.value.map { existing ->
+                    if (existing.id == item.id) item else existing
+                }
+            }
+        }
+    }
+
+    init {
+        DownloadService.progressListener = serviceProgressListener
+    }
+
+    override fun onCleared() {
+        if (DownloadService.progressListener === serviceProgressListener) {
+            DownloadService.progressListener = null
+        }
+        super.onCleared()
+    }
 
     fun enqueueFromUrl(rawUrl: String): Boolean {
         val url = TumblrParser.firstTumblrUrl(rawUrl.trim()) ?: return false
@@ -87,19 +109,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         _downloads.value = _downloads.value + added
         added.forEach { item ->
-            val context = getApplication<Application>()
-            val intent = Intent(context, DownloadService::class.java).apply {
-                putExtra(DownloadService.EXTRA_ITEM_ID, item.id)
-                putExtra(DownloadService.EXTRA_SOURCE_URL, item.sourceUrl)
-                putExtra(DownloadService.EXTRA_MEDIA_URL, item.mediaUrl)
-                putExtra(DownloadService.EXTRA_TYPE, item.type.name)
-            }
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            startDownload(item)
         }
+    }
+
+    private fun startDownload(item: DownloadItem) {
+        val context = getApplication<Application>()
+        val intent = Intent(context, DownloadService::class.java).apply {
+            putExtra(DownloadService.EXTRA_ITEM_ID, item.id)
+            putExtra(DownloadService.EXTRA_SOURCE_URL, item.sourceUrl)
+            putExtra(DownloadService.EXTRA_MEDIA_URL, item.mediaUrl)
+            putExtra(DownloadService.EXTRA_TYPE, item.type.name)
+            putExtra(DownloadService.EXTRA_TITLE, item.title)
+            putExtra(DownloadService.EXTRA_RETRY_COUNT, item.retryCount)
+            putExtra(DownloadService.EXTRA_MAX_RETRIES, item.maxRetries)
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
+    }
+
+    fun retryDownload(itemId: String) {
+        val target = _downloads.value.firstOrNull { it.id == itemId } ?: return
+        if (target.status != DownloadStatus.FAILED || target.retryCount < target.maxRetries) {
+            return
+        }
+
+        val retried = target.copy(
+            status = DownloadStatus.QUEUED,
+            progress = 0,
+            errorMessage = null,
+            retryCount = 0
+        )
+
+        _downloads.value = _downloads.value.map {
+            if (it.id == itemId) retried else it
+        }
+
+        startDownload(retried)
     }
 
     fun notifyFromClipboard(url: String) {

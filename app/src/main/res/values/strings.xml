@@ -14,4 +14,5 @@
     <string name="invalid_url">Invalid Tumblr URL</string>
     <string name="login_hint">登录后返回本页即可继续解析</string>
     <string name="login_done">Done</string>
+    <string name="retry_download">重试下载</string>
 </resources>
