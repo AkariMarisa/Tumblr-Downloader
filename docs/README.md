@@ -48,6 +48,14 @@ TumblrDownloader/
 └── settings.gradle
 ```
 
+## To-Do
+
+- [ ] **Private content cookie test path**: Add a settings/input entry to paste logged-in Tumblr cookies (`cookie_name=value; ...`) so parse attempts can test posts that currently return login-required/404.
+- [ ] **Cookie persistence with privacy guardrails**: store cookies locally only, clear them on logout, and never upload to backend.
+- [ ] **Download record persistence**: save queue and retry status to Room so tasks survive process kill/reinstall.
+- [ ] **Adaptive rate-limit settings**: allow 500KB/s~2MB/s configurable and 1~1.5s inter-task gap.
+- [ ] **Parse diagnostics panel**: show parsed media count, candidate source type, and reason when empty.
+
 ## Technologies
 
 - **Kotlin**: Primary programming language
