@@ -47,6 +47,38 @@ object TumblrParser {
         setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
     )
 
+    private val NOISE_PATH_TOKENS = setOf(
+        "avatar",
+        "avatars",
+        "userpic",
+        "user_name",
+        "userurl",
+        "username",
+        "profile",
+        "cover",
+        "cover_photo",
+        "cover_image",
+        "background",
+        "background_image",
+        "header",
+        "theme",
+        "theme_data",
+        "colors",
+        "blog",
+        "tumblelog",
+        "icon",
+        "favicon",
+        "banner",
+        "user",
+        "author",
+        "canonical_url",
+        "poster",
+        "thumbnail",
+        "thumbnails",
+        "previews",
+        "frame1"
+    )
+
     private val httpClient by lazy {
         val builder = OkHttpClient.Builder()
             .followRedirects(true)
@@ -183,7 +215,9 @@ object TumblrParser {
         val response = httpGet(embedUrl)
         if (response.code !in 200..299) return emptyList()
 
-        return extractFromHtml(response.body)
+        return extractFromHtml(response.body, structuredOnly = true).ifEmpty {
+            extractFromHtml(response.body)
+        }
     }
 
     private fun extractEmbedUrl(html: String): String {
@@ -207,7 +241,14 @@ object TumblrParser {
 
                 val html = response.body
                 val source = normalizeShareUrl(postUrl)
-                val candidates = extractFromHtml(html)
+                val candidates = run {
+                    val structured = extractFromHtml(html, structuredOnly = true)
+                    if (structured.isNotEmpty()) {
+                        structured
+                    } else {
+                        extractFromHtml(html)
+                    }
+                }
 
                 if (candidates.isEmpty() && looksLikeLoginPage(html)) {
                     TumblrShareParseResult.LoginRequired(
@@ -241,18 +282,21 @@ object TumblrParser {
         }
     }
 
-    private fun extractFromHtml(html: String, preferVideo: Boolean = false): List<String> {
+    private fun extractFromHtml(html: String, preferVideo: Boolean = false, structuredOnly: Boolean = false): List<String> {
         val candidates = buildList {
             addAll(extractFromInitialState(html))
             addAll(extractFromJsonScripts(html))
-            addAll(extractImageCandidates(html))
-            addAll(extractVideoCandidates(html))
-            if (!preferVideo) {
-                addAll(extractFromMeta(imageMetaRegex, html))
-                addAll(extractFromMeta(videoMetaRegex, html))
-            } else {
-                addAll(extractFromMeta(videoMetaRegex, html))
-                addAll(extractFromMeta(imageMetaRegex, html))
+
+            if (!structuredOnly) {
+                addAll(extractImageCandidates(html))
+                addAll(extractVideoCandidates(html))
+                if (!preferVideo) {
+                    addAll(extractFromMeta(imageMetaRegex, html))
+                    addAll(extractFromMeta(videoMetaRegex, html))
+                } else {
+                    addAll(extractFromMeta(videoMetaRegex, html))
+                    addAll(extractFromMeta(imageMetaRegex, html))
+                }
             }
         }
 
@@ -280,17 +324,19 @@ object TumblrParser {
     private fun extractUrlsFromJsonText(jsonText: String): List<String> {
         val urls = LinkedHashSet<String>()
 
-        extractFromRawText(jsonText).forEach(urls::add)
-
         runCatching {
             val root = JSONObject(jsonText)
-            collectMediaUrlsFromJson(root, urls)
+            collectMediaUrlsFromJson(root, emptyList(), urls)
         }
 
-        return urls.toList().filter(::isLikelyPostMedia)
+        return urls.toList()
     }
 
-    private fun collectMediaUrlsFromJson(value: Any?, urls: MutableSet<String>) {
+    private fun collectMediaUrlsFromJson(
+        value: Any?,
+        jsonPath: List<String>,
+        urls: MutableSet<String>
+    ) {
         when (value) {
             null, JSONObject.NULL -> return
             is JSONObject -> {
@@ -300,22 +346,34 @@ object TumblrParser {
                     if (isNoiseJsonKey(key)) {
                         continue
                     }
-                    collectMediaUrlsFromJson(value.get(key), urls)
+                    collectMediaUrlsFromJson(value.get(key), jsonPath + key, urls)
                 }
             }
             is JSONArray -> {
                 for (i in 0 until value.length()) {
-                    collectMediaUrlsFromJson(value.get(i), urls)
+                    collectMediaUrlsFromJson(value.get(i), jsonPath + i.toString(), urls)
                 }
             }
             is String -> {
                 val trimmed = unescapeJsonText(value.trim())
-                if (isLikelyPostMedia(trimmed)) {
-                    mediaUrlRegex.findAll(trimmed).forEach { m ->
-                        m.value.let(urls::add)
-                    }
+                if (!isLikelyPostMedia(trimmed) || !isLikelyPostMediaPath(jsonPath)) {
+                    return
+                }
+                mediaUrlRegex.findAll(trimmed).forEach { m ->
+                    urls.add(m.value)
                 }
             }
+        }
+    }
+
+    private fun isLikelyPostMediaPath(jsonPath: List<String>): Boolean {
+        val path = jsonPath.map { it.lowercase(Locale.ROOT) }
+        if (path.any { segment -> NOISE_PATH_TOKENS.any { token -> segment == token || segment.contains(token) } }) {
+            return false
+        }
+        return path.any {
+            it == "media" || it == "photos" || it == "photo" || it == "videos" ||
+                it == "video" || it.endsWith("_media") || it.endsWith("media")
         }
     }
 
@@ -329,12 +387,14 @@ object TumblrParser {
             .replace("&#x2F;", "/")
 
     private fun isNoiseJsonKey(key: String): Boolean {
-        return when (key.lowercase(Locale.ROOT)) {
-            "avatar", "avatars", "avatar_url", "userpic", "user_name", "userurl", "username",
-            "canonical_url", "blogavatar", "profile", "profile_url", "favicon", "icon",
-            "header", "header_image", "cover", "cover_photo", "cover_image", "background",
-            "background_image", "bg_color", "blog_name", "blog",
-            "og_image", "ogvideo", "actor", "author", "theme", "theme_data", "colors" -> true
+        val lower = key.lowercase(Locale.ROOT)
+        if (NOISE_PATH_TOKENS.any { token -> lower == token || lower.contains(token) }) return true
+
+        return when (lower) {
+            "canonical_url", "blogavatar", "profile", "profile_url", "favicon", "og_image",
+            "ogvideo", "actor", "ogvideo:url", "og:image", "blogname", "colors",
+            "layout", "accent_colors", "theme_id", "theme_type", "theme_color", "user_theme",
+            "tumblr_style" -> true
             else -> false
         }
     }
@@ -377,6 +437,8 @@ object TumblrParser {
             return false
         }
 
+        if (lower.contains("/poster/") || lower.contains("poster")) return false
+        if (lower.contains("thumbnail") || lower.contains("thumb")) return false
         if (lower.contains("frame1")) return false
         if (lower.contains("_c1")) return false
 

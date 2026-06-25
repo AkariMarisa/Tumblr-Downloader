@@ -10,6 +10,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.tumblrdownloader.R
 import com.example.tumblrdownloader.databinding.ItemDownloadBinding
 import com.bumptech.glide.Glide
+import com.bumptech.glide.request.RequestOptions
 import com.example.tumblrdownloader.model.DownloadItem
 import com.example.tumblrdownloader.model.DownloadStatus
 import com.example.tumblrdownloader.model.MediaType
@@ -54,8 +55,14 @@ class DownloadsAdapter(
                 }
 
                 MediaType.VIDEO -> {
-                    binding.ivThumb.setColorFilter(ContextCompat.getColor(itemView.context, R.color.blue_500))
-                    binding.ivThumb.setImageResource(android.R.drawable.ic_media_play)
+                    binding.ivThumb.clearColorFilter()
+                    Glide.with(itemView.context)
+                        .asBitmap()
+                        .load(item.mediaUrl)
+                        .apply(RequestOptions.frameOf(500_000L))
+                        .placeholder(android.R.drawable.ic_media_play)
+                        .error(android.R.drawable.ic_media_play)
+                        .into(binding.ivThumb)
                 }
 
                 MediaType.UNKNOWN -> {

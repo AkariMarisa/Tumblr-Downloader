@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
+import java.util.Locale
 import androidx.lifecycle.viewModelScope
 import com.example.tumblrdownloader.model.DownloadItem
 import com.example.tumblrdownloader.model.DownloadStatus
@@ -154,11 +155,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .toMutableSet()
 
         val added = candidates
-            .mapIndexed { index, media ->
+            .map { media ->
                 DownloadItem(
                     sourceUrl = media.sourceUrl,
                     mediaUrl = media.mediaUrl,
-                    title = media.title.ifBlank { "Item ${index + 1}" },
+                    title = displayFileName(media.sourceUrl, media.mediaUrl),
                     type = media.type
                 )
             }
@@ -180,6 +181,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         added.forEach { item ->
             startDownload(item)
         }
+    }
+
+    private fun displayFileName(sourceUrl: String, mediaUrl: String): String {
+        val author = authorFromSource(sourceUrl)
+        val mediaId = mediaIdFromUrl(mediaUrl)
+        val ext = inferExtension(mediaUrl)
+        return "${DownloadUtils.sanitizeFileName("${author}-${mediaId}")}.${ext}"
+    }
+
+    private fun authorFromSource(sourceUrl: String): String {
+        val path = runCatching { Uri.parse(sourceUrl).path?.trim('/')?.split('/') ?: emptyList<String>() }
+            .getOrDefault(emptyList<String>())
+        return path.firstOrNull()?.takeIf { it.isNotBlank() } ?: "tumblr"
+    }
+
+    private fun mediaIdFromUrl(mediaUrl: String): String {
+        val uri = runCatching { Uri.parse(mediaUrl) }.getOrNull() ?: return "media"
+        val lastSegment = uri.lastPathSegment
+            ?.substringBefore('?')
+            ?.let(Uri::decode)
+            ?: ""
+
+        if (lastSegment.isNotBlank()) {
+            return lastSegment.substringBeforeLast('.').ifBlank { lastSegment }
+        }
+
+        val fallback = uri.toString().substringAfterLast('/', "media").substringBefore('?')
+        return fallback.substringBeforeLast('.').ifBlank { "media" }
+    }
+
+    private fun inferExtension(mediaUrl: String): String {
+        val path = runCatching { Uri.parse(mediaUrl).lastPathSegment.orEmpty() }.getOrDefault("")
+        val rawExt = path.substringAfterLast('.', "").lowercase(Locale.getDefault())
+        return if (rawExt in setOf("jpg", "jpeg", "png", "gif", "webp", "avif", "mp4", "m3u8", "mov", "webm")) rawExt else "bin"
     }
 
     private fun startDownload(item: DownloadItem) {

@@ -5,17 +5,18 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Bundle
 import android.provider.DocumentsContract
-import com.example.tumblrdownloader.ui.MainActivity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.lifecycleScope
 import com.example.tumblrdownloader.R
 import com.example.tumblrdownloader.databinding.FragmentDownloadBinding
+import com.example.tumblrdownloader.ui.MainActivity
 import com.example.tumblrdownloader.ui.MainViewModel
 import com.example.tumblrdownloader.ui.ParseEvent
 import com.example.tumblrdownloader.ui.auth.TumblrLoginActivity
@@ -76,7 +77,7 @@ class DownloadFragment : Fragment() {
             if (!ok) {
                 Toast.makeText(requireContext(), R.string.invalid_url, Toast.LENGTH_SHORT).show()
             } else {
-                binding.etUrl.text?.clear()
+                showLoading(true)
             }
         }
 
@@ -108,13 +109,17 @@ class DownloadFragment : Fragment() {
             Toast.makeText(requireContext(), R.string.cookies_cleared_toast, Toast.LENGTH_SHORT).show()
         }
 
-        lifecycleScope.launch {
+        binding.loadingOverlay.setOnClickListener {
+            // blocking overlay while parsing
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
             viewModel.downloadDirectoryLabel.collect { text ->
                 binding.tvDownloadDirectory.text = getString(R.string.download_directory_display, text)
             }
         }
 
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             viewModel.autoPasteUrl.collect { url ->
                 binding.etUrl.setText(url)
                 binding.etUrl.setSelection(url.length)
@@ -123,31 +128,49 @@ class DownloadFragment : Fragment() {
             }
         }
 
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             viewModel.parseEvent.collect { event ->
                 when (event) {
                     is ParseEvent.Message -> {
+                        showLoading(false)
                         if (event.text.isNotBlank()) {
                             Toast.makeText(requireContext(), event.text, Toast.LENGTH_LONG).show()
                         }
                     }
 
                     is ParseEvent.LoginRequired -> {
+                        showLoading(false)
                         Toast.makeText(requireContext(), event.message, Toast.LENGTH_LONG).show()
                         loginLauncher.launch(TumblrLoginActivity.newIntent(requireContext(), event.url))
                     }
 
                     is ParseEvent.Queued -> {
+                        binding.etUrl.text?.clear()
                         Toast.makeText(requireContext(), getString(R.string.queued_message, event.count), Toast.LENGTH_SHORT).show()
                         (requireActivity() as? MainActivity)?.showDownloadsTab()
+                        binding.loadingOverlay.post {
+                            showLoading(false)
+                        }
                     }
 
                     is ParseEvent.CookieSecurityNotice -> {
+                        showLoading(false)
                         Toast.makeText(requireContext(), event.text, Toast.LENGTH_LONG).show()
                     }
                 }
             }
         }
+    }
+
+    private fun showLoading(isLoading: Boolean) {
+        binding.loadingOverlay.isVisible = isLoading
+        binding.btnDownload.isEnabled = !isLoading
+        binding.btnLogin.isEnabled = !isLoading
+        binding.btnChooseDownloadDir.isEnabled = !isLoading
+        binding.btnResetDownloadDir.isEnabled = !isLoading
+        binding.btnOpenDownloadDir.isEnabled = !isLoading
+        binding.btnClearCookies.isEnabled = !isLoading
+        binding.etUrl.isEnabled = !isLoading
     }
 
     private fun openDownloadDirectory() {

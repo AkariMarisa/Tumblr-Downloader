@@ -40,10 +40,19 @@ class DownloadsFragment : Fragment() {
         binding.rvDownloads.layoutManager = LinearLayoutManager(requireContext())
         binding.rvDownloads.adapter = adapter
 
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             viewModel.downloads.collect { list ->
                 adapter.submitList(list)
                 binding.tvEmpty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        binding.rvDownloads.post {
+            if (adapter.itemCount > 0) {
+                binding.rvDownloads.scrollToPosition(0)
             }
         }
     }

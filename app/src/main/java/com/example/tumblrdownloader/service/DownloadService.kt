@@ -260,14 +260,37 @@ class DownloadService : Service() {
     private fun createDownloadTarget(item: DownloadItem): DownloadTarget {
         val ext = inferExtension(item.mediaUrl)
         val mimeType = inferMimeType(ext)
-        val fileBase = "${DownloadUtils.sanitizeFileName("${item.title}-${item.id}")}.$ext"
+        val fileName = "${DownloadUtils.sanitizeFileName("${authorFromSource(item.sourceUrl)}-${mediaIdFromUrl(item.mediaUrl)}")}.${ext}"
 
-        val custom = createCustomDirTarget(fileBase, mimeType)
+        val custom = createCustomDirTarget(fileName, mimeType)
         if (custom != null) {
             return custom
         }
 
-        return createMediaStoreTarget(fileBase, mimeType)
+        return createMediaStoreTarget(fileName, mimeType)
+    }
+
+    private fun authorFromSource(sourceUrl: String): String {
+        val segments = runCatching { Uri.parse(sourceUrl).path?.trim('/')?.split('/') ?: emptyList<String>() }
+            .getOrDefault(emptyList<String>())
+        return segments.firstOrNull()?.takeIf { it.isNotBlank() } ?: "tumblr"
+    }
+
+    private fun mediaIdFromUrl(mediaUrl: String): String {
+        val uri = runCatching { Uri.parse(mediaUrl) }.getOrNull() ?: return "media"
+        val lastSegment = runCatching {
+            uri.lastPathSegment
+                ?.substringBefore('?')
+                ?.let(Uri::decode)
+                ?: ""
+        }.getOrDefault("")
+
+        if (lastSegment.isNotBlank()) {
+            return lastSegment.substringBeforeLast('.').ifBlank { lastSegment }
+        }
+
+        val fallback = uri.toString().substringAfterLast('/', "media").substringBefore('?')
+        return fallback.substringBeforeLast('.').ifBlank { "media" }
     }
 
     private fun createCustomDirTarget(fileName: String, mimeType: String): DownloadTarget? {
