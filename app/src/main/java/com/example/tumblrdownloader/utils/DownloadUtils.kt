@@ -2,6 +2,8 @@ package com.example.tumblrdownloader.utils
 
 import android.content.Context
 import android.net.Uri
+import android.os.Environment
+import android.provider.DocumentsContract
 import com.example.tumblrdownloader.R
 
 object DownloadUtils {
@@ -29,6 +31,14 @@ object DownloadUtils {
             .getString(KEY_CUSTOM_DOWNLOAD_DIR_URI, null)
             ?: return null
         return runCatching { Uri.parse(raw) }.getOrNull()
+    }
+
+    fun getCurrentDownloadDirectory(context: Context): Uri {
+        return getCustomDownloadDirectory(context)
+            ?: DocumentsContract.buildTreeDocumentUri(
+                "com.android.externalstorage.documents",
+                "primary:${Environment.DIRECTORY_DOWNLOADS}/${getDefaultDownloadFolderName(context)}"
+            )
     }
 
     fun setCustomDownloadDirectory(context: Context, uri: Uri?) {
