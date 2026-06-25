@@ -418,7 +418,7 @@ object TumblrParser {
         val keepScores = HashMap<String, Int>()
 
         urls.forEach { url ->
-            val identity = mediaIdentity(url)
+            val identity = DownloadUtils.normalizeMediaIdentity(url)
             val score = mediaPreferenceScore(url)
             val existingScore = keepScores[identity]
 
@@ -458,15 +458,6 @@ object TumblrParser {
         }
 
         return score + url.length
-    }
-
-    private fun mediaIdentity(url: String): String {
-        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return url
-        val path = uri.path.orEmpty()
-            .replace(Regex("/s\\d+x\\d+(?:_c)?/"), "/")
-            .replace(Regex("/s\\d+x\\d+_[0-9a-z]+/"), "/")
-            .replace(Regex("_[0-9]{2,4}x[0-9]{2,4}(?=\\.)"), "")
-        return path
     }
 
     private fun normalizeShareUrl(rawUrl: String): String {

@@ -149,13 +149,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        val added = candidates.mapIndexed { index, media ->
-            DownloadItem(
-                sourceUrl = media.sourceUrl,
-                mediaUrl = media.mediaUrl,
-                title = media.title.ifBlank { "Item ${index + 1}" },
-                type = media.type
-            )
+        val existingKeys = _downloads.value
+            .map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }
+            .toMutableSet()
+
+        val added = candidates
+            .mapIndexed { index, media ->
+                DownloadItem(
+                    sourceUrl = media.sourceUrl,
+                    mediaUrl = media.mediaUrl,
+                    title = media.title.ifBlank { "Item ${index + 1}" },
+                    type = media.type
+                )
+            }
+            .filter { item ->
+                existingKeys.add(DownloadUtils.normalizeMediaIdentity(item.mediaUrl))
+            }
+
+        if (added.isEmpty()) {
+            viewModelScope.launch {
+                _parseEvent.emit(ParseEvent.Message("该链接中的媒体已在下载列表中，已跳过重复项。"))
+            }
+            return
         }
 
         updateDownloads { list -> added + list }

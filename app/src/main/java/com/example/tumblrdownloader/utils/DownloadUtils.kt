@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
 import com.example.tumblrdownloader.R
+import java.util.Locale
 
 object DownloadUtils {
 
@@ -62,5 +63,22 @@ object DownloadUtils {
         } else {
             custom.path?.trim('/')?.substringAfterLast('/')?.trim().orEmpty().ifBlank { custom.toString() }
         }
+    }
+
+    /**
+     * 对媒体 URL 做解析去重归一化：
+     * - 移除常见分辨率片段
+     * - 保留 host+path，忽略查询参数顺序差异
+     */
+    fun normalizeMediaIdentity(mediaUrl: String): String {
+        val uri = runCatching { Uri.parse(mediaUrl) }.getOrNull() ?: return mediaUrl.lowercase(Locale.getDefault())
+        val host = uri.host?.lowercase(Locale.getDefault()) ?: ""
+        var path = (uri.path.orEmpty().lowercase(Locale.getDefault()))
+            .replace(Regex("/s\\d+x\\d+(?:_[0-9a-z]+)?/"), "/")
+            .replace(Regex("_(\\d{2,4}x\\d{2,4})(?=\\.[a-z0-9]+$)"), "")
+            .replace(Regex("_(\\d{3,4})(?=\\.[a-z0-9]+$)"), "")
+            .replace(Regex("/s(\\d+)x(\\d+)(?=/)"), "")
+
+        return "$host$path"
     }
 }
