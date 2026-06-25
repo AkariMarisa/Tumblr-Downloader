@@ -25,5 +25,6 @@ data class DownloadItem(
     val progress: Int = 0,
     val errorMessage: String? = null,
     val retryCount: Int = 0,
-    val maxRetries: Int = 3
+    val maxRetries: Int = 3,
+    val createdAt: Long = System.currentTimeMillis()
 )

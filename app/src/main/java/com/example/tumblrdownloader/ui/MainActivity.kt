@@ -16,9 +16,13 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private val viewModel: MainViewModel by viewModels()
+    private lateinit var clipboardManager: ClipboardManager
 
     private var lastAutoClipboardUrl: String? = null
     private val tabTitles = listOf("Download", "Downloads")
+    private val clipboardListener = ClipboardManager.OnPrimaryClipChangedListener {
+        handleClipboardAutoDownload()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -29,11 +33,19 @@ class MainActivity : AppCompatActivity() {
         TabLayoutMediator(binding.tabLayout, binding.viewPager) { tab, position ->
             tab.text = tabTitles[position]
         }.attach()
+
+        clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     }
 
-    override fun onResume() {
-        super.onResume()
+    override fun onStart() {
+        super.onStart()
+        clipboardManager.addPrimaryClipChangedListener(clipboardListener)
         handleClipboardAutoDownload()
+    }
+
+    override fun onStop() {
+        clipboardManager.removePrimaryClipChangedListener(clipboardListener)
+        super.onStop()
     }
 
     private fun handleClipboardAutoDownload() {
@@ -48,10 +60,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    fun showDownloadsTab() {
+        binding.viewPager.currentItem = 1
+    }
+
     private fun getClipboardText(): String? {
-        val manager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        if (!manager.hasPrimaryClip()) return null
-        val item = manager.primaryClip?.getItemAt(0) ?: return null
+        if (!clipboardManager.hasPrimaryClip()) return null
+        val item = clipboardManager.primaryClip?.getItemAt(0) ?: return null
         return item.coerceToText(this)?.toString()?.trim()
     }
 

@@ -331,7 +331,10 @@ object TumblrParser {
     private fun isNoiseJsonKey(key: String): Boolean {
         return when (key.lowercase(Locale.ROOT)) {
             "avatar", "avatars", "avatar_url", "userpic", "user_name", "userurl", "username",
-            "canonical_url", "blogavatar", "profile", "profile_url", "favicon", "icon", "og_image", "ogvideo", "actor", "author" -> true
+            "canonical_url", "blogavatar", "profile", "profile_url", "favicon", "icon",
+            "header", "header_image", "cover", "cover_photo", "cover_image", "background",
+            "background_image", "bg_color", "blog_name", "blog",
+            "og_image", "ogvideo", "actor", "author", "theme", "theme_data", "colors" -> true
             else -> false
         }
     }
@@ -358,10 +361,22 @@ object TumblrParser {
         if (url.contains("media.tumblr.com").not()) return false
         val lower = url.lowercase(Locale.ROOT)
 
-        if (lower.contains("avatar_")) return false
-        if (lower.contains("/avatar/")) return false
-        if (lower.contains("/avatars/")) return false
-        if (lower.contains("/previews/")) return false
+        if (lower.contains("/avatar/") ||
+            lower.contains("/avatars/") ||
+            lower.contains("avatar_") ||
+            lower.contains("/background") ||
+            lower.contains("background_") ||
+            lower.contains("backgrounds") ||
+            lower.contains("/cover/") ||
+            lower.contains("cover_") ||
+            lower.contains("header") ||
+            lower.contains("userpic") ||
+            lower.contains("banner") ||
+            lower.contains("/previews/")
+        ) {
+            return false
+        }
+
         if (lower.contains("frame1")) return false
         if (lower.contains("_c1")) return false
 
@@ -447,11 +462,11 @@ object TumblrParser {
 
     private fun mediaIdentity(url: String): String {
         val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return url
-        val host = uri.host?.lowercase(Locale.ROOT).orEmpty()
         val path = uri.path.orEmpty()
             .replace(Regex("/s\\d+x\\d+(?:_c)?/"), "/")
             .replace(Regex("/s\\d+x\\d+_[0-9a-z]+/"), "/")
-        return "$host$path"
+            .replace(Regex("_[0-9]{2,4}x[0-9]{2,4}(?=\\.)"), "")
+        return path
     }
 
     private fun normalizeShareUrl(rawUrl: String): String {

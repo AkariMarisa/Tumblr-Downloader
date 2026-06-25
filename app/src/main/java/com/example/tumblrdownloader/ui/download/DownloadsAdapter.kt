@@ -9,6 +9,7 @@ import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.example.tumblrdownloader.R
 import com.example.tumblrdownloader.databinding.ItemDownloadBinding
+import com.bumptech.glide.Glide
 import com.example.tumblrdownloader.model.DownloadItem
 import com.example.tumblrdownloader.model.DownloadStatus
 import com.example.tumblrdownloader.model.MediaType
@@ -40,13 +41,29 @@ class DownloadsAdapter(
                 binding.tvProgress.text = item.errorMessage
             }
 
-            val thumbColor = when (item.type) {
-                MediaType.IMAGE -> ContextCompat.getColor(itemView.context, R.color.green_500)
-                MediaType.VIDEO -> ContextCompat.getColor(itemView.context, R.color.blue_500)
-                MediaType.UNKNOWN -> ContextCompat.getColor(itemView.context, R.color.gray_300)
-            }
-            binding.vThumb.setBackgroundColor(thumbColor)
+            binding.ivThumb.clearColorFilter()
+            binding.ivThumb.setBackgroundColor(0)
 
+            when (item.type) {
+                MediaType.IMAGE -> {
+                    Glide.with(itemView.context)
+                        .load(item.mediaUrl)
+                        .placeholder(android.R.drawable.ic_menu_gallery)
+                        .error(android.R.drawable.ic_menu_report_image)
+                        .into(binding.ivThumb)
+                }
+
+                MediaType.VIDEO -> {
+                    binding.ivThumb.setColorFilter(ContextCompat.getColor(itemView.context, R.color.blue_500))
+                    binding.ivThumb.setImageResource(android.R.drawable.ic_media_play)
+                }
+
+                MediaType.UNKNOWN -> {
+                    binding.ivThumb.setColorFilter(null)
+                    binding.ivThumb.setBackgroundColor(ContextCompat.getColor(itemView.context, R.color.gray_300))
+                    binding.ivThumb.setImageResource(android.R.drawable.ic_menu_help)
+                }
+            }
             val canRetry = item.status == DownloadStatus.FAILED && item.retryCount >= item.maxRetries
             binding.btnRetry.isVisible = canRetry
             if (canRetry) {

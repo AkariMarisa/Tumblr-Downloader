@@ -53,6 +53,7 @@ object DownloadHistoryStore {
             put("errorMessage", item.errorMessage)
             put("retryCount", item.retryCount)
             put("maxRetries", item.maxRetries)
+            put("createdAt", item.createdAt)
         }
     }
 
@@ -77,7 +78,8 @@ object DownloadHistoryStore {
                 ?.optString("errorMessage", "")
                 ?.ifBlank { null },
             retryCount = obj.optInt("retryCount"),
-            maxRetries = obj.optInt("maxRetries", 3)
+            maxRetries = obj.optInt("maxRetries", 3),
+            createdAt = obj.optLong("createdAt", System.currentTimeMillis())
         )
     }
 }

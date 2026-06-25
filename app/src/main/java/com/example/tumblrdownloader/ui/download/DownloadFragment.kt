@@ -2,6 +2,7 @@ package com.example.tumblrdownloader.ui.download
 
 import android.app.Activity
 import android.os.Bundle
+import com.example.tumblrdownloader.ui.MainActivity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -53,15 +54,22 @@ class DownloadFragment : Fragment() {
             }
         }
 
+        binding.btnLogin.setOnClickListener {
+            loginLauncher.launch(TumblrLoginActivity.newIntent(requireContext(), ""))
+        }
+
         binding.btnClearCookies.setOnClickListener {
             viewModel.clearSavedCookies()
             Toast.makeText(requireContext(), R.string.cookies_cleared_toast, Toast.LENGTH_SHORT).show()
         }
 
+
         lifecycleScope.launch {
             viewModel.autoPasteUrl.collect { url ->
                 binding.etUrl.setText(url)
                 binding.etUrl.setSelection(url.length)
+                binding.tvPasteHint.visibility = View.VISIBLE
+                Toast.makeText(requireContext(), R.string.clipboard_link_detected, Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -77,6 +85,11 @@ class DownloadFragment : Fragment() {
                     is ParseEvent.LoginRequired -> {
                         Toast.makeText(requireContext(), event.message, Toast.LENGTH_LONG).show()
                         loginLauncher.launch(TumblrLoginActivity.newIntent(requireContext(), event.url))
+                    }
+
+                    is ParseEvent.Queued -> {
+                        Toast.makeText(requireContext(), getString(R.string.queued_message, event.count), Toast.LENGTH_SHORT).show()
+                        (requireActivity() as? MainActivity)?.showDownloadsTab()
                     }
 
                     is ParseEvent.CookieSecurityNotice -> {

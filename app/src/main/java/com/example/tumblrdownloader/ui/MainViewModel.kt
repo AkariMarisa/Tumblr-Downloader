@@ -136,7 +136,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        updateDownloads { list -> list + added }
+        updateDownloads { list -> added + list }
+        viewModelScope.launch {
+            _parseEvent.emit(ParseEvent.Queued(added.size))
+        }
         added.forEach { item ->
             startDownload(item)
         }
@@ -191,7 +194,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun updateDownloads(transform: (List<DownloadItem>) -> List<DownloadItem>) {
-        val updated = transform(_downloads.value)
+        val updated = transform(_downloads.value).sortedByDescending { it.createdAt }
         _downloads.value = updated
         persistDownloads(updated)
     }
@@ -216,5 +219,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 sealed class ParseEvent {
     data class Message(val text: String) : ParseEvent()
     data class LoginRequired(val url: String, val message: String) : ParseEvent()
+    data class Queued(val count: Int) : ParseEvent()
     data class CookieSecurityNotice(val text: String) : ParseEvent()
 }
