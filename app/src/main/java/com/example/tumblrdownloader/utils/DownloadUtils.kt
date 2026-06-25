@@ -72,13 +72,27 @@ object DownloadUtils {
      */
     fun normalizeMediaIdentity(mediaUrl: String): String {
         val uri = runCatching { Uri.parse(mediaUrl) }.getOrNull() ?: return mediaUrl.lowercase(Locale.getDefault())
+
         val host = uri.host?.lowercase(Locale.getDefault()) ?: ""
+        val hostKey = if (host.endsWith(".media.tumblr.com")) {
+            "media.tumblr.com"
+        } else {
+            host
+        }
+
         var path = (uri.path.orEmpty().lowercase(Locale.getDefault()))
-            .replace(Regex("/s\\d+x\\d+(?:_[0-9a-z]+)?/"), "/")
+            .replace(Regex("/s\\d+x\\d+(?:_[^/]+)?/"), "/")
+            .replace(Regex("_c\\d+,\\d+,\\d+,\\d+(?=\\.[a-z0-9]+$)"), "")
             .replace(Regex("_(\\d{2,4}x\\d{2,4})(?=\\.[a-z0-9]+$)"), "")
             .replace(Regex("_(\\d{3,4})(?=\\.[a-z0-9]+$)"), "")
-            .replace(Regex("/s(\\d+)x(\\d+)(?=/)"), "")
 
-        return "$host$path"
+        if (hostKey.endsWith("media.tumblr.com")) {
+            val segments = path.trim('/').split('/').filter { it.isNotBlank() }
+            if (segments.size >= 2) {
+                return "$hostKey/${segments[0]}/${segments[1]}"
+            }
+        }
+
+        return "$hostKey$path"
     }
 }
