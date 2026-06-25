@@ -4,13 +4,16 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.IBinder
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
+import androidx.documentfile.provider.DocumentFile
 import com.example.tumblrdownloader.model.DownloadItem
 import com.example.tumblrdownloader.model.DownloadStatus
 import com.example.tumblrdownloader.utils.DownloadUtils
@@ -24,14 +27,21 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.io.File
-import java.io.FileOutputStream
+import android.provider.MediaStore
 import java.io.IOException
+import java.io.OutputStream
 import java.util.Locale
 import java.util.UUID
 import kotlin.random.Random
 
 class DownloadService : Service() {
+
+    private data class DownloadTarget(
+        val uri: Uri,
+        val outputStream: OutputStream,
+        val onSuccess: () -> Unit,
+        val onFailure: () -> Unit
+    )
 
     interface ProgressListener {
         fun onDownloadUpdate(item: DownloadItem)
@@ -127,9 +137,19 @@ class DownloadService : Service() {
         var current = item
         while (true) {
             emitProgress(current.copy(status = DownloadStatus.DOWNLOADING, progress = 0, errorMessage = retryHint(current)))
-            val outputFile = buildOutputFile(current)
+
+            val output = runCatching { createDownloadTarget(current) }.getOrElse { e ->
+                emitProgress(
+                    current.copy(
+                        status = DownloadStatus.FAILED,
+                        errorMessage = "下载目标创建失败：${e.message ?: "未知错误"}"
+                    )
+                )
+                return
+            }
+
             try {
-                downloadWithRateLimit(current.mediaUrl, outputFile) { downloaded, totalBytes ->
+                downloadWithRateLimit(current.mediaUrl, output.outputStream) { downloaded, totalBytes ->
                     emitProgress(
                         current.copy(
                             status = DownloadStatus.DOWNLOADING,
@@ -138,10 +158,11 @@ class DownloadService : Service() {
                         )
                     )
                 }
+                output.onSuccess()
                 emitProgress(current.copy(status = DownloadStatus.COMPLETED, progress = 100, errorMessage = null))
                 return
             } catch (e: Exception) {
-                outputFile.delete()
+                output.onFailure()
                 if (current.retryCount >= current.maxRetries) {
                     emitProgress(
                         current.copy(
@@ -175,7 +196,7 @@ class DownloadService : Service() {
 
     private suspend fun downloadWithRateLimit(
         mediaUrl: String,
-        outputFile: File,
+        outputStream: OutputStream,
         onProgress: (downloaded: Long, total: Long) -> Unit
     ) {
         val request = Request.Builder()
@@ -199,7 +220,7 @@ class DownloadService : Service() {
             val startedAt = SystemClock.elapsedRealtime()
 
             responseBody.byteStream().use { input ->
-                FileOutputStream(outputFile).use { output ->
+                outputStream.use { output ->
                     val buffer = ByteArray(32 * 1024)
                     while (true) {
                         val len = input.read(buffer)
@@ -236,22 +257,113 @@ class DownloadService : Service() {
         return ((downloaded * 100L) / totalBytes).toInt().coerceIn(0, 100)
     }
 
-    private fun buildOutputFile(item: DownloadItem): File {
-        val dir = DownloadUtils.ensureDownloadDir(this)
+    private fun createDownloadTarget(item: DownloadItem): DownloadTarget {
         val ext = inferExtension(item.mediaUrl)
-        val prefix = DownloadUtils.sanitizeFileName("${item.title}-${item.id}")
-        var candidate = File(dir, "$prefix.$ext")
-        while (candidate.exists()) {
-            val suffix = UUID.randomUUID().toString().take(4)
-            candidate = File(dir, "${prefix}_${suffix}.$ext")
+        val mimeType = inferMimeType(ext)
+        val fileBase = "${DownloadUtils.sanitizeFileName("${item.title}-${item.id}")}.$ext"
+
+        val custom = createCustomDirTarget(fileBase, mimeType)
+        if (custom != null) {
+            return custom
         }
-        return candidate
+
+        return createMediaStoreTarget(fileBase, mimeType)
+    }
+
+    private fun createCustomDirTarget(fileName: String, mimeType: String): DownloadTarget? {
+        val rootUri = DownloadUtils.getCustomDownloadDirectory(this) ?: return null
+        val rootDir = runCatching { DocumentFile.fromTreeUri(this, rootUri) }.getOrNull() ?: return null
+        if (!rootDir.isDirectory || !rootDir.canWrite()) return null
+
+        val availableName = resolveUniqueName(rootDir, fileName)
+        val file = rootDir.createFile(mimeType, availableName) ?: return null
+        val output = contentResolver.openOutputStream(file.uri) ?: return null
+        return DownloadTarget(
+            uri = file.uri,
+            outputStream = output,
+            onSuccess = {},
+            onFailure = {
+                runCatching { contentResolver.delete(file.uri, null, null) }
+            }
+        )
+    }
+
+    private fun createMediaStoreTarget(fileName: String, mimeType: String): DownloadTarget {
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        } else {
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        }
+
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+            put(MediaStore.Downloads.MIME_TYPE, mimeType)
+            put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/${DownloadUtils.getDefaultDownloadFolderName(this@DownloadService)}")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+        }
+        val uri = contentResolver.insert(collection, values) ?: throw IOException("无法在下载目录创建目标文件")
+        val output = contentResolver.openOutputStream(uri) ?: throw IOException("无法打开下载输出流")
+
+        return DownloadTarget(
+            uri = uri,
+            outputStream = output,
+            onSuccess = {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val done = ContentValues().apply {
+                        put(MediaStore.Downloads.IS_PENDING, 0)
+                    }
+                    contentResolver.update(uri, done, null, null)
+                }
+            },
+            onFailure = {
+                runCatching { contentResolver.delete(uri, null, null) }
+            }
+        )
+    }
+
+    private fun resolveUniqueName(directory: DocumentFile, fileName: String): String {
+        val lastDot = fileName.lastIndexOf('.')
+        val baseName = if (lastDot > 0) fileName.substring(0, lastDot) else fileName
+        val extension = if (lastDot > 0) fileName.substring(lastDot) else ""
+
+        if (directory.findFile(fileName) == null) {
+            return fileName
+        }
+
+        var index = 1
+        while (index <= 99) {
+            val candidate = "${baseName}_${index}$extension"
+            if (directory.findFile(candidate) == null) {
+                return candidate
+            }
+            index++
+        }
+
+        val uuidSuffix = UUID.randomUUID().toString().take(4)
+        return "${baseName}_${uuidSuffix}$extension"
     }
 
     private fun inferExtension(mediaUrl: String): String {
         val path = runCatching { Uri.parse(mediaUrl).lastPathSegment.orEmpty() }.getOrDefault("")
         val rawExt = path.substringAfterLast('.', "").lowercase(Locale.getDefault())
         return if (rawExt in setOf("jpg", "jpeg", "png", "gif", "webp", "avif", "mp4", "m3u8", "mov", "webm")) rawExt else "bin"
+    }
+
+    private fun inferMimeType(ext: String): String {
+        return when (ext.lowercase(Locale.getDefault())) {
+            "jpg", "jpeg" -> "image/jpeg"
+            "png" -> "image/png"
+            "gif" -> "image/gif"
+            "webp" -> "image/webp"
+            "avif" -> "image/avif"
+            "mp4" -> "video/mp4"
+            "m3u8" -> "application/vnd.apple.mpegurl"
+            "mov" -> "video/quicktime"
+            "webm" -> "video/webm"
+            else -> "application/octet-stream"
+        }
     }
 
     private fun emitProgress(item: DownloadItem) {

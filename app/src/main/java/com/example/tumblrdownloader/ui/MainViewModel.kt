@@ -2,12 +2,14 @@ package com.example.tumblrdownloader.ui
 
 import android.app.Application
 import android.content.Intent
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.tumblrdownloader.model.DownloadItem
 import com.example.tumblrdownloader.model.DownloadStatus
 import com.example.tumblrdownloader.service.DownloadService
 import com.example.tumblrdownloader.utils.DownloadHistoryStore
+import com.example.tumblrdownloader.utils.DownloadUtils
 import com.example.tumblrdownloader.utils.ParsedTumblrMedia
 import com.example.tumblrdownloader.utils.TumblrCookieStore
 import com.example.tumblrdownloader.utils.TumblrParser
@@ -32,6 +34,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _parseEvent = MutableSharedFlow<ParseEvent>(extraBufferCapacity = 1)
     val parseEvent = _parseEvent.asSharedFlow()
+
+    private val _downloadDirectoryLabel = MutableStateFlow(DownloadUtils.getDownloadDirectoryLabel(appContext))
+    val downloadDirectoryLabel: StateFlow<String> = _downloadDirectoryLabel.asStateFlow()
 
     private var pendingLoginUrl: String? = null
 
@@ -64,6 +69,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             updateDownloads { normalized }
         }
 
+        refreshDownloadDirectoryLabel()
         emitCookieStatusHint()
     }
 
@@ -116,6 +122,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         TumblrCookieStore.clear(appContext)
         viewModelScope.launch {
             _parseEvent.emit(ParseEvent.Message("已清除本地登录 Cookie（解析不再自动复用）"))
+        }
+    }
+
+    fun setCustomDownloadDirectory(uri: Uri) {
+        DownloadUtils.setCustomDownloadDirectory(appContext, uri)
+        refreshDownloadDirectoryLabel()
+        viewModelScope.launch {
+            _parseEvent.emit(ParseEvent.Message("已设置下载目录：${uri.path.orEmpty().ifBlank { uri.toString() }}"))
+        }
+    }
+
+    fun resetDownloadDirectory() {
+        DownloadUtils.clearCustomDownloadDirectory(appContext)
+        refreshDownloadDirectoryLabel()
+        viewModelScope.launch {
+            _parseEvent.emit(ParseEvent.Message("已恢复默认下载目录"))
         }
     }
 
@@ -203,6 +225,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             DownloadHistoryStore.save(appContext, items)
         }
+    }
+
+    private fun refreshDownloadDirectoryLabel() {
+        _downloadDirectoryLabel.value = DownloadUtils.getDownloadDirectoryLabel(appContext)
     }
 
     private fun emitCookieStatusHint() {

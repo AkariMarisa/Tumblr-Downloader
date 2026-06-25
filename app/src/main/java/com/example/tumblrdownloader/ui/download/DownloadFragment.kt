@@ -1,6 +1,7 @@
 package com.example.tumblrdownloader.ui.download
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 import com.example.tumblrdownloader.ui.MainActivity
 import android.view.LayoutInflater
@@ -32,6 +33,28 @@ class DownloadFragment : Fragment() {
         }
     }
 
+    private val directoryPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val data = result.data
+        if (result.resultCode != Activity.RESULT_OK || data == null) return@registerForActivityResult
+        val uri = data.data ?: return@registerForActivityResult
+
+        val flags = data.flags and (
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        )
+        try {
+            requireContext().contentResolver.takePersistableUriPermission(uri, flags)
+        } catch (_: SecurityException) {
+            // 若无法持久化权限，仍允许本次写入（未重启时通常可用）
+            val msg = getString(R.string.download_dir_permission_warning)
+            Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
+        }
+
+        viewModel.setCustomDownloadDirectory(uri)
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -58,11 +81,31 @@ class DownloadFragment : Fragment() {
             loginLauncher.launch(TumblrLoginActivity.newIntent(requireContext(), ""))
         }
 
+        binding.btnChooseDownloadDir.setOnClickListener {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                )
+            }
+            directoryPickerLauncher.launch(intent)
+        }
+
+        binding.btnResetDownloadDir.setOnClickListener {
+            viewModel.resetDownloadDirectory()
+        }
+
         binding.btnClearCookies.setOnClickListener {
             viewModel.clearSavedCookies()
             Toast.makeText(requireContext(), R.string.cookies_cleared_toast, Toast.LENGTH_SHORT).show()
         }
 
+        lifecycleScope.launch {
+            viewModel.downloadDirectoryLabel.collect { text ->
+                binding.tvDownloadDirectory.text = getString(R.string.download_directory_display, text)
+            }
+        }
 
         lifecycleScope.launch {
             viewModel.autoPasteUrl.collect { url ->

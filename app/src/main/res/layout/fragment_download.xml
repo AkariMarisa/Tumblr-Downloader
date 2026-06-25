@@ -65,4 +65,35 @@
         app:layout_constraintEnd_toEndOf="parent"
         android:layout_marginTop="8dp" />
 
+    <TextView
+        android:id="@+id/tvDownloadDirectory"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="@string/download_directory_display_placeholder"
+        android:textSize="14sp"
+        app:layout_constraintTop_toBottomOf="@id/btnClearCookies"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnChooseDownloadDir"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="@string/select_download_directory"
+        app:layout_constraintTop_toBottomOf="@id/tvDownloadDirectory"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginTop="8dp" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnResetDownloadDir"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="@string/reset_download_directory"
+        app:layout_constraintTop_toBottomOf="@id/btnChooseDownloadDir"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginTop="8dp" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>
