@@ -1,6 +1,7 @@
 package com.example.tumblrdownloader.utils
 
 import android.content.Context
+import okhttp3.Request
 import org.json.JSONObject
 
 data class TumblrAccount(
@@ -15,6 +16,10 @@ object TumblrAccountStore {
     private const val KEY_USERNAME = "username"
     private const val KEY_AVATAR_URL = "avatar_url"
     private const val KEY_STATUS = "status"
+
+    // ponytail: hardcoded public client token, extracted from Tumblr web app JS bundle.
+    // Replace if it stops working — find a fresh one via web devtools on any dashboard page.
+    private const val BEARER_TOKEN = "aIcXSOoTtqrzR8L8YEIOmBeW94c3FmbSNSWAUbxsny9KKx5VFh"
 
     fun load(context: Context): TumblrAccount {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -49,10 +54,75 @@ object TumblrAccountStore {
             .edit().remove("account_json").apply()
     }
 
+    /**
+     * Fetch account info via the same API the Tumblr web dashboard uses.
+     * Falls back to dashboard HTML parsing if the API call fails.
+     */
     fun fetchAccountInfo(context: Context): TumblrAccount {
         val cached = load(context)
         if (cached.isLoggedIn) return cached
 
+        // Try API first
+        val apiAccount = fetchFromApi(context)
+        if (apiAccount.isLoggedIn) return apiAccount
+
+        // Fallback: parse dashboard HTML
+        val dashboardAccount = fetchFromDashboard(context)
+        if (dashboardAccount.isLoggedIn) return dashboardAccount
+
+        return TumblrAccount()
+    }
+
+    private fun fetchFromApi(context: Context): TumblrAccount {
+        val request = Request.Builder()
+            .url("https://www.tumblr.com/api/v2/user/info?fields%5Bblogs%5D=%3Favatar%2Cname%2C%3Ftitle%2Curl%2C%3Fblog_view_url%2C%3Fcan_message%2C%3Fdescription%2C%3Fis_adult%2C%3Fuuid%2C%3Fis_private_channel%2C%3Fposts%2C%3Fis_group_channel%2C%3Fprimary%2C%3Fadmin%2C%3Fdrafts%2C%3Ffollowers%2C%3Fqueue%2C%3Fhas_flagged_posts%2C%3Fmessages%2C%3Fask%2C%3Fcan_submit%2C%3Fmention_key%2C%3Ftimezone_offset%2C%3Fanalytics_url%2C%3Fis_premium_partner%2C%3Fis_blogless_advertiser%2C%3Fis_tumblrpay_onboarded%2C%3Ftheme%2C%3Ftumblrmart_orders")
+            .get()
+            .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36")
+            .addHeader("Accept", "application/json;format=camelcase")
+            .addHeader("Accept-Language", "zh-cn")
+            .addHeader("Referer", "https://www.tumblr.com/")
+            .addHeader("Authorization", "Bearer $BEARER_TOKEN")
+            .addHeader("X-Version", "redpop/3/0//redpop/")
+            .build()
+
+        val response = runCatching { TumblrParser.httpClient.newCall(request).execute() }.getOrNull() ?: return TumblrAccount()
+        if (!response.isSuccessful) {
+            response.close()
+            return TumblrAccount()
+        }
+        val body = response.body?.string().orEmpty()
+        response.close()
+
+        val json = runCatching { JSONObject(body) }.getOrNull() ?: return TumblrAccount()
+        val meta = json.optJSONObject("meta")
+        if (meta?.optInt("status", 0) != 200) return TumblrAccount()
+
+        val resp = json.optJSONObject("response") ?: return TumblrAccount()
+        val user = resp.optJSONObject("user") ?: return TumblrAccount()
+        val name = user.optString("name", "").ifBlank { return TumblrAccount() }
+
+        // Get avatar from primary blog
+        var avatarUrl: String? = null
+        val blogs = user.optJSONArray("blogs")
+        if (blogs != null && blogs.length() > 0) {
+            val primaryBlog = blogs.optJSONObject(0)
+            val avatars = primaryBlog?.optJSONArray("avatar")
+            if (avatars != null && avatars.length() > 0) {
+                avatarUrl = avatars.optJSONObject(0)?.optString("url", "")?.ifBlank { null }
+            }
+        }
+
+        val account = TumblrAccount(
+            username = name,
+            avatarUrl = avatarUrl ?: "https://api.tumblr.com/v2/blog/${name}/avatar/512",
+            status = "在线",
+            isLoggedIn = true
+        )
+        save(context, account)
+        return account
+    }
+
+    private fun fetchFromDashboard(context: Context): TumblrAccount {
         val request = okhttp3.Request.Builder()
             .url("https://www.tumblr.com/dashboard")
             .get()
@@ -81,7 +151,8 @@ object TumblrAccountStore {
         return account
     }
 
-    // Same regex patterns as TumblrParser
+    // --- Dashboard HTML parsers (same regexes as TumblrParser) ---
+
     private val stateScriptRegex = Regex(
         "<script[^>]+id=['\"]__+INITIAL_STATE__+['\"][^>]*>(.*?)</script>",
         setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
@@ -98,22 +169,12 @@ object TumblrAccountStore {
 
         val root = runCatching { JSONObject(rawJson) }.getOrNull() ?: return ""
 
-        // Try top-level "name"
         root.optString("name", "").takeIf { it.isNotBlank() }?.let { return it }
-
-        // Try "blogs" array first entry
         root.optJSONArray("blogs")?.optJSONObject(0)?.optString("name", "")?.takeIf { it.isNotBlank() }?.let { return it }
-
-        // Try "account" object
         root.optJSONObject("account")?.optString("username", "")?.takeIf { it.isNotBlank() }?.let { return it }
-
-        // Try "blog" object
         root.optJSONObject("blog")?.optString("name", "")?.takeIf { it.isNotBlank() }?.let { return it }
-
-        // Try "user" object
         root.optJSONObject("user")?.optString("name", "")?.takeIf { it.isNotBlank() }?.let { return it }
 
         return ""
     }
-
 }
