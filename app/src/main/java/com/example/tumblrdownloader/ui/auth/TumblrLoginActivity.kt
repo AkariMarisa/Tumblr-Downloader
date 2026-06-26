@@ -49,9 +49,13 @@ class TumblrLoginActivity : AppCompatActivity() {
                 if (isLikelyLoggedIn(url)) {
                     Log.i(TAG, "Detected Tumblr logged-in state from URL: $url")
                     view?.evaluateJavascript(
-                        "(function() { try { return JSON.stringify(window.__INITIAL_STATE__); } catch(e) { return '{}'; } })()"
+                        "(function() { try { return window.__INITIAL_STATE__; } catch(e) { return null; } })()"
                     ) { json ->
-                        val name = parseUsername(json ?: "")
+                        if (json.isNullOrBlank() || json == "null") {
+                            fallbackLoginDone()
+                            return@evaluateJavascript
+                        }
+                        val name = parseUsername(json)
                         if (name != null) {
                             finishWithAccount(name)
                         } else {
