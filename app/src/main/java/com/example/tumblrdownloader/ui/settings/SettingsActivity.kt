@@ -3,9 +3,13 @@ package com.example.tumblrdownloader.ui.settings
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
+import android.os.FileUriExposedException
 import android.provider.DocumentsContract
 import android.widget.Toast
+import java.io.File
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
@@ -91,55 +95,54 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun openDownloadDirectory() {
         val treeUri = DownloadUtils.getCurrentDownloadDirectory(this)
+        val realDir = resolveDirectoryPath(treeUri)
 
-        // Tree URI + directory MIME type → file managers that support SAF open directly.
-        // Intent.createChooser() ensures the user sees the app picker to choose their
-        // preferred file manager (system Files, Material Files, FX, Solid Explorer, etc.)
+        // 1) Try file:// URI — works with Material Files, Solid Explorer, FX, etc.
+        //    Intent.createChooser() shows all apps that can handle resource/folder.
+        if (realDir != null) {
+            try {
+                val fileIntent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(Uri.fromFile(realDir), "resource/folder")
+                }
+                startActivity(Intent.createChooser(fileIntent, null))
+                return
+            } catch (_: FileUriExposedException) {
+                // Android 7+ blocks file:// URIs — fall through
+            } catch (_: ActivityNotFoundException) {
+                // No app installed that handles resource/folder — fall through
+            } catch (_: Exception) {
+            }
+        }
+
+        // 2) Fallback: SAF tree URI + directory MIME type (works with system Files app)
         try {
-            val docId = try { DocumentsContract.getTreeDocumentId(treeUri) } catch (_: Exception) { null }
-            val intent = Intent(Intent.ACTION_VIEW).apply {
+            val safIntent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(treeUri, DocumentsContract.Document.MIME_TYPE_DIR)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                // Material Files reads EXTRA_INITIAL_URI in its extraPath handler
-                if (docId != null) {
-                    putExtra(DocumentsContract.EXTRA_INITIAL_URI,
-                        DocumentsContract.buildDocumentUri(treeUri.authority ?: "com.android.externalstorage.documents", docId))
-                }
             }
-            startActivity(Intent.createChooser(intent, null))
+            startActivity(Intent.createChooser(safIntent, null))
             return
         } catch (_: Exception) {
-            // Path doesn't exist (default dir), or no file manager installed
         }
 
-        // 2) Fallback: parent path (default subdir may not exist yet)
-        val docId = try { DocumentsContract.getTreeDocumentId(treeUri) } catch (_: Exception) { null }
-        if (docId != null && docId.contains('/')) {
-            val parentDocId = docId.substringBeforeLast('/')
-            try {
-                val parentUri = DocumentsContract.buildTreeDocumentUri(
-                    treeUri.authority ?: "com.android.externalstorage.documents",
-                    parentDocId
-                )
-                val intent = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(parentUri, DocumentsContract.Document.MIME_TYPE_DIR)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                startActivity(Intent.createChooser(intent, null))
-                return
-            } catch (_: Exception) { }
-        }
-
-        // 3) Last resort: system directory picker
+        // 3) Last resort: system directory picker at the right location
         try {
-            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            val pickerIntent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
                 putExtra(DocumentsContract.EXTRA_INITIAL_URI, treeUri)
             }
-            startActivity(intent)
+            startActivity(pickerIntent)
         } catch (_: Exception) {
             Toast.makeText(this, R.string.open_download_directory_failed, Toast.LENGTH_LONG).show()
         }
+    }
+
+    /** Convert a tree URI (e.g. primary:Download/2) to the actual File path. */
+    private fun resolveDirectoryPath(treeUri: Uri): File? {
+        val docId = try { DocumentsContract.getTreeDocumentId(treeUri) } catch (_: Exception) { null } ?: return null
+        // SAF document ID for external storage: "primary:relative/path"
+        if (!docId.startsWith("primary:")) return null
+        val relativePath = docId.removePrefix("primary:")
+        return File(Environment.getExternalStorageDirectory(), relativePath)
     }
 
     private fun tryStartActivity(intent: Intent): Boolean {
