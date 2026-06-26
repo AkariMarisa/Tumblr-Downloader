@@ -92,39 +92,40 @@ class SettingsActivity : AppCompatActivity() {
     private fun openDownloadDirectory() {
         val treeUri = DownloadUtils.getCurrentDownloadDirectory(this)
 
-        // Tree URI → standard document URI (SAF format file managers expect)
-        val docId = try { DocumentsContract.getTreeDocumentId(treeUri) } catch (_: Exception) { null }
-        val authority = treeUri.authority ?: "com.android.externalstorage.documents"
-        val docUri = if (docId != null) {
-            DocumentsContract.buildDocumentUri(authority, docId)
-        } else {
-            treeUri
-        }
-
-        // 1) Try file manager with the exact path + directory MIME type
+        // Tree URI + directory MIME type → file managers that support SAF open directly.
+        // Intent.createChooser() ensures the user sees the app picker to choose their
+        // preferred file manager (system Files, Material Files, FX, Solid Explorer, etc.)
         try {
+            val docId = try { DocumentsContract.getTreeDocumentId(treeUri) } catch (_: Exception) { null }
             val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(docUri, DocumentsContract.Document.MIME_TYPE_DIR)
+                setDataAndType(treeUri, DocumentsContract.Document.MIME_TYPE_DIR)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                // Material Files reads EXTRA_INITIAL_URI in its extraPath handler
+                if (docId != null) {
+                    putExtra(DocumentsContract.EXTRA_INITIAL_URI,
+                        DocumentsContract.buildDocumentUri(treeUri.authority ?: "com.android.externalstorage.documents", docId))
+                }
             }
-            startActivity(intent)
+            startActivity(Intent.createChooser(intent, null))
             return
-        } catch (_: ActivityNotFoundException) {
-            // no file manager installed, fall through
         } catch (_: Exception) {
-            // e.g. UnsupportedOperationException if the path doesn't exist
+            // Path doesn't exist (default dir), or no file manager installed
         }
 
-        // 2) Try parent path (default subdir may not exist yet)
+        // 2) Fallback: parent path (default subdir may not exist yet)
+        val docId = try { DocumentsContract.getTreeDocumentId(treeUri) } catch (_: Exception) { null }
         if (docId != null && docId.contains('/')) {
             val parentDocId = docId.substringBeforeLast('/')
             try {
-                val parentUri = DocumentsContract.buildDocumentUri(authority, parentDocId)
+                val parentUri = DocumentsContract.buildTreeDocumentUri(
+                    treeUri.authority ?: "com.android.externalstorage.documents",
+                    parentDocId
+                )
                 val intent = Intent(Intent.ACTION_VIEW).apply {
                     setDataAndType(parentUri, DocumentsContract.Document.MIME_TYPE_DIR)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                startActivity(intent)
+                startActivity(Intent.createChooser(intent, null))
                 return
             } catch (_: Exception) { }
         }
