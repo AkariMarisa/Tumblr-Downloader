@@ -79,7 +79,7 @@ object TumblrParser {
         "frame1"
     )
 
-    private val httpClient by lazy {
+    internal val httpClient by lazy {
         val builder = OkHttpClient.Builder()
             .followRedirects(true)
             .followSslRedirects(true)

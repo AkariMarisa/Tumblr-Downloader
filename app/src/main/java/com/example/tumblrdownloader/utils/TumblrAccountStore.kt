@@ -50,12 +50,7 @@ object TumblrAccountStore {
     }
 
     fun fetchAccountInfo(context: Context): TumblrAccount {
-        val httpClient = okhttp3.OkHttpClient.Builder()
-            .followRedirects(true)
-            .followSslRedirects(true)
-            .build()
-
-        val cookieManager = android.webkit.CookieManager.getInstance()
+        val client = com.example.tumblrdownloader.utils.TumblrParser.httpClient
 
         val request = okhttp3.Request.Builder()
             .url("https://www.tumblr.com/svc/account/info")
@@ -63,10 +58,9 @@ object TumblrAccountStore {
             .addHeader("User-Agent", "Mozilla/5.0 (Android) TumblrDownloader/1.0")
             .addHeader("Accept", "application/json, text/javascript, */*; q=0.01")
             .addHeader("Referer", "https://www.tumblr.com/dashboard")
-            .addHeader("Cookie", cookieManager.getCookie("https://www.tumblr.com").orEmpty())
             .build()
 
-        val response = runCatching { httpClient.newCall(request).execute() }.getOrNull() ?: return TumblrAccount()
+        val response = runCatching { client.newCall(request).execute() }.getOrNull() ?: return TumblrAccount()
         if (!response.isSuccessful) return TumblrAccount()
 
         val body = response.body?.string().orEmpty()
