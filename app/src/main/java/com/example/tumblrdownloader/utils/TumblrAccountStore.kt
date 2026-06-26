@@ -50,33 +50,70 @@ object TumblrAccountStore {
     }
 
     fun fetchAccountInfo(context: Context): TumblrAccount {
-        val client = com.example.tumblrdownloader.utils.TumblrParser.httpClient
+        val cached = load(context)
+        if (cached.isLoggedIn) return cached
 
         val request = okhttp3.Request.Builder()
-            .url("https://www.tumblr.com/svc/account/info")
+            .url("https://www.tumblr.com/dashboard")
             .get()
-            .addHeader("User-Agent", "Mozilla/5.0 (Android) TumblrDownloader/1.0")
-            .addHeader("Accept", "application/json, text/javascript, */*; q=0.01")
-            .addHeader("Referer", "https://www.tumblr.com/dashboard")
+            .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36")
+            .addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .addHeader("Accept-Language", "en-US,en;q=0.9")
             .build()
 
-        val response = runCatching { client.newCall(request).execute() }.getOrNull() ?: return TumblrAccount()
-        if (!response.isSuccessful) return TumblrAccount()
+        val response = runCatching { TumblrParser.httpClient.newCall(request).execute() }.getOrNull() ?: return TumblrAccount()
+        if (!response.isSuccessful) {
+            response.close()
+            return TumblrAccount()
+        }
+        val html = response.body?.string().orEmpty()
+        response.close()
+        val name = extractUsernameFromDashboard(html)
+        if (name.isBlank()) return TumblrAccount()
 
-        val body = response.body?.string().orEmpty()
-        val json = runCatching { JSONObject(body) }.getOrNull() ?: return TumblrAccount()
-
-        val responseObj = json.optJSONObject("response") ?: return TumblrAccount()
-        val user = responseObj.optJSONObject("user") ?: return TumblrAccount()
-
-        val name = user.optString("name", "")
-        val avatarUrl = "https://api.tumblr.com/v2/blog/${name}/avatar/512"
-
-        return TumblrAccount(
-            username = name.ifBlank { null },
-            avatarUrl = avatarUrl,
-            status = user.optString("status", "").ifBlank { null },
-            isLoggedIn = name.isNotBlank()
-        ).also { save(context, it) }
+        val account = TumblrAccount(
+            username = name,
+            avatarUrl = "https://api.tumblr.com/v2/blog/${name}/avatar/512",
+            status = "在线",
+            isLoggedIn = true
+        )
+        save(context, account)
+        return account
     }
+
+    // Same regex patterns as TumblrParser
+    private val stateScriptRegex = Regex(
+        "<script[^>]+id=['\"]__+INITIAL_STATE__+['\"][^>]*>(.*?)</script>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+    private val jsonScriptRegex = Regex(
+        "<script[^>]+type=['\"]application/json['\"][^>]*>(.*?)</script>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+
+    private fun extractUsernameFromDashboard(html: String): String {
+        val rawJson = stateScriptRegex.find(html)?.groupValues?.getOrNull(1).orEmpty()
+            .ifEmpty { jsonScriptRegex.find(html)?.groupValues?.getOrNull(1).orEmpty() }
+        if (rawJson.isBlank()) return ""
+
+        val root = runCatching { JSONObject(rawJson) }.getOrNull() ?: return ""
+
+        // Try top-level "name"
+        root.optString("name", "").takeIf { it.isNotBlank() }?.let { return it }
+
+        // Try "blogs" array first entry
+        root.optJSONArray("blogs")?.optJSONObject(0)?.optString("name", "")?.takeIf { it.isNotBlank() }?.let { return it }
+
+        // Try "account" object
+        root.optJSONObject("account")?.optString("username", "")?.takeIf { it.isNotBlank() }?.let { return it }
+
+        // Try "blog" object
+        root.optJSONObject("blog")?.optString("name", "")?.takeIf { it.isNotBlank() }?.let { return it }
+
+        // Try "user" object
+        root.optJSONObject("user")?.optString("name", "")?.takeIf { it.isNotBlank() }?.let { return it }
+
+        return ""
+    }
+
 }
