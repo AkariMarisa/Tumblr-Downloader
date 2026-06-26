@@ -1,6 +1,7 @@
 package com.example.tumblrdownloader.utils
 
 import android.content.Context
+import android.os.Build
 import android.webkit.CookieManager
 
 import org.json.JSONObject
@@ -84,9 +85,15 @@ object TumblrCookieStore {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         prefs.edit().clear().apply()
 
+        // Also clear cached account info
+        TumblrAccountStore.clear(context)
+
         val cookieManager = CookieManager.getInstance()
-        for (host in trackedCookieHosts) {
-            cookieManager.setCookie(host, "")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            cookieManager.removeAllCookies(null)
+        } else {
+            @Suppress("DEPRECATION")
+            cookieManager.removeAllCookie()
         }
         cookieManager.flush()
     }

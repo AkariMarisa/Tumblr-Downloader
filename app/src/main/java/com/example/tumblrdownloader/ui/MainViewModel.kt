@@ -154,6 +154,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearSavedCookies() {
         TumblrCookieStore.clear(appContext)
+        _tumblrAccount.value = TumblrAccount()
         viewModelScope.launch {
             _parseEvent.emit(ParseEvent.Message("已清除本地登录 Cookie（解析不再自动复用）"))
         }
