@@ -1,11 +1,16 @@
 package com.example.tumblrdownloader.ui.settings
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.os.StrictMode
 import android.provider.DocumentsContract
 import android.widget.Toast
+import java.io.File
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
@@ -92,28 +97,50 @@ class SettingsActivity : AppCompatActivity() {
     private fun openDownloadDirectory() {
         val treeUri = DownloadUtils.getCurrentDownloadDirectory(this)
 
-        // Convert tree URI → document URI so the system Files app navigates
-        // to the exact subdirectory.
-        //   treeUri:   content://.../tree/primary%3ADownload%2Fsubdir
-        //   docUri:    content://.../document/primary%3ADownload%2Fsubdir
-        //
-        // IMPORTANT: Uri.Builder.path() re-encodes %2F back to /, splitting the
-        // document ID into multiple path segments.  We build the URI string
-        // directly via Uri.parse() to preserve the single-segment encoding.
+        // 1) SAF tree URI + directory MIME type → matches system Files app.
+        //    The DownloadUtils encoding fix ensures subdirectory doc IDs like
+        //    "primary:Download/2" stay as a single path segment.
         try {
-            val docId = DocumentsContract.getTreeDocumentId(treeUri)
-            val encodedDocId = Uri.encode(docId) // %3A + %2F preserved in a single segment
-            val authority = treeUri.authority ?: "com.android.externalstorage.documents"
-            val docUri = Uri.parse("${'$'}{treeUri.scheme}://${'$'}authority/document/${'$'}encodedDocId")
-            startActivity(Intent.createChooser(Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(docUri, DocumentsContract.Document.MIME_TYPE_DIR)
-            }, null))
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(treeUri, DocumentsContract.Document.MIME_TYPE_DIR)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(intent, null))
             return
+        } catch (_: ActivityNotFoundException) {
         } catch (_: Exception) {
-            // URI malformed, directory doesn't exist, or no app can handle it
         }
 
-        // Fallback: system directory picker (always works)
+        // 2) file:// URI for file managers that accept it
+        //    Temporarily disable StrictMode so FileUriExposedException isn't thrown.
+        try {
+            val docId = DocumentsContract.getTreeDocumentId(treeUri)
+            if (docId.startsWith("primary:")) {
+                val file = File(
+                    Environment.getExternalStorageDirectory(),
+                    docId.removePrefix("primary:")
+                )
+                val prevPolicy = if (Build.VERSION.SDK_INT >= 24)
+                    StrictMode.getVmPolicy() else null
+                if (prevPolicy != null) {
+                    StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().build())
+                }
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(Uri.fromFile(file), "resource/folder")
+                    }
+                    startActivity(Intent.createChooser(intent, null))
+                    return
+                } finally {
+                    if (prevPolicy != null) {
+                        StrictMode.setVmPolicy(prevPolicy)
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        // 3) Last resort: system directory picker
         try {
             startActivity(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
                 putExtra(DocumentsContract.EXTRA_INITIAL_URI, treeUri)
