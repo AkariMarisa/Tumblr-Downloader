@@ -91,23 +91,24 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun openDownloadDirectory() {
         val uri = DownloadUtils.getCurrentDownloadDirectory(this)
-        val pickerIntent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-            addFlags(
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-            )
-            putExtra(DocumentsContract.EXTRA_INITIAL_URI, uri)
-        }
 
+        // 1) Try opening with a file manager (ACTION_VIEW). Supports content:// URIs on
+        //    Google Files, Material Files, CX File Explorer, and most modern file managers.
         val viewIntent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, DocumentsContract.Document.MIME_TYPE_DIR)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
+        if (tryStartActivity(viewIntent)) return
 
-        if (!tryStartActivity(pickerIntent) && !tryStartActivity(viewIntent)) {
-            Toast.makeText(this, R.string.open_download_directory_failed, Toast.LENGTH_LONG).show()
+        // 2) Fallback: system directory picker, set to the current download location
+        val pickerIntent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            putExtra(DocumentsContract.EXTRA_INITIAL_URI, uri)
         }
+        if (tryStartActivity(pickerIntent)) return
+
+        // 3) Nothing worked
+        Toast.makeText(this, R.string.open_download_directory_failed, Toast.LENGTH_LONG).show()
     }
 
     private fun tryStartActivity(intent: Intent): Boolean {
