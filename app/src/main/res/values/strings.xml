@@ -33,6 +33,7 @@
     <string name="download_directory_display_placeholder">当前下载目录：默认</string>
     <string name="download_directory_display">当前下载目录：%1$s</string>
     <string name="download_dir_permission_warning">未获取到目录永久读写权限，请保留应用对该目录的授权后可长期使用。</string>
+    <string name="download_directory_reset_toast">已恢复默认下载目录</string>
     <string name="open_download_directory">打开下载目录</string>
     <string name="open_download_directory_failed">无法打开下载目录，请前往文件管理器手动查看下载目录。</string>
     <string name="menu_settings">设置</string>

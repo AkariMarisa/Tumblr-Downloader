@@ -49,7 +49,7 @@ object DownloadUtils {
             } else {
                 putString(KEY_CUSTOM_DOWNLOAD_DIR_URI, uri.toString())
             }
-        }.apply()
+        }.commit() // commit() over apply() so subsequent reads in the same frame see the change
     }
 
     fun clearCustomDownloadDirectory(context: Context) {

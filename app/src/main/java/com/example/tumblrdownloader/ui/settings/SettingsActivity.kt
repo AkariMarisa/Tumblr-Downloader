@@ -62,6 +62,7 @@ class SettingsActivity : AppCompatActivity() {
 
         binding.btnResetDownloadDir.setOnClickListener {
             viewModel.resetDownloadDirectory()
+            Toast.makeText(this, R.string.download_directory_reset_toast, Toast.LENGTH_SHORT).show()
         }
 
         binding.btnOpenDownloadDir.setOnClickListener {
