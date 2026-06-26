@@ -35,4 +35,15 @@
     <string name="download_dir_permission_warning">未获取到目录永久读写权限，请保留应用对该目录的授权后可长期使用。</string>
     <string name="open_download_directory">打开下载目录</string>
     <string name="open_download_directory_failed">无法打开下载目录，请前往文件管理器手动查看下载目录。</string>
+    <string name="menu_settings">设置</string>
+    <string name="menu_about">关于</string>
+    <string name="navigation_drawer_open">打开导航菜单</string>
+    <string name="navigation_drawer_close">关闭导航菜单</string>
+    <string name="drawer_not_logged_in">登录</string>
+    <string name="drawer_user_logged_in">已登录</string>
+    <string name="drawer_user_status_online">在线</string>
+    <string name="drawer_user_status_logged_in">登录状态：%1$s</string>
+    <string name="drawer_user_status_logged_out">未登录</string>
+    <string name="about_description">一个轻量级的 Tumblr 媒体下载工具。支持通过分享链接或粘贴链接的方式，快速下载 Tumblr 帖子中的图片和视频。</string>
+    <string name="about_version">版本：%1$s</string>
 </resources>

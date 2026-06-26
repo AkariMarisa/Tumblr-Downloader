@@ -42,6 +42,14 @@
             android:name=".ui.auth.TumblrLoginActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".ui.settings.SettingsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ui.about.AboutActivity"
+            android:exported="false" />
+
         <service
             android:name=".service.DownloadService"
             android:exported="false"

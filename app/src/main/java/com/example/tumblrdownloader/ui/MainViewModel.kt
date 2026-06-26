@@ -15,6 +15,8 @@ import com.example.tumblrdownloader.utils.ParsedTumblrMedia
 import com.example.tumblrdownloader.utils.TumblrCookieStore
 import com.example.tumblrdownloader.utils.TumblrParser
 import com.example.tumblrdownloader.utils.TumblrShareParseResult
+import com.example.tumblrdownloader.utils.TumblrAccount
+import com.example.tumblrdownloader.utils.TumblrAccountStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,6 +45,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _downloadDirectoryLabel = MutableStateFlow(DownloadUtils.getDownloadDirectoryLabel(appContext))
     val downloadDirectoryLabel: StateFlow<String> = _downloadDirectoryLabel.asStateFlow()
+
+    private val _tumblrAccount = MutableStateFlow(TumblrAccountStore.load(appContext))
+    val tumblrAccount: StateFlow<TumblrAccount> = _tumblrAccount.asStateFlow()
 
     private var pendingLoginUrl: String? = null
 
@@ -91,6 +96,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         refreshDownloadDirectoryLabel()
+        refreshTumblrAccount()
         emitCookieStatusHint()
     }
 
@@ -137,6 +143,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val url = pendingLoginUrl ?: return false
         pendingLoginUrl = null
         return enqueueFromUrl(url)
+    }
+
+    fun refreshTumblrAccount() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val account = TumblrAccountStore.fetchAccountInfo(appContext)
+            _tumblrAccount.value = account
+        }
     }
 
     fun clearSavedCookies() {
