@@ -7,13 +7,16 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
-import com.example.tumblrdownloader.databinding.ActivityTumblrLoginBinding
-import java.util.Locale
 import com.example.tumblrdownloader.R
+import com.example.tumblrdownloader.databinding.ActivityTumblrLoginBinding
+import com.example.tumblrdownloader.utils.TumblrAccountStore
 import com.example.tumblrdownloader.utils.TumblrCookieStore
+import org.json.JSONObject
+import java.util.Locale
 
 private const val TAG = "TumblrLoginActivity"
 
@@ -45,7 +48,16 @@ class TumblrLoginActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 if (isLikelyLoggedIn(url)) {
                     Log.i(TAG, "Detected Tumblr logged-in state from URL: $url")
-                    showLoginSavedNotice()
+                    view?.evaluateJavascript(
+                        "(function() { try { return JSON.stringify(window.__INITIAL_STATE__); } catch(e) { return '{}'; } })()"
+                    ) { json ->
+                        val name = parseUsername(json ?: "")
+                        if (name != null) {
+                            finishWithAccount(name)
+                        } else {
+                            fallbackLoginDone()
+                        }
+                    }
                 }
             }
         }
@@ -66,6 +78,40 @@ class TumblrLoginActivity : AppCompatActivity() {
             buildLoginUrl(loginTargetUrl)
         }
         binding.webView.loadUrl(initialUrl)
+    }
+
+    private fun finishWithAccount(username: String) {
+        TumblrCookieStore.saveFromWebView(this)
+        TumblrCookieStore.markSecurityNoticeShown(this)
+
+        val account = com.example.tumblrdownloader.utils.TumblrAccount(
+            username = username,
+            avatarUrl = "https://api.tumblr.com/v2/blog/${username}/avatar/512",
+            status = "在线",
+            isLoggedIn = true
+        )
+        TumblrAccountStore.save(this, account)
+
+        val data = Intent().putExtra(EXTRA_USERNAME, username)
+        setResult(Activity.RESULT_OK, data)
+        finish()
+    }
+
+    private fun parseUsername(json: String): String? {
+        if (json.isBlank()) return null
+        val root = runCatching { JSONObject(json) }.getOrNull() ?: return null
+
+        root.optString("name", "").takeIf { it.isNotBlank() }?.let { return it }
+        root.optJSONArray("blogs")?.optJSONObject(0)?.optString("name", "")?.takeIf { it.isNotBlank() }?.let { return it }
+        root.optJSONObject("account")?.optString("username", "")?.takeIf { it.isNotBlank() }?.let { return it }
+        root.optJSONObject("user")?.optString("name", "")?.takeIf { it.isNotBlank() }?.let { return it }
+
+        return null
+    }
+
+    private fun fallbackLoginDone() {
+        // Couldn't extract username via JS, fall back to old flow
+        showLoginSavedNotice()
     }
 
     private fun buildLoginUrl(targetUrl: String): String {
@@ -118,6 +164,7 @@ class TumblrLoginActivity : AppCompatActivity() {
 
     companion object {
         private const val EXTRA_LOGIN_URL = "extra_login_url"
+        const val EXTRA_USERNAME = "extra_username"
         private const val DEFAULT_LOGIN_URL = "https://www.tumblr.com/login"
 
         fun newIntent(context: Context, shareUrl: String): Intent {

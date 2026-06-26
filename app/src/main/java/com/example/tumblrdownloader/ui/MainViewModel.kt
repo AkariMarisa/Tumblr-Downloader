@@ -145,6 +145,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return enqueueFromUrl(url)
     }
 
+    fun setTumblrAccount(username: String) {
+        val account = TumblrAccount(
+            username = username,
+            avatarUrl = "https://api.tumblr.com/v2/blog/${username}/avatar/512",
+            status = "在线",
+            isLoggedIn = true
+        )
+        TumblrAccountStore.save(appContext, account)
+        _tumblrAccount.value = account
+    }
+
     fun refreshTumblrAccount() {
         viewModelScope.launch(Dispatchers.IO) {
             val account = TumblrAccountStore.fetchAccountInfo(appContext)

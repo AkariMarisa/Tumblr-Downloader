@@ -36,7 +36,17 @@ class MainActivity : AppCompatActivity() {
 
     private val loginLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
-    ) { if (it.resultCode == Activity.RESULT_OK) viewModel.refreshTumblrAccount() }
+    ) {
+        if (it.resultCode == Activity.RESULT_OK) {
+            val data = it.data
+            val username = data?.getStringExtra(com.example.tumblrdownloader.ui.auth.TumblrLoginActivity.EXTRA_USERNAME)
+            if (!username.isNullOrBlank()) {
+                viewModel.setTumblrAccount(username)
+            } else {
+                viewModel.refreshTumblrAccount()
+            }
+        }
+    }
 
     private val clipboardCallback = android.content.ClipboardManager.OnPrimaryClipChangedListener {
         handleClipboardAutoDownload()
