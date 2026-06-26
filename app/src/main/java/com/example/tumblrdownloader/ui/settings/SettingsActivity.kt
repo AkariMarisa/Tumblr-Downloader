@@ -6,9 +6,9 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
-import android.os.FileUriExposedException
 import android.provider.DocumentsContract
 import android.widget.Toast
+import androidx.core.content.FileProvider
 import java.io.File
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -97,19 +97,23 @@ class SettingsActivity : AppCompatActivity() {
         val treeUri = DownloadUtils.getCurrentDownloadDirectory(this)
         val realDir = resolveDirectoryPath(treeUri)
 
-        // 1) Try file:// URI — works with Material Files, Solid Explorer, FX, etc.
-        //    Intent.createChooser() shows all apps that can handle resource/folder.
+        // 1) FileProvider content:// URI (avoids FileUriExposedException) + inode/directory.
+        //    Material Files reads EXTRA_PATH_URI to navigate to the correct path.
+        //    Other file managers (FX, Solid Explorer) typically handle content:// URIs.
         if (realDir != null) {
             try {
-                val fileIntent = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(Uri.fromFile(realDir), "resource/folder")
+                val fpUri = FileProvider.getUriForFile(this, "${'$'}{packageName}.fileprovider", realDir)
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(fpUri, "inode/directory")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    // Material Files extra (package-specific, read by all incoming intents)
+                    putExtra("me.zhanghai.android.files.extra.PATH_URI",
+                        "file://${'$'}{realDir.absolutePath}")
+                    // OI File Manager standard extra
+                    putExtra("org.openintents.extra.ABSOLUTE_PATH", realDir.absolutePath)
                 }
-                startActivity(Intent.createChooser(fileIntent, null))
+                startActivity(Intent.createChooser(intent, null))
                 return
-            } catch (_: FileUriExposedException) {
-                // Android 7+ blocks file:// URIs — fall through
-            } catch (_: ActivityNotFoundException) {
-                // No app installed that handles resource/folder — fall through
             } catch (_: Exception) {
             }
         }
