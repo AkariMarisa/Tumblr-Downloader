@@ -18,6 +18,7 @@ import com.example.tumblrdownloader.model.DownloadItem
 import com.example.tumblrdownloader.model.DownloadStatus
 import com.example.tumblrdownloader.utils.DownloadUtils
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -30,6 +31,7 @@ import okhttp3.Request
 import android.provider.MediaStore
 import java.io.IOException
 import java.io.OutputStream
+import java.util.Collections
 import java.util.Locale
 import java.util.UUID
 import kotlin.random.Random
@@ -56,6 +58,10 @@ class DownloadService : Service() {
         private const val MAX_BYTES_PER_SECOND = 1_024L * 1_024L
         private const val RETRY_DELAY_MS = 1_000L
 
+        const val ACTION_START = "com.example.tumblrdownloader.action.START_DOWNLOAD"
+        const val ACTION_PAUSE = "com.example.tumblrdownloader.action.PAUSE_DOWNLOAD"
+        const val ACTION_REMOVE = "com.example.tumblrdownloader.action.REMOVE_DOWNLOAD"
+
         const val EXTRA_ITEM_ID = "extra_item_id"
         const val EXTRA_SOURCE_URL = "extra_source_url"
         const val EXTRA_MEDIA_URL = "extra_media_url"
@@ -71,6 +77,10 @@ class DownloadService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
     private lateinit var notificationManager: NotificationManager
     private val queueChannel = Channel<DownloadItem>(Channel.UNLIMITED)
+    private val suspendedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
+    private val removedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
+    private var activeTaskJob: Job? = null
+    private var activeItemId: String? = null
     private val client by lazy {
         OkHttpClient.Builder()
             .followRedirects(true)
@@ -88,13 +98,60 @@ class DownloadService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val item = parseIntent(intent) ?: return START_STICKY
+        when (intent?.action ?: ACTION_START) {
+            ACTION_START -> {
+                val item = parseIntent(intent) ?: return START_STICKY
+                suspendedItemIds.remove(item.id)
+                removedItemIds.remove(item.id)
 
-        startForeground(NOTIFICATION_ID, buildNotification(item.title, "排队中", 0, null))
-        queueChannel.trySend(item)
-        startWorkerIfNeeded()
+                startForeground(NOTIFICATION_ID, buildNotification(item.title, "排队中", 0, null))
+                queueChannel.trySend(item)
+                startWorkerIfNeeded()
+            }
+
+            ACTION_PAUSE -> {
+                pauseDownload(intent?.getStringExtra(EXTRA_ITEM_ID))
+                return START_STICKY
+            }
+
+            ACTION_REMOVE -> {
+                removeDownload(intent?.getStringExtra(EXTRA_ITEM_ID))
+                return START_STICKY
+            }
+
+            else -> {
+                val item = parseIntent(intent) ?: return START_STICKY
+                suspendedItemIds.remove(item.id)
+                removedItemIds.remove(item.id)
+
+                startForeground(NOTIFICATION_ID, buildNotification(item.title, "排队中", 0, null))
+                queueChannel.trySend(item)
+                startWorkerIfNeeded()
+            }
+        }
 
         return START_STICKY
+    }
+
+    private fun pauseDownload(itemId: String?) {
+        val id = itemId?.trim().orEmpty()
+        if (id.isBlank()) return
+
+        suspendedItemIds.add(id)
+        if (activeItemId == id) {
+            activeTaskJob?.cancel(CancellationException("Paused by user"))
+        }
+    }
+
+    private fun removeDownload(itemId: String?) {
+        val id = itemId?.trim().orEmpty()
+        if (id.isBlank()) return
+
+        removedItemIds.add(id)
+        suspendedItemIds.remove(id)
+        if (activeItemId == id) {
+            activeTaskJob?.cancel(CancellationException("Removed by user"))
+        }
     }
 
     private fun startWorkerIfNeeded() {
@@ -111,13 +168,30 @@ class DownloadService : Service() {
                     queueChannel.receive()
                 } ?: break
 
+                if (suspendedItemIds.contains(item.id) || removedItemIds.remove(item.id)) {
+                    emitProgress(item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = "已暂停"))
+                    continue
+                }
+
                 val gap = calcGapDelay()
                 if (gap > 0) {
                     emitProgress(item.copy(status = DownloadStatus.QUEUED, progress = 0, errorMessage = "等待 ${gap}ms 后开始下载"))
                     delay(gap)
+
+                    if (suspendedItemIds.contains(item.id) || removedItemIds.remove(item.id)) {
+                        emitProgress(item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = "已暂停"))
+                        continue
+                    }
                 }
 
-                processWithRetry(item)
+                activeItemId = item.id
+                activeTaskJob = serviceScope.launch {
+                    processWithRetry(item)
+                }
+                activeTaskJob?.join()
+
+                activeItemId = null
+                activeTaskJob = null
                 lastTaskCompletedAtMs = SystemClock.elapsedRealtime()
             }
         } finally {
@@ -160,6 +234,9 @@ class DownloadService : Service() {
                 }
                 output.onSuccess()
                 emitProgress(current.copy(status = DownloadStatus.COMPLETED, progress = 100, errorMessage = null))
+                return
+            } catch (e: CancellationException) {
+                output.onFailure()
                 return
             } catch (e: Exception) {
                 output.onFailure()
@@ -401,6 +478,7 @@ class DownloadService : Service() {
         return when (item.status) {
             DownloadStatus.QUEUED -> item.errorMessage ?: "排队中"
             DownloadStatus.DOWNLOADING -> item.errorMessage ?: "下载中"
+            DownloadStatus.PAUSED -> "已暂停"
             DownloadStatus.COMPLETED -> "下载完成"
             DownloadStatus.FAILED -> item.errorMessage ?: "下载失败"
         }

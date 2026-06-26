@@ -14,7 +14,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         android:clipToPadding="false"
-        android:padding="8dp" />
+        android:padding="4dp" />
 
     <TextView
         android:id="@+id/tvEmpty"

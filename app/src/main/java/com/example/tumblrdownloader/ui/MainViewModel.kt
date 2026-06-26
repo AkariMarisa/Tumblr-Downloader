@@ -22,8 +22,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+
+    companion object {
+        private const val MAX_CONCURRENT_DOWNLOADS = 1
+    }
 
     private val appContext = getApplication<Application>()
 
@@ -44,8 +49,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val serviceProgressListener = object : DownloadService.ProgressListener {
         override fun onDownloadUpdate(item: DownloadItem) {
             viewModelScope.launch(Dispatchers.Main) {
+                var shouldStartNext = false
                 updateDownloads { list ->
-                    list.map { existing -> if (existing.id == item.id) item else existing }
+                    list.map { existing ->
+                        if (existing.id != item.id) {
+                            return@map existing
+                        }
+
+                        shouldStartNext = existing.status == DownloadStatus.DOWNLOADING && item.status != DownloadStatus.DOWNLOADING
+                        item
+                    }
+                }
+
+                if (shouldStartNext) {
+                    scheduleQueuedDownloads()
                 }
             }
         }
@@ -54,20 +71,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         DownloadService.progressListener = serviceProgressListener
 
-        viewModelScope.launch(Dispatchers.IO) {
-            val restored = DownloadHistoryStore.load(appContext)
-            val normalized = restored.map {
-                if (it.status == DownloadStatus.DOWNLOADING) {
-                    it.copy(
-                        status = DownloadStatus.FAILED,
-                        progress = 0,
-                        errorMessage = "应用重启后状态已失效，可手动重试"
-                    )
-                } else {
-                    it
+        viewModelScope.launch {
+            val restored = withContext(Dispatchers.IO) {
+                val loaded = DownloadHistoryStore.load(appContext)
+                loaded.map {
+                    if (it.status == DownloadStatus.DOWNLOADING) {
+                        it.copy(
+                            status = DownloadStatus.FAILED,
+                            progress = 0,
+                            errorMessage = "应用重启后状态已失效，可手动重试"
+                        )
+                    } else {
+                        it
+                    }
                 }
             }
-            updateDownloads { normalized }
+            updateDownloads { restored }
+            scheduleQueuedDownloads()
         }
 
         refreshDownloadDirectoryLabel()
@@ -154,13 +174,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }
             .toMutableSet()
 
+        val baseTime = System.currentTimeMillis()
         val added = candidates
-            .map { media ->
+            .mapIndexed { index, media ->
                 DownloadItem(
                     sourceUrl = media.sourceUrl,
                     mediaUrl = media.mediaUrl,
                     title = displayFileName(media.sourceUrl, media.mediaUrl),
-                    type = media.type
+                    type = media.type,
+                    createdAt = baseTime + (candidates.size - index)
                 )
             }
             .filter { item ->
@@ -178,9 +200,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _parseEvent.emit(ParseEvent.Queued(added.size))
         }
-        added.forEach { item ->
-            startDownload(item)
-        }
+        scheduleQueuedDownloads()
     }
 
     private fun displayFileName(sourceUrl: String, mediaUrl: String): String {
@@ -217,8 +237,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return if (rawExt in setOf("jpg", "jpeg", "png", "gif", "webp", "avif", "mp4", "m3u8", "mov", "webm")) rawExt else "bin"
     }
 
+    private fun scheduleQueuedDownloads() {
+        val queued = _downloads.value
+            .filter { it.status == DownloadStatus.QUEUED }
+            .sortedByDescending { it.createdAt }
+
+        val runningCount = _downloads.value.count { it.status == DownloadStatus.DOWNLOADING }
+        val availableSlots = MAX_CONCURRENT_DOWNLOADS - runningCount
+        if (availableSlots <= 0 || queued.isEmpty()) return
+
+        queued.take(availableSlots).forEach { item ->
+            val toStart = item.copy(
+                status = DownloadStatus.DOWNLOADING,
+                progress = 0,
+                errorMessage = null,
+                retryCount = if (item.status == DownloadStatus.FAILED) 0 else item.retryCount
+            )
+            updateDownloads { list -> list.map { if (it.id == item.id) toStart else it } }
+            startDownload(toStart)
+        }
+    }
+
     private fun startDownload(item: DownloadItem) {
         val intent = Intent(appContext, DownloadService::class.java).apply {
+            action = DownloadService.ACTION_START
             putExtra(DownloadService.EXTRA_ITEM_ID, item.id)
             putExtra(DownloadService.EXTRA_SOURCE_URL, item.sourceUrl)
             putExtra(DownloadService.EXTRA_MEDIA_URL, item.mediaUrl)
@@ -234,21 +276,59 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun retryDownload(itemId: String) {
+    fun startOrResumeDownload(itemId: String) {
         val target = _downloads.value.firstOrNull { it.id == itemId } ?: return
-        if (target.status != DownloadStatus.FAILED || target.retryCount < target.maxRetries) {
-            return
-        }
+        if (target.status == DownloadStatus.DOWNLOADING || target.status == DownloadStatus.COMPLETED) return
 
-        val retried = target.copy(
-            status = DownloadStatus.QUEUED,
+        val runningCount = _downloads.value.count { it.status == DownloadStatus.DOWNLOADING }
+        val canStartNow = runningCount < MAX_CONCURRENT_DOWNLOADS
+
+        val toStart = target.copy(
+            status = if (canStartNow) DownloadStatus.DOWNLOADING else DownloadStatus.QUEUED,
             progress = 0,
             errorMessage = null,
-            retryCount = 0
+            retryCount = if (target.status == DownloadStatus.FAILED) 0 else target.retryCount
         )
+        updateDownloads { list -> list.map { if (it.id == itemId) toStart else it } }
 
-        updateDownloads { list -> list.map { if (it.id == itemId) retried else it } }
-        startDownload(retried)
+        if (canStartNow) {
+            startDownload(toStart)
+        }
+        scheduleQueuedDownloads()
+    }
+
+    fun pauseDownload(itemId: String) {
+        val target = _downloads.value.firstOrNull { it.id == itemId } ?: return
+        if (target.status == DownloadStatus.COMPLETED || target.status == DownloadStatus.PAUSED) return
+
+        updateDownloads { list ->
+            list.map {
+                if (it.id != itemId) it else it.copy(
+                    status = DownloadStatus.PAUSED,
+                    errorMessage = null
+                )
+            }
+        }
+
+        val intent = Intent(appContext, DownloadService::class.java).apply {
+            action = DownloadService.ACTION_PAUSE
+            putExtra(DownloadService.EXTRA_ITEM_ID, itemId)
+        }
+        appContext.startService(intent)
+
+        scheduleQueuedDownloads()
+    }
+
+    fun removeDownload(itemId: String) {
+        updateDownloads { list -> list.filterNot { it.id == itemId } }
+
+        val intent = Intent(appContext, DownloadService::class.java).apply {
+            action = DownloadService.ACTION_REMOVE
+            putExtra(DownloadService.EXTRA_ITEM_ID, itemId)
+        }
+        appContext.startService(intent)
+
+        scheduleQueuedDownloads()
     }
 
     fun notifyFromClipboard(url: String) {

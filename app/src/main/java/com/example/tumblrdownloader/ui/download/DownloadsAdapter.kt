@@ -17,7 +17,9 @@ import com.example.tumblrdownloader.model.MediaType
 
 class DownloadsAdapter(
     private val onClick: (DownloadItem) -> Unit,
-    private val onRetry: (DownloadItem) -> Unit
+    private val onStartOrResume: (DownloadItem) -> Unit,
+    private val onPause: (DownloadItem) -> Unit,
+    private val onRemove: (DownloadItem) -> Unit
 ) : ListAdapter<DownloadItem, DownloadsAdapter.DownloadVH>(DIFF) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): DownloadVH {
@@ -35,13 +37,38 @@ class DownloadsAdapter(
 
         fun bind(item: DownloadItem) {
             binding.tvTitle.text = item.title
-            binding.tvStatus.text = item.status.name
+            binding.tvStatus.text = statusText(item)
             binding.tvProgress.text = "${item.progress}%"
 
             if (item.status == DownloadStatus.FAILED && item.errorMessage.isNullOrBlank().not()) {
                 binding.tvProgress.text = item.errorMessage
             }
 
+            val canPause = item.status == DownloadStatus.DOWNLOADING
+            val canStart = item.status in setOf(DownloadStatus.QUEUED, DownloadStatus.PAUSED, DownloadStatus.FAILED)
+            binding.btnStart.isVisible = canStart
+            binding.btnPause.isVisible = canPause
+            binding.btnRemove.isVisible = true
+
+            if (canStart) {
+                binding.btnStart.setOnClickListener {
+                    onStartOrResume(item)
+                }
+            } else {
+                binding.btnStart.setOnClickListener(null)
+            }
+
+            if (canPause) {
+                binding.btnPause.setOnClickListener {
+                    onPause(item)
+                }
+            } else {
+                binding.btnPause.setOnClickListener(null)
+            }
+
+            binding.btnRemove.setOnClickListener {
+                onRemove(item)
+            }
             binding.ivThumb.clearColorFilter()
             binding.ivThumb.setBackgroundColor(0)
 
@@ -71,17 +98,17 @@ class DownloadsAdapter(
                     binding.ivThumb.setImageResource(android.R.drawable.ic_menu_help)
                 }
             }
-            val canRetry = item.status == DownloadStatus.FAILED && item.retryCount >= item.maxRetries
-            binding.btnRetry.isVisible = canRetry
-            if (canRetry) {
-                binding.btnRetry.setOnClickListener {
-                    onRetry(item)
-                }
-            } else {
-                binding.btnRetry.setOnClickListener(null)
-            }
-
             itemView.setOnClickListener { onClick(item) }
+        }
+
+        private fun statusText(item: DownloadItem): String {
+            return when (item.status) {
+                DownloadStatus.QUEUED -> "排队中"
+                DownloadStatus.DOWNLOADING -> "下载中"
+                DownloadStatus.PAUSED -> "已暂停"
+                DownloadStatus.COMPLETED -> "已完成"
+                DownloadStatus.FAILED -> "下载失败"
+            }
         }
     }
 

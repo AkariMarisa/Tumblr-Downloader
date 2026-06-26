@@ -11,6 +11,7 @@ enum class MediaType {
 enum class DownloadStatus {
     QUEUED,
     DOWNLOADING,
+    PAUSED,
     COMPLETED,
     FAILED
 }

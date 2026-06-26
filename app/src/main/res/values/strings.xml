@@ -19,6 +19,9 @@
     <string name="queued_message">已加入下载队列：%1$d 个任务</string>
     <string name="parsing_media">正在解析下载内容…</string>
     <string name="retry_download">重试下载</string>
+    <string name="start_download">开始下载</string>
+    <string name="pause_download">暂停下载</string>
+    <string name="remove_download">移除任务</string>
     <string name="clear_cookie">清除登录 Cookie</string>
     <string name="cookie_security_title">Cookie 安全说明</string>
     <string name="cookie_security_message">当前已检测到本地保存的 Tumblr 登录 Cookie，仅用于当前设备内访问解析，不会上传到任何服务器；请勿在公共设备长期保留，并可随时点击“清除登录 Cookie”移除。</string>

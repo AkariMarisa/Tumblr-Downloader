@@ -22,7 +22,9 @@ class DownloadsFragment : Fragment() {
 
     private val adapter = DownloadsAdapter(
         onClick = ::openViewer,
-        onRetry = { item -> viewModel.retryDownload(item.id) }
+        onStartOrResume = { item -> viewModel.startOrResumeDownload(item.id) },
+        onPause = { item -> viewModel.pauseDownload(item.id) },
+        onRemove = { item -> viewModel.removeDownload(item.id) }
     )
 
     override fun onCreateView(
