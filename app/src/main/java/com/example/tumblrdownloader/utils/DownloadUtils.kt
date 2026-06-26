@@ -36,10 +36,16 @@ object DownloadUtils {
 
     fun getCurrentDownloadDirectory(context: Context): Uri {
         return getCustomDownloadDirectory(context)
-            ?: DocumentsContract.buildTreeDocumentUri(
-                "com.android.externalstorage.documents",
-                "primary:${Environment.DIRECTORY_DOWNLOADS}/${getDefaultDownloadFolderName(context)}"
-            )
+            ?: buildDefaultDownloadTreeUri(context)
+    }
+
+    /** Build a tree URI for the default subdir with single-segment encoding.
+     *  DocumentsContract.buildTreeDocumentUri() uses appendPath() which would
+     *  split on '/' in the document ID, creating multiple path segments and
+     *  causing getTreeDocumentId() to return only the first part. */
+    private fun buildDefaultDownloadTreeUri(context: Context): Uri {
+        val docId = "primary:${Environment.DIRECTORY_DOWNLOADS}/${getDefaultDownloadFolderName(context)}"
+        return Uri.parse("content://com.android.externalstorage.documents/tree/${Uri.encode(docId)}")
     }
 
     fun setCustomDownloadDirectory(context: Context, uri: Uri?) {

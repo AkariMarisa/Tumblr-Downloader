@@ -93,16 +93,18 @@ class SettingsActivity : AppCompatActivity() {
         val treeUri = DownloadUtils.getCurrentDownloadDirectory(this)
 
         // Convert tree URI → document URI so the system Files app navigates
-        // to the exact subdirectory, not just the tree root.
+        // to the exact subdirectory.
         //   treeUri:   content://.../tree/primary%3ADownload%2Fsubdir
         //   docUri:    content://.../document/primary%3ADownload%2Fsubdir
+        //
+        // IMPORTANT: Uri.Builder.path() re-encodes %2F back to /, splitting the
+        // document ID into multiple path segments.  We build the URI string
+        // directly via Uri.parse() to preserve the single-segment encoding.
         try {
             val docId = DocumentsContract.getTreeDocumentId(treeUri)
-            // Uri.encode() encodes : → %3A and / → %2F so the entire doc ID
-            // becomes a single path segment (avoids double-encoding from buildDocumentUri)
-            val docUri = treeUri.buildUpon()
-                .path("/document/" + Uri.encode(docId))
-                .build()
+            val encodedDocId = Uri.encode(docId) // %3A + %2F preserved in a single segment
+            val authority = treeUri.authority ?: "com.android.externalstorage.documents"
+            val docUri = Uri.parse("${'$'}{treeUri.scheme}://${'$'}authority/document/${'$'}encodedDocId")
             startActivity(Intent.createChooser(Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(docUri, DocumentsContract.Document.MIME_TYPE_DIR)
             }, null))
