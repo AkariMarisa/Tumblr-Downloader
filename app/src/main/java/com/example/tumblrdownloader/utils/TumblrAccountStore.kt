@@ -59,10 +59,7 @@ object TumblrAccountStore {
      * Falls back to dashboard HTML parsing if the API call fails.
      */
     fun fetchAccountInfo(context: Context): TumblrAccount {
-        val cached = load(context)
-        if (cached.isLoggedIn) return cached
-
-        // Try API first
+        // Always try the API first — never return stale cached data without re-validation
         val apiAccount = fetchFromApi(context)
         if (apiAccount.isLoggedIn) return apiAccount
 

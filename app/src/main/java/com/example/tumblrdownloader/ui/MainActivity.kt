@@ -80,6 +80,12 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Refresh after returning from Settings (separate ViewModel instance there)
+        viewModel.refreshTumblrAccount()
+    }
+
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
