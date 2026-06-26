@@ -92,18 +92,19 @@ class SettingsActivity : AppCompatActivity() {
     private fun openDownloadDirectory() {
         val treeUri = DownloadUtils.getCurrentDownloadDirectory(this)
 
-        // Convert tree URI → document URI (file managers understand document URIs)
+        // Tree URI → standard document URI (SAF format file managers expect)
         val docId = try { DocumentsContract.getTreeDocumentId(treeUri) } catch (_: Exception) { null }
+        val authority = treeUri.authority ?: "com.android.externalstorage.documents"
         val docUri = if (docId != null) {
-            DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+            DocumentsContract.buildDocumentUri(authority, docId)
         } else {
             treeUri
         }
 
-        // 1) Try file manager with the exact path
+        // 1) Try file manager with the exact path + directory MIME type
         try {
             val intent = Intent(Intent.ACTION_VIEW).apply {
-                data = docUri
+                setDataAndType(docUri, DocumentsContract.Document.MIME_TYPE_DIR)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             startActivity(intent)
@@ -118,9 +119,9 @@ class SettingsActivity : AppCompatActivity() {
         if (docId != null && docId.contains('/')) {
             val parentDocId = docId.substringBeforeLast('/')
             try {
-                val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parentDocId)
+                val parentUri = DocumentsContract.buildDocumentUri(authority, parentDocId)
                 val intent = Intent(Intent.ACTION_VIEW).apply {
-                    data = parentUri
+                    setDataAndType(parentUri, DocumentsContract.Document.MIME_TYPE_DIR)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 startActivity(intent)
