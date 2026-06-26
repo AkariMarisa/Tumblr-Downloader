@@ -1,40 +1,50 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:gravity="center_horizontal"
-    android:padding="24dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingTop="56dp"
+    android:paddingBottom="24dp"
+    android:paddingStart="20dp"
+    android:paddingEnd="20dp"
     android:background="?attr/colorPrimaryVariant"
-    android:theme="@style/ThemeOverlay.MaterialComponents.Dark">
+    android:theme="@style/ThemeOverlay.MaterialComponents.Dark"
+    android:fitsSystemWindows="false">
 
     <ImageView
         android:id="@+id/ivDrawerAvatar"
-        android:layout_width="64dp"
-        android:layout_height="64dp"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
         android:scaleType="centerCrop"
         android:src="@android:drawable/sym_def_app_icon"
-        android:contentDescription="@string/app_name"
-        android:layout_marginBottom="8dp" />
+        android:contentDescription="@string/app_name" />
 
-    <TextView
-        android:id="@+id/tvDrawerUserName"
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:textSize="16sp"
-        android:textStyle="bold"
-        android:textColor="@android:color/white"
-        android:layout_marginBottom="4dp"
-        android:text="@string/drawer_not_logged_in" />
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:layout_marginStart="12dp">
 
-    <TextView
-        android:id="@+id/tvDrawerUserStatus"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:textSize="12sp"
-        android:textColor="#B3FFFFFF"
-        android:visibility="gone"
-        android:text="@string/drawer_user_status_logged_out" />
+        <TextView
+            android:id="@+id/tvDrawerUserName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:textColor="@android:color/white"
+            android:text="@string/drawer_not_logged_in" />
+
+        <TextView
+            android:id="@+id/tvDrawerUserStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:textColor="#B3FFFFFF"
+            android:visibility="gone"
+            android:text="@string/drawer_user_status_logged_out" />
+
+    </LinearLayout>
 
 </LinearLayout>
