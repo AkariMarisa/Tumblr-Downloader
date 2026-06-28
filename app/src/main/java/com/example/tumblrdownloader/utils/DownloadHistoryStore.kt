@@ -54,6 +54,8 @@ object DownloadHistoryStore {
             put("retryCount", item.retryCount)
             put("maxRetries", item.maxRetries)
             put("createdAt", item.createdAt)
+            put("downloadedBytes", item.downloadedBytes)
+            put("downloadFileUri", item.downloadFileUri)
         }
     }
 
@@ -79,7 +81,11 @@ object DownloadHistoryStore {
                 ?.ifBlank { null },
             retryCount = obj.optInt("retryCount"),
             maxRetries = obj.optInt("maxRetries", 3),
-            createdAt = obj.optLong("createdAt", System.currentTimeMillis())
+            createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
+            downloadedBytes = obj.optLong("downloadedBytes", 0L),
+            downloadFileUri = obj.takeIf { !it.isNull("downloadFileUri") }
+                ?.optString("downloadFileUri", null)
+                ?.ifBlank { null }
         )
     }
 }

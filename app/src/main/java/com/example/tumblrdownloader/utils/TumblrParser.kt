@@ -20,7 +20,7 @@ private const val TAG = "TumblrParser"
 
 object TumblrParser {
 
-    private val shareUrlRegex = Regex("(?i)^https?://(?:www\\.)?tumblr\\.com/[A-Za-z0-9_.-]+/\\d+")
+    private val shareUrlRegex = Regex("(?i)https?://(?:www\\.)?tumblr\\.com/[A-Za-z0-9_.-]+/\\d+")
     private val sourceParamRegex = Regex("([?&]source=[^&]+)")
     private val embedLinkRegex = Regex("data-href=\"([^\"]+)\"", RegexOption.IGNORE_CASE)
 
@@ -39,7 +39,7 @@ object TumblrParser {
 
     // Tumblrs usually embed the whole SSR payload in this block, easier to harvest true media URLs there.
     private val initialStateScriptRegex = Regex(
-        "<script[^>]+id=['\"]___+INITIAL_STATE___+['\"][^>]*>(.*?)</script>",
+        "<script[^>]+id=['\"]__+INITIAL_STATE__+['\"][^>]*>(.*?)</script>",
         setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
     )
     private val applicationJsonScriptRegex = Regex(

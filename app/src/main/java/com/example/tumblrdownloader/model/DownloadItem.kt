@@ -27,5 +27,9 @@ data class DownloadItem(
     val errorMessage: String? = null,
     val retryCount: Int = 0,
     val maxRetries: Int = 3,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    /** Bytes already written to disk for HTTP Range resume. */
+    val downloadedBytes: Long = 0L,
+    /** Content URI of the partial file for append-on-resume. */
+    val downloadFileUri: String? = null
 )

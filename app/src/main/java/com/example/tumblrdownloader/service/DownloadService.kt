@@ -16,6 +16,7 @@ import androidx.core.app.NotificationCompat
 import androidx.documentfile.provider.DocumentFile
 import com.example.tumblrdownloader.model.DownloadItem
 import com.example.tumblrdownloader.model.DownloadStatus
+import com.example.tumblrdownloader.utils.CompletedMediaStore
 import com.example.tumblrdownloader.utils.DownloadUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
@@ -37,6 +38,11 @@ import java.util.UUID
 import kotlin.random.Random
 
 class DownloadService : Service() {
+
+    private data class PauseState(
+        val fileUri: String,
+        val downloadedBytes: Long
+    )
 
     private data class DownloadTarget(
         val uri: Uri,
@@ -61,6 +67,7 @@ class DownloadService : Service() {
         const val ACTION_START = "com.example.tumblrdownloader.action.START_DOWNLOAD"
         const val ACTION_PAUSE = "com.example.tumblrdownloader.action.PAUSE_DOWNLOAD"
         const val ACTION_REMOVE = "com.example.tumblrdownloader.action.REMOVE_DOWNLOAD"
+        const val ACTION_CLEAR_ALL = "com.example.tumblrdownloader.action.CLEAR_ALL"
 
         const val EXTRA_ITEM_ID = "extra_item_id"
         const val EXTRA_SOURCE_URL = "extra_source_url"
@@ -69,6 +76,8 @@ class DownloadService : Service() {
         const val EXTRA_TITLE = "extra_title"
         const val EXTRA_RETRY_COUNT = "extra_retry_count"
         const val EXTRA_MAX_RETRIES = "extra_max_retries"
+        const val EXTRA_DOWNLOADED_BYTES = "extra_downloaded_bytes"
+        const val EXTRA_FILE_URI = "extra_file_uri"
 
         @Volatile
         var progressListener: ProgressListener? = null
@@ -79,8 +88,12 @@ class DownloadService : Service() {
     private val queueChannel = Channel<DownloadItem>(Channel.UNLIMITED)
     private val suspendedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
     private val removedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
+    private val queuedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
+    private val pauseStateMap = Collections.synchronizedMap(mutableMapOf<String, PauseState>())
     private var activeTaskJob: Job? = null
+    @Volatile
     private var activeItemId: String? = null
+    private var activeDownloadedBytes = 0L
     private val client by lazy {
         OkHttpClient.Builder()
             .followRedirects(true)
@@ -101,11 +114,23 @@ class DownloadService : Service() {
         when (intent?.action ?: ACTION_START) {
             ACTION_START -> {
                 val item = parseIntent(intent) ?: return START_STICKY
-                suspendedItemIds.remove(item.id)
-                removedItemIds.remove(item.id)
+                val saved = pauseStateMap.remove(item.id)
+                val resumedItem = if (saved != null) {
+                    item.copy(
+                        downloadedBytes = saved.downloadedBytes,
+                        downloadFileUri = saved.fileUri
+                    )
+                } else item
 
-                startForeground(NOTIFICATION_ID, buildNotification(item.title, "排队中", 0, null))
-                queueChannel.trySend(item)
+                suspendedItemIds.remove(resumedItem.id)
+                removedItemIds.remove(resumedItem.id)
+
+                if (!queuedItemIds.add(resumedItem.id)) {
+                    return START_STICKY
+                }
+
+                startForeground(NOTIFICATION_ID, buildNotification(resumedItem.title, "排队中", 0, null))
+                queueChannel.trySend(resumedItem)
                 startWorkerIfNeeded()
             }
 
@@ -119,15 +144,27 @@ class DownloadService : Service() {
                 return START_STICKY
             }
 
-            else -> {
-                val item = parseIntent(intent) ?: return START_STICKY
-                suspendedItemIds.remove(item.id)
-                removedItemIds.remove(item.id)
+            ACTION_CLEAR_ALL -> {
+                // Cancel active download
+                activeTaskJob?.cancel(CancellationException("Cleared by user"))
+                workerJob?.cancel()
 
-                startForeground(NOTIFICATION_ID, buildNotification(item.title, "排队中", 0, null))
-                queueChannel.trySend(item)
-                startWorkerIfNeeded()
+                // Drain the queue channel
+                while (queueChannel.tryReceive().isSuccess) { }
+
+                // Clear all internal state
+                queuedItemIds.clear()
+                suspendedItemIds.clear()
+                removedItemIds.clear()
+                pauseStateMap.clear()
+
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                notificationManager.cancel(NOTIFICATION_ID)
+                stopSelf()
+                return START_NOT_STICKY
             }
+
+            else -> return START_STICKY
         }
 
         return START_STICKY
@@ -137,7 +174,16 @@ class DownloadService : Service() {
         val id = itemId?.trim().orEmpty()
         if (id.isBlank()) return
 
+        // Don't write pauseStateMap here — the in-flight `processWithRetry` has
+        // the real fileUri. Its CancellationException handler is the sole writer.
+        if (activeItemId != id) {
+            suspendedItemIds.add(id)
+            queuedItemIds.remove(id)
+            return
+        }
+
         suspendedItemIds.add(id)
+        queuedItemIds.remove(id)
         if (activeItemId == id) {
             activeTaskJob?.cancel(CancellationException("Paused by user"))
         }
@@ -149,6 +195,8 @@ class DownloadService : Service() {
 
         removedItemIds.add(id)
         suspendedItemIds.remove(id)
+        queuedItemIds.remove(id)
+        pauseStateMap.remove(id)
         if (activeItemId == id) {
             activeTaskJob?.cancel(CancellationException("Removed by user"))
         }
@@ -168,6 +216,8 @@ class DownloadService : Service() {
                     queueChannel.receive()
                 } ?: break
 
+                queuedItemIds.remove(item.id)
+
                 if (suspendedItemIds.contains(item.id) || removedItemIds.remove(item.id)) {
                     emitProgress(item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = "已暂停"))
                     continue
@@ -185,6 +235,7 @@ class DownloadService : Service() {
                 }
 
                 activeItemId = item.id
+                activeDownloadedBytes = item.downloadedBytes
                 activeTaskJob = serviceScope.launch {
                     processWithRetry(item)
                 }
@@ -207,12 +258,60 @@ class DownloadService : Service() {
         return if (elapsed >= targetGapMs) 0L else targetGapMs - elapsed
     }
 
+    /** @return COMPLETED / FAILED on terminal states, null on pause / remove. */
     private suspend fun processWithRetry(item: DownloadItem) {
         var current = item
+        var isResume = current.downloadedBytes > 0L && !current.downloadFileUri.isNullOrBlank()
+        var bytesThisSession = 0L
+        var lastProgress = 0
+
         while (true) {
             emitProgress(current.copy(status = DownloadStatus.DOWNLOADING, progress = 0, errorMessage = retryHint(current)))
 
-            val output = runCatching { createDownloadTarget(current) }.getOrElse { e ->
+            // ── create or reuse the output target ──────────────────────────
+            val output = runCatching {
+                if (isResume && current.downloadedBytes > 0L) {
+                    val uri = Uri.parse(current.downloadFileUri)
+                    // Use actual file size on disk, not the stored value — the
+                    // stored offset may be stale (e.g. COMPLETED → PAUSED race).
+                    val actualBytes = try {
+                        contentResolver.openFileDescriptor(uri, "r")?.use { fd ->
+                            fd.statSize
+                        } ?: current.downloadedBytes
+                    } catch (_: Exception) {
+                        current.downloadedBytes
+                    }
+                    // Update the item so downloadWithRateLimit uses the correct Range header
+                    current = current.copy(downloadedBytes = actualBytes)
+                    // "wa" = write + append
+                    val os = contentResolver.openOutputStream(uri, "wa")
+                        ?: throw IOException("无法以追加模式打开文件：$uri")
+                    DownloadTarget(
+                        uri = uri,
+                        outputStream = os,
+                        onSuccess = {
+                            // ponytail: file fully written.  IS_PENDING update
+                            // is cosmetic (hides from gallery); ignore failures.
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                runCatching {
+                                    val done = ContentValues().apply {
+                                        put(MediaStore.Downloads.IS_PENDING, 0)
+                                    }
+                                    contentResolver.update(uri, done, null, null)
+                                }
+                            }
+                        },
+                        onFailure = {
+                            // Don't delete on pause; only on fatal errors or explicit remove
+                            runCatching {
+                                // Close quietly
+                            }
+                        }
+                    )
+                } else {
+                    createDownloadTarget(current)
+                }
+            }.getOrElse { e ->
                 emitProgress(
                     current.copy(
                         status = DownloadStatus.FAILED,
@@ -222,24 +321,72 @@ class DownloadService : Service() {
                 return
             }
 
+            // ── download ───────────────────────────────────────────────────
             try {
-                downloadWithRateLimit(current.mediaUrl, output.outputStream) { downloaded, totalBytes ->
+                downloadWithRateLimit(
+                    mediaUrl = current.mediaUrl,
+                    outputStream = output.outputStream,
+                    offsetBytes = if (isResume) current.downloadedBytes else 0L
+                ) { totalDownloaded, totalFileBytes ->
+                    bytesThisSession = totalDownloaded
+                    activeDownloadedBytes = totalDownloaded
+                    lastProgress = calcProgress(totalDownloaded, totalFileBytes)
+                    val percent = lastProgress
                     emitProgress(
                         current.copy(
                             status = DownloadStatus.DOWNLOADING,
-                            progress = calcProgress(downloaded, totalBytes),
+                            progress = percent,
                             errorMessage = retryHint(current)
                         )
                     )
                 }
                 output.onSuccess()
+                CompletedMediaStore.markCompleted(this@DownloadService, current.mediaUrl)
                 emitProgress(current.copy(status = DownloadStatus.COMPLETED, progress = 100, errorMessage = null))
                 return
             } catch (e: CancellationException) {
-                output.onFailure()
+                // ── pause ── save state so we can resume from this position
+                val state = pauseStateMap.remove(current.id)
+                val savedBytes = state?.downloadedBytes ?: bytesThisSession
+                val savedUri = (state?.fileUri?.takeIf { it.isNotBlank() }
+                    ?: output.uri.toString())
+
+                if (e.message?.contains("Paused") == true) {
+                    // Keep the file, save position for later resume
+                    pauseStateMap[current.id] = PauseState(
+                        fileUri = savedUri,
+                        downloadedBytes = savedBytes
+                    )
+                    emitProgress(current.copy(
+                        status = DownloadStatus.PAUSED,
+                        progress = lastProgress,
+                        downloadedBytes = savedBytes,
+                        downloadFileUri = savedUri,
+                        errorMessage = null
+                    ))
+                } else {
+                    // Removed — delete the partial file
+                    output.onFailure()
+                    runCatching { contentResolver.delete(output.uri, null, null) }
+                }
                 return
             } catch (e: Exception) {
                 output.onFailure()
+                runCatching { contentResolver.delete(output.uri, null, null) }
+
+                // ponytail: server doesn't support Range — fall back to a full download
+                if (isResume && (e.message?.contains("Range") == true || e.message?.contains("416") == true)) {
+                    isResume = false
+                    current = current.copy(downloadedBytes = 0L, downloadFileUri = null)
+                    emitProgress(current.copy(
+                        status = DownloadStatus.DOWNLOADING,
+                        progress = 0,
+                        errorMessage = "服务器不支持断点续传，从头开始"
+                    ))
+                    delay(RETRY_DELAY_MS)
+                    continue
+                }
+
                 if (current.retryCount >= current.maxRetries) {
                     emitProgress(
                         current.copy(
@@ -271,29 +418,65 @@ class DownloadService : Service() {
         }
     }
 
+    /**
+     * Download with optional HTTP Range resume.
+     *
+     * @param offsetBytes if > 0, send `Range: bytes={offsetBytes}-` and open the
+     *                    output stream in append mode.  The progress callback
+     *                    reports **absolute** bytes (offset + bytes in this request).
+     */
     private suspend fun downloadWithRateLimit(
         mediaUrl: String,
         outputStream: OutputStream,
+        offsetBytes: Long = 0L,
         onProgress: (downloaded: Long, total: Long) -> Unit
     ) {
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(mediaUrl)
             .get()
             .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
             .addHeader("Accept", "*/*")
             .addHeader("Accept-Language", "en-US,en;q=0.9")
             .addHeader("DNT", "1")
-            .build()
 
+        if (offsetBytes > 0L) {
+            requestBuilder.addHeader("Range", "bytes=$offsetBytes-")
+        }
+
+        val request = requestBuilder.build()
         val response = client.newCall(request).execute()
         response.use { safeResponse ->
+            // ponytail: when we sent a Range header but the server returned 200
+            // (full content) instead of 206 (partial), the server doesn't support
+            // resumable downloads.  Also handle 416 (Range Not Satisfiable).
+            if (offsetBytes > 0L && safeResponse.code != 206) {
+                throw IOException(
+                    if (safeResponse.code == 416)
+                        "HTTP 416 — Range not satisfiable, retrying from zero"
+                    else
+                        "HTTP ${safeResponse.code} — server does not support Range, retrying from zero"
+                )
+            }
             if (!safeResponse.isSuccessful) {
                 throw IOException("HTTP ${safeResponse.code} ${safeResponse.message}")
             }
 
             val responseBody = safeResponse.body ?: throw IOException("响应体为空")
-            val totalBytes = responseBody.contentLength()
-            var downloaded = 0L
+
+            // ── resolve total file size ────────────────────────────────────
+            var totalBytes = responseBody.contentLength()
+            if (offsetBytes > 0L) {
+                val contentRange = safeResponse.header("Content-Range")
+                if (contentRange != null) {
+                    val parsed = contentRange.substringAfter('/').toLongOrNull()
+                    if (parsed != null) totalBytes = parsed
+                } else if (totalBytes > 0L) {
+                    totalBytes = offsetBytes + totalBytes
+                }
+            }
+            if (totalBytes <= 0L) totalBytes = -1L
+
+            var downloadedThisRequest = 0L
             val startedAt = SystemClock.elapsedRealtime()
 
             responseBody.byteStream().use { input ->
@@ -304,22 +487,22 @@ class DownloadService : Service() {
                         if (len < 0) break
 
                         output.write(buffer, 0, len)
-                        downloaded += len.toLong()
-                        onProgress(downloaded, totalBytes)
-                        enforceRateLimit(downloaded, startedAt)
+                        downloadedThisRequest += len.toLong()
+                        onProgress(offsetBytes + downloadedThisRequest, totalBytes)
+                        enforceRateLimit(downloadedThisRequest, startedAt)
                     }
                 }
             }
         }
     }
 
-    private suspend fun enforceRateLimit(downloadedBytes: Long, startTimeMs: Long) {
+    private suspend fun enforceRateLimit(downloadedBytesThisSession: Long, startTimeMs: Long) {
         val elapsedMs = SystemClock.elapsedRealtime() - startTimeMs
         if (elapsedMs <= 0) return
 
         val maxAllowedBytes = MAX_BYTES_PER_SECOND * elapsedMs / 1000L
-        if (downloadedBytes > maxAllowedBytes) {
-            val extraBytes = downloadedBytes - maxAllowedBytes
+        if (downloadedBytesThisSession > maxAllowedBytes) {
+            val extraBytes = downloadedBytesThisSession - maxAllowedBytes
             val sleepMs = (extraBytes * 1000L) / MAX_BYTES_PER_SECOND
             if (sleepMs > 0) {
                 delay(sleepMs)
@@ -334,15 +517,15 @@ class DownloadService : Service() {
         return ((downloaded * 100L) / totalBytes).toInt().coerceIn(0, 100)
     }
 
+    // ── file / output helpers ─────────────────────────────────────────────
+
     private fun createDownloadTarget(item: DownloadItem): DownloadTarget {
         val ext = inferExtension(item.mediaUrl)
         val mimeType = inferMimeType(ext)
         val fileName = "${DownloadUtils.sanitizeFileName("${authorFromSource(item.sourceUrl)}-${mediaIdFromUrl(item.mediaUrl)}")}.${ext}"
 
         val custom = createCustomDirTarget(fileName, mimeType)
-        if (custom != null) {
-            return custom
-        }
+        if (custom != null) return custom
 
         return createMediaStoreTarget(fileName, mimeType)
     }
@@ -381,7 +564,9 @@ class DownloadService : Service() {
         return DownloadTarget(
             uri = file.uri,
             outputStream = output,
-            onSuccess = {},
+            onSuccess = {
+                // File is already visible in a custom dir; nothing extra to do
+            },
             onFailure = {
                 runCatching { contentResolver.delete(file.uri, null, null) }
             }
@@ -411,10 +596,12 @@ class DownloadService : Service() {
             outputStream = output,
             onSuccess = {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val done = ContentValues().apply {
-                        put(MediaStore.Downloads.IS_PENDING, 0)
+                    runCatching {
+                        val done = ContentValues().apply {
+                            put(MediaStore.Downloads.IS_PENDING, 0)
+                        }
+                        contentResolver.update(uri, done, null, null)
                     }
-                    contentResolver.update(uri, done, null, null)
                 }
             },
             onFailure = {
@@ -514,6 +701,9 @@ class DownloadService : Service() {
         val retryCount = safeIntent.getIntExtra(EXTRA_RETRY_COUNT, 0)
         val maxRetries = safeIntent.getIntExtra(EXTRA_MAX_RETRIES, 3)
 
+        val downloadedBytes = safeIntent.getLongExtra(EXTRA_DOWNLOADED_BYTES, 0L)
+        val downloadFileUri = safeIntent.getStringExtra(EXTRA_FILE_URI)
+
         return DownloadItem(
             id = id,
             sourceUrl = sourceUrl,
@@ -524,7 +714,9 @@ class DownloadService : Service() {
             progress = 0,
             errorMessage = null,
             retryCount = retryCount,
-            maxRetries = maxRetries
+            maxRetries = maxRetries,
+            downloadedBytes = downloadedBytes,
+            downloadFileUri = downloadFileUri?.takeIf { it.isNotBlank() }
         )
     }
 

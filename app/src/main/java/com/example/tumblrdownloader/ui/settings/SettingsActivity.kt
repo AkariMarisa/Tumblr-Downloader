@@ -96,25 +96,31 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun openDownloadDirectory() {
         val treeUri = DownloadUtils.getCurrentDownloadDirectory(this)
+        val docId = DocumentsContract.getTreeDocumentId(treeUri)
 
-        // 1) SAF tree URI + directory MIME type → matches system Files app.
-        //    The DownloadUtils encoding fix ensures subdirectory doc IDs like
-        //    "primary:Download/2" stay as a single path segment.
-        try {
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(treeUri, DocumentsContract.Document.MIME_TYPE_DIR)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        // 1) SAF document URI + vnd.android.document/directory
+        //    → system Files app (DocumentsUI), navigates to the exact subdirectory.
+        //    No createChooser — DocumentsUI is the default handler for this type
+        //    when no third-party file managers are installed.
+        //    No FLAG_GRANT_READ_URI_PERMISSION — SAF docs are world-readable.
+        if (docId.startsWith("primary:")) {
+            try {
+                val docUri = DocumentsContract.buildDocumentUri(
+                    "com.android.externalstorage.documents",
+                    docId
+                )
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(docUri, DocumentsContract.Document.MIME_TYPE_DIR)
+                }
+                startActivity(intent)
+                return
+            } catch (_: ActivityNotFoundException) {
+            } catch (_: Exception) {
             }
-            startActivity(Intent.createChooser(intent, null))
-            return
-        } catch (_: ActivityNotFoundException) {
-        } catch (_: Exception) {
         }
 
-        // 2) file:// URI for file managers that accept it
-        //    Temporarily disable StrictMode so FileUriExposedException isn't thrown.
+        // 2) file:// URI for file managers that accept resource/folder (Material Files etc.)
         try {
-            val docId = DocumentsContract.getTreeDocumentId(treeUri)
             if (docId.startsWith("primary:")) {
                 val file = File(
                     Environment.getExternalStorageDirectory(),
@@ -140,7 +146,19 @@ class SettingsActivity : AppCompatActivity() {
         } catch (_: Exception) {
         }
 
-        // 3) Last resort: system directory picker
+        // 3) SAF tree URI + vnd.android.document/directory → catch-all.
+        try {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(treeUri, DocumentsContract.Document.MIME_TYPE_DIR)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(intent)
+            return
+        } catch (_: ActivityNotFoundException) {
+        } catch (_: Exception) {
+        }
+
+        // 4) Last resort: system directory picker
         try {
             startActivity(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
                 putExtra(DocumentsContract.EXTRA_INITIAL_URI, treeUri)

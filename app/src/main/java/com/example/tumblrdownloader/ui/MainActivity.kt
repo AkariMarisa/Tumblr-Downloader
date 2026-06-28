@@ -3,6 +3,7 @@ package com.example.tumblrdownloader.ui
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.view.Menu
 import android.view.MenuItem
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -25,6 +26,10 @@ import com.google.android.material.tabs.TabLayoutMediator
 import com.example.tumblrdownloader.ui.download.DownloadFragment
 import com.example.tumblrdownloader.ui.download.DownloadsFragment
 import kotlinx.coroutines.launch
+import androidx.viewpager2.widget.ViewPager2
+import android.util.Log
+
+private const val TAG = "MainActivity"
 
 class MainActivity : AppCompatActivity() {
 
@@ -33,6 +38,7 @@ class MainActivity : AppCompatActivity() {
     private var lastAutoClipboardUrl: String? = null
     private val clipboardManager by lazy { getSystemService(android.content.ClipboardManager::class.java) }
     private lateinit var toggle: ActionBarDrawerToggle
+    private var clearAllMenu: MenuItem? = null
 
     private val loginLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -64,6 +70,12 @@ class MainActivity : AppCompatActivity() {
             tab.text = listOf("Download", "Downloads")[position]
         }.attach()
 
+        binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+            override fun onPageSelected(position: Int) {
+                clearAllMenu?.isVisible = (position == 1)
+            }
+        })
+
         setupDrawer()
         collectTumblrAccount()
         handleIncomingIntent(intent)
@@ -72,7 +84,6 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         clipboardManager.addPrimaryClipChangedListener(clipboardCallback)
-        handleClipboardAutoDownload()
     }
 
     override fun onStop() {
@@ -84,6 +95,9 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         // Refresh after returning from Settings (separate ViewModel instance there)
         viewModel.refreshTumblrAccount()
+        // Check clipboard when activity is fully in foreground (onResume).
+        // onStart may be too early for getPrimaryClip() on some Android versions.
+        handleClipboardAutoDownload()
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -153,9 +167,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.toolbar_menu, menu)
+        clearAllMenu = menu.findItem(R.id.menu_clear_all)
+        clearAllMenu?.isVisible = (binding.viewPager.currentItem == 1)
+        return true
+    }
+
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         if (toggle.onOptionsItemSelected(item)) return true
-        return super.onOptionsItemSelected(item)
+        return when (item.itemId) {
+            R.id.menu_clear_all -> {
+                viewModel.clearAllDownloads()
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
+        }
     }
 
     private fun handleIncomingIntent(intent: Intent?) {
@@ -173,10 +200,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleClipboardAutoDownload() {
-        val clipText = getClipboardText() ?: return
+        val clipText = try {
+            getClipboardText()
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Clipboard read blocked: ${e.message}")
+            null
+        } ?: return
+
         if (!TumblrParser.isTumblrShareUrl(clipText) || clipText == lastAutoClipboardUrl) return
+
+        Log.d(TAG, "Clipboard detected: ${clipText.take(80)}")
         if (viewModel.enqueueFromUrl(clipText)) {
             lastAutoClipboardUrl = clipText
+            viewModel.notifyFromClipboard(clipText)
         }
     }
 

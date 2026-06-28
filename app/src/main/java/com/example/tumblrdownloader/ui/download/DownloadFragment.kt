@@ -15,7 +15,7 @@ import com.example.tumblrdownloader.R
 import com.example.tumblrdownloader.databinding.FragmentDownloadBinding
 import com.example.tumblrdownloader.ui.MainActivity
 import com.example.tumblrdownloader.ui.MainViewModel
-import com.example.tumblrdownloader.ui.ParseEvent
+import com.example.tumblrdownloader.model.ParseEvent
 import com.example.tumblrdownloader.ui.auth.TumblrLoginActivity
 import kotlinx.coroutines.launch
 
