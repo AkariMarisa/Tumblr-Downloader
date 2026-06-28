@@ -399,6 +399,8 @@ class DownloadService : Service() {
                         current.copy(
                             status = DownloadStatus.DOWNLOADING,
                             progress = percent,
+                            downloadedBytes = totalDownloaded,
+                            downloadFileUri = output.uri.toString(),
                             errorMessage = retryHint(current)
                         )
                     )
@@ -447,8 +449,11 @@ class DownloadService : Service() {
                 // Remove from cache so next retry creates a fresh target
                 downloadTargetMap.remove(current.id)
 
-                // ponytail: server doesn't support Range — fall back to a full download
+                // ponytail: server doesn't support Range — fall back to a full download.
+                // Delete the partial file regardless of downloadTargetMap status;
+                // otherwise the old partial + new full download = two copies on disk.
                 if (isResume && (e.message?.contains("Range") == true || e.message?.contains("416") == true)) {
+                    runCatching { contentResolver.delete(output.uri, null, null) }
                     isResume = false
                     current = current.copy(downloadedBytes = 0L, downloadFileUri = null)
                     emitProgress(current.copy(
@@ -585,7 +590,7 @@ class DownloadService : Service() {
 
     private fun calcProgress(downloaded: Long, totalBytes: Long): Int {
         if (totalBytes <= 0L) {
-            return 0
+            return -1
         }
         return ((downloaded * 100L) / totalBytes).toInt().coerceIn(0, 100)
     }
@@ -774,7 +779,7 @@ class DownloadService : Service() {
             .setContentTitle(title)
             .setContentText(if (errorMessage == null) content else "$content - $errorMessage")
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setProgress(100, progress.coerceIn(0, 100), false)
+            .setProgress(100, progress.coerceIn(0, 100), progress < 0)
             .setAutoCancel(false)
             .setOngoing(true)
             .build()

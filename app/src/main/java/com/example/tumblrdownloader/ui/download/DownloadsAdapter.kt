@@ -38,11 +38,13 @@ class DownloadsAdapter(
         fun bind(item: DownloadItem) {
             binding.tvTitle.text = item.title
             binding.tvStatus.text = statusText(item)
-            binding.tvProgress.text = "${item.progress}%"
 
-            if (item.status == DownloadStatus.FAILED && item.errorMessage.isNullOrBlank().not()) {
-                binding.tvProgress.text = item.errorMessage
+            val progressText = when {
+                item.progress < 0 -> "--%"
+                item.status == DownloadStatus.FAILED && !item.errorMessage.isNullOrBlank() -> item.errorMessage
+                else -> "${item.progress}%"
             }
+            binding.tvProgress.text = progressText
 
             val canPause = item.status == DownloadStatus.DOWNLOADING
             val canStart = item.status in setOf(DownloadStatus.QUEUED, DownloadStatus.PAUSED, DownloadStatus.FAILED)
