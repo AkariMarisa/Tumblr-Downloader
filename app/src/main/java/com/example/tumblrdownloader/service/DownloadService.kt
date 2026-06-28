@@ -90,6 +90,13 @@ class DownloadService : Service() {
     private val removedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
     private val queuedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
     private val pauseStateMap = Collections.synchronizedMap(mutableMapOf<String, PauseState>())
+
+    /**
+     * Cached download URIs — once a file is created for an item, reuse the
+     * same URI on retry (avoids MediaStore's "(N)" filename mutations).
+     */
+    private val downloadTargetMap = Collections.synchronizedMap(mutableMapOf<String, Uri>())
+
     private var activeTaskJob: Job? = null
     @Volatile
     private var activeItemId: String? = null
@@ -157,6 +164,7 @@ class DownloadService : Service() {
                 suspendedItemIds.clear()
                 removedItemIds.clear()
                 pauseStateMap.clear()
+                downloadTargetMap.clear()
 
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 notificationManager.cancel(NOTIFICATION_ID)
@@ -197,6 +205,7 @@ class DownloadService : Service() {
         suspendedItemIds.remove(id)
         queuedItemIds.remove(id)
         pauseStateMap.remove(id)
+        downloadTargetMap.remove(id)
         if (activeItemId == id) {
             activeTaskJob?.cancel(CancellationException("Removed by user"))
         }
@@ -261,6 +270,7 @@ class DownloadService : Service() {
     /** @return COMPLETED / FAILED on terminal states, null on pause / remove. */
     private suspend fun processWithRetry(item: DownloadItem) {
         var current = item
+
         var isResume = current.downloadedBytes > 0L && !current.downloadFileUri.isNullOrBlank()
         var bytesThisSession = 0L
         var lastProgress = 0
@@ -309,7 +319,60 @@ class DownloadService : Service() {
                         }
                     )
                 } else {
-                    createDownloadTarget(current)
+                    // ponytail: reuse cached URI if one already exists for this
+                    // item (e.g. from a previous retry attempt).  MediaStore
+                    // would otherwise create "(N)" copies on every retry.
+                    val cachedUri = downloadTargetMap[current.id]
+                    if (cachedUri != null) {
+                        android.util.Log.d("DownloadSvc", "reusing cached URI for ${current.id}: $cachedUri")
+                        val actualBytes = try {
+                            contentResolver.openFileDescriptor(cachedUri, "r")?.use { fd ->
+                                fd.statSize
+                            } ?: 0L
+                        } catch (_: Exception) { 0L }
+                        current = current.copy(downloadedBytes = actualBytes, downloadFileUri = cachedUri.toString())
+                        if (actualBytes > 0L) {
+                            // File exists with data — resume
+                            if (current.downloadedBytes > 0L) isResume = true
+                            val os = contentResolver.openOutputStream(cachedUri, "wa")
+                                ?: throw IOException("无法以追加模式打开缓存文件：$cachedUri")
+                            DownloadTarget(
+                                uri = cachedUri,
+                                outputStream = os,
+                                onSuccess = {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                        runCatching {
+                                            val done = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
+                                            contentResolver.update(cachedUri, done, null, null)
+                                        }
+                                    }
+                                },
+                                onFailure = { /* keep cache on failure */ }
+                            )
+                        } else {
+                            // File was deleted or is empty — create fresh but
+                            // use the same URI (overwrite).
+                            val os = contentResolver.openOutputStream(cachedUri, "wt")
+                                ?: throw IOException("无法覆盖缓存文件：$cachedUri")
+                            DownloadTarget(
+                                uri = cachedUri,
+                                outputStream = os,
+                                onSuccess = {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                        runCatching {
+                                            val done = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
+                                            contentResolver.update(cachedUri, done, null, null)
+                                        }
+                                    }
+                                },
+                                onFailure = { /* keep cache */ }
+                            )
+                        }
+                    } else {
+                        val target = createDownloadTarget(current)
+                        downloadTargetMap[current.id] = target.uri
+                        target
+                    }
                 }
             }.getOrElse { e ->
                 emitProgress(
@@ -371,8 +434,18 @@ class DownloadService : Service() {
                 }
                 return
             } catch (e: Exception) {
-                output.onFailure()
-                runCatching { contentResolver.delete(output.uri, null, null) }
+                // ponytail: for cached URIs (retry), don't delete the file —
+                // truncate (create fresh) on the same URI instead.  Only
+                // delete uncached (first-attempt) files.
+                if (downloadTargetMap.containsKey(current.id)) {
+                    // cached: just close, keep file on disk for reuse
+                    output.onFailure()
+                } else {
+                    output.onFailure()
+                    runCatching { contentResolver.delete(output.uri, null, null) }
+                }
+                // Remove from cache so next retry creates a fresh target
+                downloadTargetMap.remove(current.id)
 
                 // ponytail: server doesn't support Range — fall back to a full download
                 if (isResume && (e.message?.contains("Range") == true || e.message?.contains("416") == true)) {
@@ -580,10 +653,32 @@ class DownloadService : Service() {
             MediaStore.Downloads.EXTERNAL_CONTENT_URI
         }
 
+        val folderName = DownloadUtils.getDefaultDownloadFolderName(this@DownloadService)
+
+        // ponytail: delete stale file AND stale MediaStore rows before
+        // inserting.  MediaStore creates "(1)" copies when the filename OR a
+        // database row with the same display_name already exists.
+        val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/$folderName"
+        val fsPath = java.io.File(
+            Environment.getExternalStorageDirectory(), relativePath + "/$fileName"
+        )
+        if (fsPath.exists()) {
+            android.util.Log.d("DownloadSvc", "createMediaStoreTarget: deleting stale file: $fileName")
+            fsPath.delete()
+        }
+        // Delete any stale MediaStore rows — they cause "(1)" naming even if
+        // the file was already deleted.
+        runCatching {
+            val delWhere = "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.RELATIVE_PATH} = ?"
+            val delArgs = arrayOf(fileName, relativePath)
+            val deleted = contentResolver.delete(collection, delWhere, delArgs)
+            if (deleted > 0) android.util.Log.d("DownloadSvc", "deleted $deleted stale MediaStore rows")
+        }
+
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
             put(MediaStore.Downloads.MIME_TYPE, mimeType)
-            put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/${DownloadUtils.getDefaultDownloadFolderName(this@DownloadService)}")
+            put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$folderName")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(MediaStore.Downloads.IS_PENDING, 1)
             }
@@ -597,9 +692,7 @@ class DownloadService : Service() {
             onSuccess = {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     runCatching {
-                        val done = ContentValues().apply {
-                            put(MediaStore.Downloads.IS_PENDING, 0)
-                        }
+                        val done = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
                         contentResolver.update(uri, done, null, null)
                     }
                 }

@@ -41,6 +41,8 @@ class DownloadStateManager(private val app: Application) {
     private val _items = MutableStateFlow<List<DownloadItem>>(emptyList())
     val items: StateFlow<List<DownloadItem>> = _items.asStateFlow()
 
+    private var isParsing = false
+
     // ── parse events emitted to UI ─────────────────────────────────────
     private val _parseEvent = MutableSharedFlow<ParseEvent>(extraBufferCapacity = 4)
     val parseEvent = _parseEvent.asSharedFlow()
@@ -50,6 +52,7 @@ class DownloadStateManager(private val app: Application) {
     // ── command queue (single consumer processes one at a time) ────────
     private sealed class Cmd {
         data class Append(val candidates: List<ParsedTumblrMedia>) : Cmd()
+        data class Restore(val items: List<DownloadItem>) : Cmd()
         data class StartOrResume(val itemId: String) : Cmd()
         data class Pause(val itemId: String) : Cmd()
         data class Remove(val itemId: String) : Cmd()
@@ -73,32 +76,38 @@ class DownloadStateManager(private val app: Application) {
         }
     }
 
-    /** Parse and queue items from a Tumblr share URL.  Returns false if invalid. */
+    /** Parse and queue items from a Tumblr share URL.  Returns false if invalid or already parsing. */
     fun enqueueFromUrl(rawUrl: String): Boolean {
+        if (isParsing) return false
         val url = TumblrParser.firstTumblrUrl(rawUrl.trim()) ?: return false
+
+        isParsing = true
         scope.launch(Dispatchers.IO) {
-            val result = try {
-                TumblrParser.parseShareUrl(url)
-            } catch (e: Exception) {
-                // network / parse errors are reported inside parseShareUrl as Error
-                _parseEvent.tryEmit(ParseEvent.Message("解析失败：${e.message ?: "未知错误"}"))
-                return@launch
-            }
-            withContext(Dispatchers.Main) {
-                when (result) {
-                    is TumblrShareParseResult.Success -> cmdCh.trySend(Cmd.Append(result.media))
-                    is TumblrShareParseResult.LoginRequired -> {
-                        pendingLoginUrl = result.url.ifBlank { url }
-                        _parseEvent.tryEmit(
-                            ParseEvent.LoginRequired(
-                                url = result.url.ifBlank { url },
-                                message = "登录后可重试。"
+            try {
+                val result = TumblrParser.parseShareUrl(url)
+                withContext(Dispatchers.Main) {
+                    when (result) {
+                        is TumblrShareParseResult.Success -> {
+                            android.util.Log.d("DownloadSM", "enqueueFromUrl: ${result.media.size} candidates")
+                            cmdCh.trySend(Cmd.Append(result.media))
+                        }
+                        is TumblrShareParseResult.LoginRequired -> {
+                            pendingLoginUrl = result.url.ifBlank { url }
+                            _parseEvent.tryEmit(
+                                ParseEvent.LoginRequired(
+                                    url = result.url.ifBlank { url },
+                                    message = "登录后可重试。"
+                                )
                             )
-                        )
+                        }
+                        is TumblrShareParseResult.Error -> _parseEvent.tryEmit(ParseEvent.Message(result.message))
+                        is TumblrShareParseResult.Empty -> _parseEvent.tryEmit(ParseEvent.Message(result.message))
                     }
-                    is TumblrShareParseResult.Error -> _parseEvent.tryEmit(ParseEvent.Message(result.message))
-                    is TumblrShareParseResult.Empty -> _parseEvent.tryEmit(ParseEvent.Message(result.message))
                 }
+            } catch (e: Exception) {
+                _parseEvent.tryEmit(ParseEvent.Message("解析失败：${e.message ?: "未知错误"}"))
+            } finally {
+                isParsing = false
             }
         }
         return true
@@ -106,10 +115,7 @@ class DownloadStateManager(private val app: Application) {
 
     /** Directly restore a set of DownloadItems (e.g. from persistence). */
     fun restore(items: List<DownloadItem>) {
-        // Items from persistence are fully formed — just set the list directly.
-        // No dedup needed (they came from us).
-        _items.value = items.sortedByDescending { it.createdAt }
-        startNextIfSlotAvailable()
+        cmdCh.trySend(Cmd.Restore(items))
     }
 
     fun startOrResume(itemId: String) { cmdCh.trySend(Cmd.StartOrResume(itemId)) }
@@ -130,6 +136,7 @@ class DownloadStateManager(private val app: Application) {
     private fun process(cmd: Cmd) {
         when (cmd) {
             is Cmd.Append -> processAppend(cmd.candidates)
+            is Cmd.Restore -> processRestore(cmd.items)
             is Cmd.StartOrResume -> processStartOrResume(cmd.itemId)
             is Cmd.Pause -> processPause(cmd.itemId)
             is Cmd.Remove -> processRemove(cmd.itemId)
@@ -141,12 +148,14 @@ class DownloadStateManager(private val app: Application) {
 
     // ── Append (from parse result) ─────────────────────────────────────
     private fun processAppend(candidates: List<ParsedTumblrMedia>) {
+        android.util.Log.d("DownloadSM", "processAppend: ${candidates.size} candidates")
         if (candidates.isEmpty()) {
             _parseEvent.tryEmit(ParseEvent.Message("该链接未识别到可下载媒体"))
             return
         }
 
         val existing = _items.value
+        android.util.Log.d("DownloadSM", "processAppend: ${existing.size} existing items")
         val existingKeys = existing.map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }.toMutableSet()
 
         val baseTime = System.currentTimeMillis()
@@ -165,15 +174,37 @@ class DownloadStateManager(private val app: Application) {
             .filter { existingKeys.add(DownloadUtils.normalizeMediaIdentity(it.mediaUrl)) }
             .toList()
 
+        android.util.Log.d("DownloadSM", "processAppend: ${added.size} new items after dedup")
+
         if (added.isEmpty()) {
             _parseEvent.tryEmit(ParseEvent.Message("该链接中的媒体已在下载列表中，已跳过重复项。"))
             return
+        }
+
+        // Log the identities of added items
+        added.forEach { item ->
+            android.util.Log.d("DownloadSM", "processAppend: adding id=${item.id} normalized=${DownloadUtils.normalizeMediaIdentity(item.mediaUrl)}")
         }
 
         _items.value = (added + existing).sortedByDescending { it.createdAt }
         _parseEvent.tryEmit(ParseEvent.Queued(added.size))
         dirty = true
         startNextIfSlotAvailable()
+    }
+
+    // ── Restore (from persistence) ─────────────────────────────────────
+    private fun processRestore(items: List<DownloadItem>) {
+        val existing = _items.value
+        val existingNormIds = existing.map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }.toSet()
+        val merged = (existing + items.filterNot {
+            DownloadUtils.normalizeMediaIdentity(it.mediaUrl) in existingNormIds
+        }).sortedByDescending { it.createdAt }
+        android.util.Log.d("DownloadSM", "processRestore: ${existing.size} existing + ${items.size} history = ${merged.size} merged")
+        _items.value = merged
+        dirty = true
+        // ponytail: do NOT auto-start restored items — files from the previous
+        // session still exist on disk.  Auto-starting would create "(1)" copies
+        // via MediaStore's name conflict resolution.  User clicks Start manually.
     }
 
     // ── Start / Resume ──────────────────────────────────────────────────
