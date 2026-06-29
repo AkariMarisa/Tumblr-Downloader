@@ -8,7 +8,7 @@
     android:paddingBottom="24dp"
     android:paddingStart="20dp"
     android:paddingEnd="20dp"
-    android:background="?attr/colorPrimaryVariant"
+    android:background="?attr/colorPrimary"
     android:theme="@style/ThemeOverlay.MaterialComponents.Dark"
     android:fitsSystemWindows="false">
 

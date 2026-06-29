@@ -31,9 +31,8 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/settings_category_system"
-                android:textSize="14sp"
+                style="?attr/textAppearanceTitleSmall"
                 android:textColor="?attr/colorPrimary"
-                android:fontFamily="sans-serif-medium"
                 android:paddingHorizontal="16dp"
                 android:paddingTop="24dp"
                 android:paddingBottom="4dp" />
@@ -147,9 +146,8 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/settings_category_session"
-                android:textSize="14sp"
+                style="?attr/textAppearanceTitleSmall"
                 android:textColor="?attr/colorPrimary"
-                android:fontFamily="sans-serif-medium"
                 android:paddingHorizontal="16dp"
                 android:paddingBottom="4dp" />
 
