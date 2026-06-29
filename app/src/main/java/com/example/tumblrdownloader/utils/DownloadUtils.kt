@@ -64,10 +64,19 @@ object DownloadUtils {
 
     fun getDownloadDirectoryLabel(context: Context): String {
         val custom = getCustomDownloadDirectory(context)
+        val defaultPath = "${Environment.DIRECTORY_DOWNLOADS}/${getDefaultDownloadFolderName(context)}"
         return if (custom == null) {
-            "Download/${getDefaultDownloadFolderName(context)}"
+            defaultPath
         } else {
-            custom.path?.trim('/')?.substringAfterLast('/')?.trim().orEmpty().ifBlank { custom.toString() }
+            // Extract readable path from the SAF tree URI document ID
+            // content://.../tree/primary:Download/Tumblr_Downloader → Download/Tumblr_Downloader
+            try {
+                val docId = DocumentsContract.getTreeDocumentId(custom)
+                val path = docId.removePrefix("primary:")
+                if (path.isNotBlank()) path else defaultPath
+            } catch (_: Exception) {
+                defaultPath
+            }
         }
     }
 

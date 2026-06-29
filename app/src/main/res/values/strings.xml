@@ -92,8 +92,14 @@
     <!-- Account -->
     <string name="status_online">Online</string>
 
+    <!-- Settings categories -->
+    <string name="settings_category_system">System</string>
+    <string name="settings_category_session">Session</string>
+    <string name="download_directory_title">Download directory</string>
+
     <!-- Language / settings -->
     <string name="settings_language">Language</string>
+    <string name="choose">Choose</string>
     <string name="language_system">System default</string>
     <string name="language_zh">中文</string>
     <string name="language_en">English</string>

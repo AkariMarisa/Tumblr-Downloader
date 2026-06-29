@@ -104,9 +104,20 @@ class SettingsActivity : AppCompatActivity() {
         return super.onOptionsItemSelected(item)
     }
 
+    private fun getLanguageDisplayName(): String {
+        val locale = LocaleHelper.getPersistedLocale(this)
+        return when {
+            locale == null -> getString(R.string.language_system)
+            locale.toLanguageTag().startsWith("zh") -> getString(R.string.language_zh)
+            else -> getString(R.string.language_en)
+        }
+    }
+
     private fun setupLanguageSelector() {
         val current = LocaleHelper.getPersistedLocale(this)
-        val tag = current.toLanguageTag()
+
+        binding.tvCurrentLanguage.text = getLanguageDisplayName()
+
         binding.btnLanguage.setOnClickListener {
             val items = arrayOf(
                 getString(R.string.language_system),
@@ -114,8 +125,8 @@ class SettingsActivity : AppCompatActivity() {
                 getString(R.string.language_en)
             )
             val checked = when {
-                tag.isBlank() || tag.startsWith("und") -> 0
-                tag.startsWith("zh") -> 1
+                current == null -> 0
+                current.toLanguageTag().startsWith("zh") -> 1
                 else -> 2
             }
             android.app.AlertDialog.Builder(this)

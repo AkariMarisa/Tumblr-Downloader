@@ -9,11 +9,11 @@ object LocaleHelper {
     private const val PREFS_NAME = "locale_prefs"
     private const val KEY_LANG = "language_code"
 
-    /** Returns the persisted locale, or the system default if none is saved. */
-    fun getPersistedLocale(context: Context): Locale {
+    /** Returns the persisted locale, or null if the user chose system default. */
+    fun getPersistedLocale(context: Context): Locale? {
         val code = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(KEY_LANG, null)
-        return if (code != null) Locale.forLanguageTag(code) else Locale.getDefault()
+        return if (code != null) Locale.forLanguageTag(code) else null
     }
 
     /** Persists the user's choice. Pass null to clear (revert to system default). */
@@ -36,9 +36,10 @@ object LocaleHelper {
         return context
     }
 
-    /** Apply the persisted locale on the given context (for use in attachBaseContext). */
+    /** Apply the persisted locale on the given context (for use in attachBaseContext).
+     *  Returns the original context when no override is saved (system default). */
     fun applyToContext(context: Context): Context {
         val locale = getPersistedLocale(context)
-        return wrapContext(context, locale)
+        return if (locale != null) wrapContext(context, locale) else context
     }
 }

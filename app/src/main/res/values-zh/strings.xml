@@ -92,8 +92,14 @@
     <!-- Account -->
     <string name="status_online">在线</string>
 
+    <!-- Settings categories -->
+    <string name="settings_category_system">系统</string>
+    <string name="settings_category_session">会话</string>
+    <string name="download_directory_title">下载目录</string>
+
     <!-- Language / settings -->
     <string name="settings_language">语言</string>
+    <string name="choose">选择</string>
     <string name="language_system">跟随系统</string>
     <string name="language_zh">中文</string>
     <string name="language_en">English</string>
