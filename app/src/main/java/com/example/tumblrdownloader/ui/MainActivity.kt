@@ -63,6 +63,11 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // First-run onboarding
+        if (!OnboardingActivity.isDone(this)) {
+            startActivity(Intent(this, OnboardingActivity::class.java))
+        }
+
         setSupportActionBar(binding.toolbar)
 
         binding.viewPager.adapter = MainPagerAdapter(this)

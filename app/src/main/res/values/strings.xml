@@ -48,4 +48,14 @@
     <string name="about_description">一个轻量级的 Tumblr 媒体下载工具。支持通过分享链接或粘贴链接的方式，快速下载 Tumblr 帖子中的图片和视频。</string>
     <string name="about_version">版本：%1$s</string>
     <string name="clear_all_downloads">清空列表</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_skip">跳过</string>
+    <string name="onboarding_get_started">开始使用</string>
+    <string name="onboarding_title_1">粘贴链接开始下载</string>
+    <string name="onboarding_desc_1">复制 Tumblr 帖子链接后，应用会自动识别剪贴板中的链接并加入下载队列；你也可以手动输入或通过分享功能导入链接。</string>
+    <string name="onboarding_title_2">登录账号解锁更多</string>
+    <string name="onboarding_desc_2">登录 Tumblr 账号后可下载非公开内容。在侧边栏点击头像即可登录，应用会保存登录状态供后续使用。</string>
+    <string name="onboarding_title_3">管理下载任务</string>
+    <string name="onboarding_desc_3">在「下载列表」标签页查看进度、暂停或重试任务，完成的文件可直接打开查看。</string>
 </resources>
