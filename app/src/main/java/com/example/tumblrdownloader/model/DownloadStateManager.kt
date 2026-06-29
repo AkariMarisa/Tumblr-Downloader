@@ -169,7 +169,7 @@ class DownloadStateManager(private val app: Application) {
                     mediaUrl = media.mediaUrl,
                     title = displayFileName(media.sourceUrl, media.mediaUrl),
                     type = media.type,
-                    createdAt = baseTime + (candidates.size - index)
+                    createdAt = baseTime + index
                 )
             }
             .filter { existingKeys.add(DownloadUtils.normalizeMediaIdentity(it.mediaUrl)) }
@@ -299,10 +299,12 @@ class DownloadStateManager(private val app: Application) {
         val running = _items.value.count { it.status == DownloadStatus.DOWNLOADING }
         if (running >= MAX_CONCURRENT_DOWNLOADS) return
 
+        // ponytail: FIFO 顺序 — 按 createdAt 升序（最早添加的先下载），
+        // 而不是按降序。降序会导致新任务插队，旧任务的剩余图片被延后，
+        // 当新旧任务包含相同媒体时产生重复下载。
         val next = _items.value
             .filter { it.status == DownloadStatus.QUEUED }
-            .sortedByDescending { it.createdAt }
-            .firstOrNull() ?: return
+            .minByOrNull { it.createdAt } ?: return
 
         val idx = _items.value.indexOfFirst { it.id == next.id }
         val started = next.copy(status = DownloadStatus.DOWNLOADING, progress = 0)

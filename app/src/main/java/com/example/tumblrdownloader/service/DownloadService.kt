@@ -277,6 +277,14 @@ class DownloadService : Service() {
     private suspend fun processWithRetry(item: DownloadItem) {
         var current = item
 
+        // ponytail: pre-download check — 如果这个 media URL 已经被标记为已完成，
+        // 直接跳过后面的下载流程。这是 `processAppend` 去重之外的第二道防线，
+        // 防止同一媒体 URL 因时序/重启等原因被再次下载。
+        if (CompletedMediaStore.isCompleted(this@DownloadService, current.mediaUrl)) {
+            emitProgress(current.copy(status = DownloadStatus.COMPLETED, progress = 100, errorMessage = null))
+            return
+        }
+
         var isResume = current.downloadedBytes > 0L && !current.downloadFileUri.isNullOrBlank()
         var bytesThisSession = 0L
         var lastProgress = 0
