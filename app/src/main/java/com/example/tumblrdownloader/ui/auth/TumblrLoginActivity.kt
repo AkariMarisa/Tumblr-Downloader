@@ -13,6 +13,7 @@ import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 import com.example.tumblrdownloader.R
 import com.example.tumblrdownloader.databinding.ActivityTumblrLoginBinding
+import com.example.tumblrdownloader.utils.LocaleHelper
 import com.example.tumblrdownloader.utils.TumblrAccountStore
 import com.example.tumblrdownloader.utils.TumblrCookieStore
 import org.json.JSONObject
@@ -26,6 +27,10 @@ class TumblrLoginActivity : AppCompatActivity() {
 
     private val loginTargetUrl: String by lazy {
         intent.getStringExtra(EXTRA_LOGIN_URL) ?: DEFAULT_LOGIN_URL
+    }
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleHelper.applyToContext(newBase))
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -91,7 +96,7 @@ class TumblrLoginActivity : AppCompatActivity() {
         val account = com.example.tumblrdownloader.utils.TumblrAccount(
             username = username,
             avatarUrl = "https://api.tumblr.com/v2/blog/${username}/avatar/512",
-            status = "在线",
+            status = getString(R.string.status_online),
             isLoggedIn = true
         )
         TumblrAccountStore.save(this, account)

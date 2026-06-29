@@ -56,7 +56,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         DownloadStatus.DOWNLOADING -> item.copy(
                             status = DownloadStatus.FAILED,
                             progress = 0,
-                            errorMessage = "应用重启后状态已失效，可手动重试"
+                            errorMessage = "State invalid after app restart, retry manually"
                         )
                         else -> item
                     }
@@ -102,7 +102,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val account = TumblrAccount(
             username = username,
             avatarUrl = "https://api.tumblr.com/v2/blog/${username}/avatar/512",
-            status = "在线",
+            status = "Online",
             isLoggedIn = true
         )
         TumblrAccountStore.save(appContext, account)

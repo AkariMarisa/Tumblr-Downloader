@@ -1,14 +1,20 @@
 package com.example.tumblrdownloader.ui.about
 
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import com.example.tumblrdownloader.R
 import com.example.tumblrdownloader.databinding.ActivityAboutBinding
+import com.example.tumblrdownloader.utils.LocaleHelper
 
 class AboutActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityAboutBinding
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleHelper.applyToContext(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

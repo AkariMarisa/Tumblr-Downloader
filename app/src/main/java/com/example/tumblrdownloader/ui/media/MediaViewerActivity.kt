@@ -7,6 +7,7 @@ import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import com.bumptech.glide.Glide
 import com.example.tumblrdownloader.databinding.ActivityMediaViewerBinding
+import com.example.tumblrdownloader.utils.LocaleHelper
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.SimpleExoPlayer
 
@@ -14,6 +15,10 @@ class MediaViewerActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMediaViewerBinding
     private var player: SimpleExoPlayer? = null
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleHelper.applyToContext(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

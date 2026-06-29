@@ -2,6 +2,7 @@ package com.example.tumblrdownloader.ui.settings
 
 import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -11,14 +12,17 @@ import android.os.StrictMode
 import android.provider.DocumentsContract
 import android.widget.Toast
 import java.io.File
+import java.util.Locale
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.example.tumblrdownloader.R
 import com.example.tumblrdownloader.databinding.ActivitySettingsBinding
+import com.example.tumblrdownloader.ui.MainActivity
 import com.example.tumblrdownloader.ui.MainViewModel
 import com.example.tumblrdownloader.utils.DownloadUtils
+import com.example.tumblrdownloader.utils.LocaleHelper
 import kotlinx.coroutines.launch
 
 class SettingsActivity : AppCompatActivity() {
@@ -45,6 +49,10 @@ class SettingsActivity : AppCompatActivity() {
         viewModel.setCustomDownloadDirectory(uri)
     }
 
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleHelper.applyToContext(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivitySettingsBinding.inflate(layoutInflater)
@@ -53,6 +61,8 @@ class SettingsActivity : AppCompatActivity() {
         setSupportActionBar(binding.toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.title = getString(R.string.menu_settings)
+
+        setupLanguageSelector()
 
         binding.btnChooseDownloadDir.setOnClickListener {
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
@@ -92,6 +102,41 @@ class SettingsActivity : AppCompatActivity() {
             return true
         }
         return super.onOptionsItemSelected(item)
+    }
+
+    private fun setupLanguageSelector() {
+        val current = LocaleHelper.getPersistedLocale(this)
+        val tag = current.toLanguageTag()
+        binding.btnLanguage.setOnClickListener {
+            val items = arrayOf(
+                getString(R.string.language_system),
+                getString(R.string.language_zh),
+                getString(R.string.language_en)
+            )
+            val checked = when {
+                tag.isBlank() || tag.startsWith("und") -> 0
+                tag.startsWith("zh") -> 1
+                else -> 2
+            }
+            android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.settings_language)
+                .setSingleChoiceItems(items, checked) { dialog, which ->
+                    val locale = when (which) {
+                        1 -> Locale("zh")
+                        2 -> Locale.ENGLISH
+                        else -> null
+                    }
+                    LocaleHelper.persistLocale(this, locale)
+                    dialog.dismiss()
+                    // Restart the entire task so the new locale applies everywhere
+                    Intent(this, MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                    }.let { startActivity(it) }
+                    finishAffinity()
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
     }
 
     private fun openDownloadDirectory() {

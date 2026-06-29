@@ -12,50 +12,89 @@
     <string name="back">Back</string>
     <string name="copied_from_clipboard">Copied from clipboard</string>
     <string name="invalid_url">Invalid Tumblr URL</string>
-    <string name="login_hint">登录后返回本页即可继续解析</string>
+    <string name="login_hint">Login and return to continue parsing</string>
     <string name="login_done">Done</string>
     <string name="login_tumblr">Login Tumblr</string>
-    <string name="clipboard_link_detected">检测到剪贴板中的 Tumblr 链接，正在尝试下载</string>
-    <string name="queued_message">已加入下载队列：%1$d 个任务</string>
-    <string name="parsing_media">正在解析下载内容…</string>
-    <string name="retry_download">重试下载</string>
-    <string name="start_download">开始下载</string>
-    <string name="pause_download">暂停下载</string>
-    <string name="remove_download">移除任务</string>
-    <string name="clear_cookie">清除登录 Cookie</string>
-    <string name="cookie_security_title">Cookie 安全说明</string>
-    <string name="cookie_security_message">当前已检测到本地保存的 Tumblr 登录 Cookie，仅用于当前设备内访问解析，不会上传到任何服务器；请勿在公共设备长期保留，并可随时点击“清除登录 Cookie”移除。</string>
-    <string name="login_cookie_saved">登录状态已保存到本地，解析私密内容可直接复用。</string>
-    <string name="login_cookie_not_found">未检测到可保存的登录 Cookie，请确认已完成登录。</string>
-    <string name="cookies_cleared_toast">已清除本地 Cookie 记录</string>
-    <string name="select_download_directory">下载目录设置</string>
-    <string name="reset_download_directory">恢复默认下载目录</string>
-    <string name="download_directory_display_placeholder">当前下载目录：默认</string>
-    <string name="download_directory_display">当前下载目录：%1$s</string>
-    <string name="download_dir_permission_warning">未获取到目录永久读写权限，请保留应用对该目录的授权后可长期使用。</string>
-    <string name="download_directory_reset_toast">已恢复默认下载目录</string>
-    <string name="open_download_directory">打开下载目录</string>
-    <string name="open_download_directory_failed">无法打开下载目录，请前往文件管理器手动查看下载目录。</string>
-    <string name="menu_settings">设置</string>
-    <string name="menu_about">关于</string>
-    <string name="navigation_drawer_open">打开导航菜单</string>
-    <string name="navigation_drawer_close">关闭导航菜单</string>
-    <string name="drawer_not_logged_in">登录</string>
-    <string name="drawer_user_logged_in">已登录</string>
-    <string name="drawer_user_status_online">在线</string>
-    <string name="drawer_user_status_logged_in">登录状态：%1$s</string>
-    <string name="drawer_user_status_logged_out">未登录</string>
-    <string name="about_description">一个轻量级的 Tumblr 媒体下载工具。支持通过分享链接或粘贴链接的方式，快速下载 Tumblr 帖子中的图片和视频。</string>
-    <string name="about_version">版本：%1$s</string>
-    <string name="clear_all_downloads">清空列表</string>
+    <string name="clipboard_link_detected">Tumblr link detected in clipboard, attempting download</string>
+    <string name="queued_message">%1$d tasks added to download queue</string>
+    <string name="parsing_media">Parsing media…</string>
+    <string name="retry_download">Retry</string>
+    <string name="start_download">Start download</string>
+    <string name="pause_download">Pause download</string>
+    <string name="remove_download">Remove task</string>
+    <string name="clear_cookie">Clear login cookie</string>
+    <string name="cookie_security_title">Cookie Security Notice</string>
+    <string name="cookie_security_message">A Tumblr login cookie has been detected. It is stored locally on this device and used only for parsing. It will never be uploaded. Do not keep it on public devices. You can clear it anytime.</string>
+    <string name="login_cookie_saved">Login saved locally. Private content can be parsed automatically.</string>
+    <string name="login_cookie_not_found">No login cookie found. Please make sure you are logged in.</string>
+    <string name="cookies_cleared_toast">Local cookies cleared</string>
+    <string name="select_download_directory">Set download directory</string>
+    <string name="reset_download_directory">Reset download directory</string>
+    <string name="download_directory_display_placeholder">Current directory: Default</string>
+    <string name="download_directory_display">Current directory: %1$s</string>
+    <string name="download_dir_permission_warning">Persistent directory permission not granted. Please keep the authorization for long-term use.</string>
+    <string name="download_directory_reset_toast">Download directory reset</string>
+    <string name="open_download_directory">Open download directory</string>
+    <string name="open_download_directory_failed">Cannot open download directory. Please open it manually in your file manager.</string>
+    <string name="menu_settings">Settings</string>
+    <string name="menu_about">About</string>
+    <string name="navigation_drawer_open">Open navigation menu</string>
+    <string name="navigation_drawer_close">Close navigation menu</string>
+    <string name="drawer_not_logged_in">Login</string>
+    <string name="drawer_user_logged_in">Logged in</string>
+    <string name="drawer_user_status_online">Online</string>
+    <string name="drawer_user_status_logged_in">Status: %1$s</string>
+    <string name="drawer_user_status_logged_out">Not logged in</string>
+    <string name="about_description">A lightweight Tumblr media downloader. Quickly download images and videos from Tumblr posts via share links or pasted URLs.</string>
+    <string name="about_version">Version: %1$s</string>
+    <string name="clear_all_downloads">Clear list</string>
 
     <!-- Onboarding -->
-    <string name="onboarding_skip">跳过</string>
-    <string name="onboarding_get_started">开始使用</string>
-    <string name="onboarding_title_1">粘贴链接开始下载</string>
-    <string name="onboarding_desc_1">复制 Tumblr 帖子链接后，应用会自动识别剪贴板中的链接并加入下载队列；你也可以手动输入或通过分享功能导入链接。</string>
-    <string name="onboarding_title_2">登录账号解锁更多</string>
-    <string name="onboarding_desc_2">登录 Tumblr 账号后可下载非公开内容。在侧边栏点击头像即可登录，应用会保存登录状态供后续使用。</string>
-    <string name="onboarding_title_3">管理下载任务</string>
-    <string name="onboarding_desc_3">在「下载列表」标签页查看进度、暂停或重试任务，完成的文件可直接打开查看。</string>
+    <string name="onboarding_skip">Skip</string>
+    <string name="onboarding_get_started">Get started</string>
+    <string name="onboarding_title_1">Paste a link to start</string>
+    <string name="onboarding_desc_1">Copy a Tumblr post link and the app will automatically detect it and add it to the download queue. You can also enter or share links manually.</string>
+    <string name="onboarding_title_2">Login for more</string>
+    <string name="onboarding_desc_2">Log in to your Tumblr account to download private content. Tap the avatar in the sidebar to log in. The app will save your login for future use.</string>
+    <string name="onboarding_title_3">Manage downloads</string>
+    <string name="onboarding_desc_3">Check progress, pause or retry tasks in the Downloads tab. Completed files can be opened directly.</string>
+
+    <!-- Download statuses -->
+    <string name="status_queued">Queued</string>
+    <string name="status_downloading">Downloading</string>
+    <string name="status_paused">Paused</string>
+    <string name="status_completed">Completed</string>
+    <string name="status_failed">Download failed</string>
+
+    <!-- Download service -->
+    <string name="download_retry_hint">Retry %1$d/%2$d</string>
+    <string name="download_waiting">Starting in %1$dms</string>
+    <string name="download_server_no_resume">Server does not support resume, starting over</string>
+    <string name="download_target_creation_failed">Failed to create download target: %1$s</string>
+    <string name="download_failed_with_retries">Download failed: %1$s. Retried %2$d/%3$d times.</string>
+    <string name="download_retrying">Retry %1$d/%2$d</string>
+    <string name="download_channel_name">Tumblr Download</string>
+    <string name="download_channel_desc">Download status updates</string>
+    <string name="download_unknown_error">Unknown error</string>
+    <string name="download_completed_notification">Download completed</string>
+
+    <!-- Parser / state messages -->
+    <string name="parse_error_generic">Parse failed: %1$s</string>
+    <string name="parse_not_valid_url">Invalid Tumblr share link</string>
+    <string name="parse_oembed_unavailable">oEmbed unavailable: %1$s</string>
+    <string name="parse_oembed_empty">No downloadable media found</string>
+    <string name="parse_login_required">Login required to retry.</string>
+    <string name="parse_page_no_media">No downloadable media in page</string>
+    <string name="parse_duplicate_skipped">Media already in download list, duplicates skipped.</string>
+    <string name="parse_no_new_media">No downloadable media found</string>
+    <string name="parse_page_request_failed">Page request failed, HTTP %1$d</string>
+
+    <!-- Account -->
+    <string name="status_online">Online</string>
+
+    <!-- Language / settings -->
+    <string name="settings_language">Language</string>
+    <string name="language_system">System default</string>
+    <string name="language_zh">中文</string>
+    <string name="language_en">English</string>
 </resources>

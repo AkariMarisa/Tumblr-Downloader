@@ -12,6 +12,7 @@ import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
 import com.example.tumblrdownloader.R
 import com.example.tumblrdownloader.databinding.ActivityOnboardingBinding
+import com.example.tumblrdownloader.utils.LocaleHelper
 
 class OnboardingActivity : AppCompatActivity() {
 
@@ -33,6 +34,10 @@ class OnboardingActivity : AppCompatActivity() {
         private set
 
     private lateinit var binding: ActivityOnboardingBinding
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleHelper.applyToContext(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

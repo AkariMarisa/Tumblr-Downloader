@@ -1,6 +1,7 @@
 package com.example.tumblrdownloader.ui
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.view.Menu
@@ -21,6 +22,7 @@ import com.example.tumblrdownloader.databinding.ActivityMainBinding
 import com.example.tumblrdownloader.ui.auth.TumblrLoginActivity
 import com.example.tumblrdownloader.ui.about.AboutActivity
 import com.example.tumblrdownloader.ui.settings.SettingsActivity
+import com.example.tumblrdownloader.utils.LocaleHelper
 import com.example.tumblrdownloader.utils.TumblrParser
 import com.google.android.material.tabs.TabLayoutMediator
 import com.example.tumblrdownloader.ui.download.DownloadFragment
@@ -58,6 +60,10 @@ class MainActivity : AppCompatActivity() {
         handleClipboardAutoDownload()
     }
 
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(LocaleHelper.applyToContext(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -72,7 +78,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.viewPager.adapter = MainPagerAdapter(this)
         TabLayoutMediator(binding.tabLayout, binding.viewPager) { tab, position ->
-            tab.text = listOf("Download", "Downloads")[position]
+            tab.text = listOf(getString(R.string.tab_download), getString(R.string.tab_downloads))[position]
         }.attach()
 
         binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {

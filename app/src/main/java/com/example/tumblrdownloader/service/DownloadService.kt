@@ -14,10 +14,12 @@ import android.os.IBinder
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.documentfile.provider.DocumentFile
+import com.example.tumblrdownloader.R
 import com.example.tumblrdownloader.model.DownloadItem
 import com.example.tumblrdownloader.model.DownloadStatus
 import com.example.tumblrdownloader.utils.CompletedMediaStore
 import com.example.tumblrdownloader.utils.DownloadUtils
+import com.example.tumblrdownloader.utils.LocaleHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -111,6 +113,10 @@ class DownloadService : Service() {
     private var workerJob: Job? = null
     private var lastTaskCompletedAtMs = 0L
 
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(LocaleHelper.applyToContext(base))
+    }
+
     override fun onCreate() {
         super.onCreate()
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -136,7 +142,7 @@ class DownloadService : Service() {
                     return START_STICKY
                 }
 
-                startForeground(NOTIFICATION_ID, buildNotification(resumedItem.title, "排队中", 0, null))
+                startForeground(NOTIFICATION_ID, buildNotification(resumedItem.title, getString(R.string.status_queued), 0, null))
                 queueChannel.trySend(resumedItem)
                 startWorkerIfNeeded()
             }
@@ -228,17 +234,17 @@ class DownloadService : Service() {
                 queuedItemIds.remove(item.id)
 
                 if (suspendedItemIds.contains(item.id) || removedItemIds.remove(item.id)) {
-                    emitProgress(item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = "已暂停"))
+                    emitProgress(item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = getString(R.string.status_paused)))
                     continue
                 }
 
                 val gap = calcGapDelay()
                 if (gap > 0) {
-                    emitProgress(item.copy(status = DownloadStatus.QUEUED, progress = 0, errorMessage = "等待 ${gap}ms 后开始下载"))
+                    emitProgress(item.copy(status = DownloadStatus.QUEUED, progress = 0, errorMessage = getString(R.string.download_waiting, gap)))
                     delay(gap)
 
                     if (suspendedItemIds.contains(item.id) || removedItemIds.remove(item.id)) {
-                        emitProgress(item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = "已暂停"))
+                        emitProgress(item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = getString(R.string.status_paused)))
                         continue
                     }
                 }
@@ -295,7 +301,7 @@ class DownloadService : Service() {
                     current = current.copy(downloadedBytes = actualBytes)
                     // "wa" = write + append
                     val os = contentResolver.openOutputStream(uri, "wa")
-                        ?: throw IOException("无法以追加模式打开文件：$uri")
+                        ?: throw IOException("Cannot open file in append mode: $uri")
                     DownloadTarget(
                         uri = uri,
                         outputStream = os,
@@ -335,7 +341,7 @@ class DownloadService : Service() {
                             // File exists with data — resume
                             if (current.downloadedBytes > 0L) isResume = true
                             val os = contentResolver.openOutputStream(cachedUri, "wa")
-                                ?: throw IOException("无法以追加模式打开缓存文件：$cachedUri")
+                                ?: throw IOException("Cannot open cached file in append mode: $cachedUri")
                             DownloadTarget(
                                 uri = cachedUri,
                                 outputStream = os,
@@ -353,7 +359,7 @@ class DownloadService : Service() {
                             // File was deleted or is empty — create fresh but
                             // use the same URI (overwrite).
                             val os = contentResolver.openOutputStream(cachedUri, "wt")
-                                ?: throw IOException("无法覆盖缓存文件：$cachedUri")
+                                ?: throw IOException("Cannot overwrite cached file: $cachedUri")
                             DownloadTarget(
                                 uri = cachedUri,
                                 outputStream = os,
@@ -378,7 +384,7 @@ class DownloadService : Service() {
                 emitProgress(
                     current.copy(
                         status = DownloadStatus.FAILED,
-                        errorMessage = "下载目标创建失败：${e.message ?: "未知错误"}"
+                        errorMessage = getString(R.string.download_target_creation_failed, e.message ?: getString(R.string.download_unknown_error))
                     )
                 )
                 return
@@ -459,7 +465,7 @@ class DownloadService : Service() {
                     emitProgress(current.copy(
                         status = DownloadStatus.DOWNLOADING,
                         progress = 0,
-                        errorMessage = "服务器不支持断点续传，从头开始"
+                        errorMessage = getString(R.string.download_server_no_resume)
                     ))
                     delay(RETRY_DELAY_MS)
                     continue
@@ -469,7 +475,7 @@ class DownloadService : Service() {
                     emitProgress(
                         current.copy(
                             status = DownloadStatus.FAILED,
-                            errorMessage = "下载失败：${e.message ?: "未知错误"}。已重试 ${current.retryCount}/${current.maxRetries} 次。可手动重试。"
+                            errorMessage = getString(R.string.download_failed_with_retries, e.message ?: getString(R.string.download_unknown_error), current.retryCount, current.maxRetries)
                         )
                     )
                     return
@@ -480,7 +486,7 @@ class DownloadService : Service() {
                     current.copy(
                         status = DownloadStatus.DOWNLOADING,
                         progress = 0,
-                        errorMessage = "第 ${current.retryCount}/${current.maxRetries} 次重试中"
+                        errorMessage = getString(R.string.download_retrying, current.retryCount, current.maxRetries)
                     )
                 )
                 delay(RETRY_DELAY_MS)
@@ -492,7 +498,7 @@ class DownloadService : Service() {
         return if (item.retryCount == 0) {
             null
         } else {
-            "重试 ${item.retryCount}/${item.maxRetries}"
+            getString(R.string.download_retry_hint, item.retryCount, item.maxRetries)
         }
     }
 
@@ -539,7 +545,7 @@ class DownloadService : Service() {
                 throw IOException("HTTP ${safeResponse.code} ${safeResponse.message}")
             }
 
-            val responseBody = safeResponse.body ?: throw IOException("响应体为空")
+            val responseBody = safeResponse.body ?: throw IOException("Empty response body")
 
             // ── resolve total file size ────────────────────────────────────
             var totalBytes = responseBody.contentLength()
@@ -688,8 +694,8 @@ class DownloadService : Service() {
                 put(MediaStore.Downloads.IS_PENDING, 1)
             }
         }
-        val uri = contentResolver.insert(collection, values) ?: throw IOException("无法在下载目录创建目标文件")
-        val output = contentResolver.openOutputStream(uri) ?: throw IOException("无法打开下载输出流")
+        val uri = contentResolver.insert(collection, values) ?: throw IOException("Cannot create target file in download directory")
+        val output = contentResolver.openOutputStream(uri) ?: throw IOException("Cannot open download output stream")
 
         return DownloadTarget(
             uri = uri,
@@ -761,11 +767,11 @@ class DownloadService : Service() {
 
     private fun statusText(item: DownloadItem): String {
         return when (item.status) {
-            DownloadStatus.QUEUED -> item.errorMessage ?: "排队中"
-            DownloadStatus.DOWNLOADING -> item.errorMessage ?: "下载中"
-            DownloadStatus.PAUSED -> "已暂停"
-            DownloadStatus.COMPLETED -> "下载完成"
-            DownloadStatus.FAILED -> item.errorMessage ?: "下载失败"
+            DownloadStatus.QUEUED -> item.errorMessage ?: getString(R.string.status_queued)
+            DownloadStatus.DOWNLOADING -> item.errorMessage ?: getString(R.string.status_downloading)
+            DownloadStatus.PAUSED -> getString(R.string.status_paused)
+            DownloadStatus.COMPLETED -> getString(R.string.download_completed_notification)
+            DownloadStatus.FAILED -> item.errorMessage ?: getString(R.string.status_failed)
         }
     }
 

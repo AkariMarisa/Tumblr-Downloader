@@ -115,7 +115,7 @@ object TumblrParser {
     suspend fun parseShareUrl(rawUrl: String): TumblrShareParseResult = withContext(Dispatchers.IO) {
         val normalizedUrl = normalizeShareUrl(rawUrl)
         if (!isTumblrShareUrl(normalizedUrl)) {
-            return@withContext TumblrShareParseResult.Error("不是有效的 Tumblr 分享链接")
+            return@withContext TumblrShareParseResult.Error("Not a valid Tumblr share link")
         }
 
         when (val oembedParsed = parseWithOEmbed(normalizedUrl)) {
@@ -130,7 +130,7 @@ object TumblrParser {
         return@withContext when (val htmlParsed = parseWithPageHtml(normalizedUrl)) {
             is TumblrShareParseResult.Success -> {
                 if (htmlParsed.media.isNotEmpty()) htmlParsed else {
-                    TumblrShareParseResult.Empty("页面未返回可下载媒体")
+                    TumblrShareParseResult.Empty("No downloadable media found")
                 }
             }
 
@@ -147,7 +147,7 @@ object TumblrParser {
             when (response.code) {
                 401, 403 -> TumblrShareParseResult.LoginRequired(
                     url = postUrl,
-                    message = "oEmbed 返回 401/403，通常是私密/需要登陆的帖子。"
+                    message = "oEmbed returned 401/403 — post may be private or require login."
                 )
 
                 in 200..299 -> {
@@ -158,18 +158,18 @@ object TumblrParser {
                     ) {
                         TumblrShareParseResult.LoginRequired(
                             url = postUrl,
-                            message = "oEmbed 返回 HTML 或空响应，通常是登录态受限。"
+                            message = "oEmbed returned HTML or empty response — login may be required."
                         )
                     } else {
                         parseOEmbedBody(response.body, postUrl)
                     }
                 }
-                in 300..399 -> TumblrShareParseResult.Error("oEmbed 重定向异常（${response.code}）")
-                else -> TumblrShareParseResult.Error("oEmbed 请求失败，HTTP ${response.code}")
+                in 300..399 -> TumblrShareParseResult.Error("oEmbed redirect error (${response.code})")
+                else -> TumblrShareParseResult.Error("oEmbed request failed, HTTP ${response.code}")
             }
         }.getOrElse {
             Log.w(TAG, "parseWithOEmbed failed", it)
-            TumblrShareParseResult.Error("oEmbed 不可用：${it.message}")
+            TumblrShareParseResult.Error("oEmbed unavailable: ${it.message}")
         }
     }
 
@@ -191,14 +191,14 @@ object TumblrParser {
             }
 
             if (urls.isEmpty()) {
-                TumblrShareParseResult.Error("oEmbed 解析成功但未识别到可下载地址")
+                TumblrShareParseResult.Error("oEmbed parsed but no downloadable media found")
             } else {
                 TumblrShareParseResult.Success(
                     media = urls.mapIndexed { index, mediaUrl ->
                         ParsedTumblrMedia(
                             sourceUrl = postUrl,
                             mediaUrl = mediaUrl,
-                            title = "$title（${index + 1}）",
+                            title = "$title (${index + 1})",
                             type = guessType(mediaUrl)
                         )
                     }
@@ -206,7 +206,7 @@ object TumblrParser {
             }
         }.getOrElse {
             Log.w(TAG, "parseOEmbedBody failed", it)
-            TumblrShareParseResult.Error("oEmbed 内容解析失败：${it.message}")
+            TumblrShareParseResult.Error("oEmbed parse failed: ${it.message}")
         }
     }
 
@@ -235,7 +235,7 @@ object TumblrParser {
                 if (response.finalUrl.contains("/login_required/") || response.finalUrl.contains("/login/")) {
                     return@runCatching TumblrShareParseResult.LoginRequired(
                         url = postUrl,
-                        message = "页面返回登录重定向，通常是未公开/需登录内容。"
+                        message = "Redirected to login — this content may be private or require authentication."
                     )
                 }
 
@@ -253,16 +253,16 @@ object TumblrParser {
                 if (candidates.isEmpty() && looksLikeLoginPage(html)) {
                     TumblrShareParseResult.LoginRequired(
                         url = postUrl,
-                        message = "页面返回了登录页，通常是未公开/需登录内容。"
+                        message = "Login page detected — this content may be private or require authentication."
                     )
                 } else if (candidates.isEmpty()) {
-                    TumblrShareParseResult.Empty("页面未返回可下载媒体")
+                    TumblrShareParseResult.Empty("No downloadable media found")
                 } else {
                     val media = candidates.mapIndexed { index, mediaUrl ->
                         ParsedTumblrMedia(
                             sourceUrl = source,
                             mediaUrl = mediaUrl,
-                            title = "Tumblr 媒体（${index + 1}）",
+                            title = "Tumblr media (${index + 1})",
                             type = guessType(mediaUrl)
                         )
                     }
@@ -271,14 +271,14 @@ object TumblrParser {
             } else if (response.code == 401 || response.code == 403 || response.finalUrl.contains("/login_required/") || response.finalUrl.contains("/login/")) {
                 TumblrShareParseResult.LoginRequired(
                     url = postUrl,
-                    message = "页面返回 401/403 或登录页，通常是私密/未公开内容。"
+                    message = "HTTP 401/403 or login page — this content may be private."
                 )
             } else {
-                TumblrShareParseResult.Error("页面请求失败，HTTP ${response.code}")
+                TumblrShareParseResult.Error("Page request failed, HTTP ${response.code}")
             }
         }.getOrElse {
             Log.w(TAG, "parseWithPageHtml failed", it)
-            TumblrShareParseResult.Error("页面解析失败：${it.message}")
+            TumblrShareParseResult.Error("Page parse failed: ${it.message}")
         }
     }
 

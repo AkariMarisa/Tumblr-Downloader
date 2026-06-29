@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import com.example.tumblrdownloader.R
 import com.example.tumblrdownloader.service.DownloadService
 import com.example.tumblrdownloader.utils.CompletedMediaStore
 import com.example.tumblrdownloader.utils.DownloadHistoryStore
@@ -96,7 +97,7 @@ class DownloadStateManager(private val app: Application) {
                             _parseEvent.tryEmit(
                                 ParseEvent.LoginRequired(
                                     url = result.url.ifBlank { url },
-                                    message = "登录后可重试。"
+                                    message = app.getString(R.string.parse_login_required)
                                 )
                             )
                         }
@@ -105,7 +106,7 @@ class DownloadStateManager(private val app: Application) {
                     }
                 }
             } catch (e: Exception) {
-                _parseEvent.tryEmit(ParseEvent.Message("解析失败：${e.message ?: "未知错误"}"))
+                _parseEvent.tryEmit(ParseEvent.Message(app.getString(R.string.parse_error_generic, e.message ?: app.getString(R.string.download_unknown_error))))
             } finally {
                 isParsing = false
             }
@@ -150,7 +151,7 @@ class DownloadStateManager(private val app: Application) {
     private fun processAppend(candidates: List<ParsedTumblrMedia>) {
         android.util.Log.d("DownloadSM", "processAppend: ${candidates.size} candidates")
         if (candidates.isEmpty()) {
-            _parseEvent.tryEmit(ParseEvent.Message("该链接未识别到可下载媒体"))
+            _parseEvent.tryEmit(ParseEvent.Message(app.getString(R.string.parse_no_new_media)))
             return
         }
 
@@ -177,7 +178,7 @@ class DownloadStateManager(private val app: Application) {
         android.util.Log.d("DownloadSM", "processAppend: ${added.size} new items after dedup")
 
         if (added.isEmpty()) {
-            _parseEvent.tryEmit(ParseEvent.Message("该链接中的媒体已在下载列表中，已跳过重复项。"))
+            _parseEvent.tryEmit(ParseEvent.Message(app.getString(R.string.parse_duplicate_skipped)))
             return
         }
 

@@ -104,12 +104,13 @@ class DownloadsAdapter(
         }
 
         private fun statusText(item: DownloadItem): String {
+            val ctx = itemView.context
             return when (item.status) {
-                DownloadStatus.QUEUED -> "排队中"
-                DownloadStatus.DOWNLOADING -> "下载中"
-                DownloadStatus.PAUSED -> "已暂停"
-                DownloadStatus.COMPLETED -> "已完成"
-                DownloadStatus.FAILED -> "下载失败"
+                DownloadStatus.QUEUED -> ctx.getString(R.string.status_queued)
+                DownloadStatus.DOWNLOADING -> ctx.getString(R.string.status_downloading)
+                DownloadStatus.PAUSED -> ctx.getString(R.string.status_paused)
+                DownloadStatus.COMPLETED -> ctx.getString(R.string.status_completed)
+                DownloadStatus.FAILED -> ctx.getString(R.string.status_failed)
             }
         }
     }

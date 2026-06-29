@@ -112,7 +112,7 @@ object TumblrAccountStore {
         val account = TumblrAccount(
             username = name,
             avatarUrl = avatarUrl ?: "https://api.tumblr.com/v2/blog/${name}/avatar/512",
-            status = "在线",
+            status = "Online",
             isLoggedIn = true
         )
         save(context, account)
@@ -141,7 +141,7 @@ object TumblrAccountStore {
         val account = TumblrAccount(
             username = name,
             avatarUrl = "https://api.tumblr.com/v2/blog/${name}/avatar/512",
-            status = "在线",
+            status = "Online",
             isLoggedIn = true
         )
         save(context, account)
