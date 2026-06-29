@@ -21,10 +21,12 @@
         android:gravity="center_horizontal"
         android:padding="32dp">
 
-        <ImageView
+        <com.google.android.material.imageview.ShapeableImageView
             android:layout_width="72dp"
             android:layout_height="72dp"
-            android:src="@android:drawable/sym_def_app_icon"
+            android:scaleType="centerCrop"
+            app:shapeAppearance="@style/ShapeAppearance.Material3.Corner.Full"
+            android:src="@mipmap/ic_launcher"
             android:contentDescription="@string/app_name"
             android:layout_marginBottom="16dp" />
 

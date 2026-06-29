@@ -164,7 +164,7 @@ class MainActivity : AppCompatActivity() {
                         getString(R.string.drawer_user_status_logged_out)
                     }
 
-                    val fallback = ContextCompat.getDrawable(this@MainActivity, android.R.drawable.sym_def_app_icon)
+                    val fallback = ContextCompat.getDrawable(this@MainActivity, R.mipmap.ic_launcher)
                     Glide.with(this@MainActivity)
                         .load(account.avatarUrl)
                         .placeholder(fallback)
