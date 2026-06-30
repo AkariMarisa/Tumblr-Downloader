@@ -27,7 +27,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -37,6 +39,7 @@ import java.io.OutputStream
 import java.util.Collections
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
 class DownloadService : Service() {
@@ -105,8 +108,19 @@ class DownloadService : Service() {
     private var activeDownloadedBytes = 0L
     private val client by lazy {
         OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
+            .addNetworkInterceptor { chain ->
+                // 为每个请求设置 Referer（Tumblr CDN 有时会检查）
+                val request = chain.request().newBuilder()
+                    .addHeader("Referer", "https://www.tumblr.com/")
+                    .addHeader("Origin", "https://www.tumblr.com")
+                    .build()
+                chain.proceed(request)
+            }
             .build()
     }
 
@@ -254,7 +268,23 @@ class DownloadService : Service() {
                 activeTaskJob = serviceScope.launch {
                     processWithRetry(item)
                 }
-                activeTaskJob?.join()
+                // FAIL-SAFE: don't let a single stuck download block the queue forever.
+                // If the download job doesn't finish within the timeout, cancel it and
+                // emit a FAILED status so subsequent queued items can proceed.
+                try {
+                    withTimeout(10 * 60_000L) { // 10 minutes max per item
+                        activeTaskJob?.join()
+                    }
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    android.util.Log.w("DownloadSvc", "runQueue: download job timed out for ${item.id}")
+                    activeTaskJob?.cancel(CancellationException("Download timed out"))
+                    activeTaskJob?.join() // wait for cancellation to complete
+                    emitProgress(item.copy(
+                        status = DownloadStatus.FAILED,
+                        progress = 0,
+                        errorMessage = getString(R.string.download_timed_out)
+                    ))
+                }
 
                 activeItemId = null
                 activeTaskJob = null
@@ -475,7 +505,16 @@ class DownloadService : Service() {
                         progress = 0,
                         errorMessage = getString(R.string.download_server_no_resume)
                     ))
-                    delay(RETRY_DELAY_MS)
+                    try {
+                        delay(RETRY_DELAY_MS)
+                    } catch (ce: CancellationException) {
+                        // File already deleted above; just emit PAUSED
+                        emitProgress(current.copy(
+                            status = DownloadStatus.PAUSED,
+                            errorMessage = null
+                        ))
+                        return
+                    }
                     continue
                 }
 
@@ -497,7 +536,26 @@ class DownloadService : Service() {
                         errorMessage = getString(R.string.download_retrying, current.retryCount, current.maxRetries)
                     )
                 )
-                delay(RETRY_DELAY_MS)
+                // CRITICAL: delay() is a suspension point.  If the job was
+                // cancelled during the IOException handling above (e.g. user
+                // pressed pause while a timeout was in-flight), delay() will
+                // throw CancellationException.  This CancellationException
+                // would bypass the dedicated catch block above (it's inside
+                // catch (e: Exception), not inside the try), causing the
+                // pause state to be silently lost.  Catch it here explicitly.
+                try {
+                    delay(RETRY_DELAY_MS)
+                } catch (ce: CancellationException) {
+                    // The partial file was already cleaned up above, so
+                    // there's no file to resume from.  Emit PAUSED so the
+                    // UI is consistent, and return.  The next resume will
+                    // start from scratch — which is safe.
+                    emitProgress(current.copy(
+                        status = DownloadStatus.PAUSED,
+                        errorMessage = null
+                    ))
+                    return
+                }
             }
         }
     }
@@ -575,6 +633,11 @@ class DownloadService : Service() {
                 outputStream.use { output ->
                     val buffer = ByteArray(32 * 1024)
                     while (true) {
+                        // CANCELLATION GATE: check between reads so that pause/remove
+                        // can break out even when the current chunk is in-flight.
+                        // Without this, a blocked read on Dispatchers.IO would prevent
+                        // CancellationException from being delivered indefinitely.
+                        yield()
                         val len = input.read(buffer)
                         if (len < 0) break
 

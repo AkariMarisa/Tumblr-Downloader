@@ -77,6 +77,7 @@
     <string name="download_channel_desc">Download status updates</string>
     <string name="download_unknown_error">Unknown error</string>
     <string name="download_completed_notification">Download completed</string>
+    <string name="download_timed_out">Download timed out after 10 minutes, please try again</string>
 
     <!-- Parser / state messages -->
     <string name="parse_error_generic">Parse failed: %1$s</string>

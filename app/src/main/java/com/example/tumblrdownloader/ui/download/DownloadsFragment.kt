@@ -6,7 +6,9 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.example.tumblrdownloader.databinding.FragmentDownloadsBinding
 import com.example.tumblrdownloader.model.DownloadItem
@@ -43,9 +45,13 @@ class DownloadsFragment : Fragment() {
         binding.rvDownloads.adapter = adapter
 
         viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.downloads.collect { list ->
-                adapter.submitList(list)
-                binding.tvEmpty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
+            // repeatOnLifecycle 确保每次回到前台时重新收集 Flow，
+            // 否则后台下载完成后切回前台时 UI 不会刷新。
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.downloads.collect { list ->
+                    adapter.submitList(list)
+                    binding.tvEmpty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
+                }
             }
         }
     }

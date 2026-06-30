@@ -18,13 +18,18 @@ object DownloadUtils {
             .trim()
             .replace("https://", "")
             .replace("http://", "")
-            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            // 保留 Unicode 字母（中文/日文/韩文等）、数字、. _ -，其余替换为 _
+            .replace(Regex("[^\\p{L}\\p{N}._-]"), "_")
+            .replace(Regex("_+"), "_")   // 合并连续下划线
             .ifBlank { fallback }
     }
 
+    /**
+     * 默认下载目录名：固定为英文，避免中文字符/空格被 sanitize 后变成乱码。
+     * 使用固定名称也确保切换语言后目录不会变来变去。
+     */
     fun getDefaultDownloadFolderName(context: Context): String {
-        val raw = context.getString(R.string.app_name)
-        return sanitizeFileName(raw).ifBlank { "TumblrDownloader" }
+        return "TumblrDownloader"
     }
 
     fun getCustomDownloadDirectory(context: Context): Uri? {
