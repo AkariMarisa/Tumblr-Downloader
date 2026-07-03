@@ -30,7 +30,17 @@
 
 ## 截图
 
-> _截图待补充。_
+### 中文界面
+
+| 下载 | 下载列表 | 导航 | 设置 | 关于 |
+|---|---|---|---|---|
+| <img src="screenshots/download_zh.png" width="140" alt="下载"> | <img src="screenshots/downloads_zh.png" width="140" alt="下载列表"> | <img src="screenshots/navdrawer_zh.png" width="140" alt="导航"> | <img src="screenshots/settings_zh.png" width="140" alt="设置"> | <img src="screenshots/about_zh.png" width="140" alt="关于"> |
+
+### English UI
+
+| Download | Downloads | Navigation | Settings | About |
+|---|---|---|---|---|
+| <img src="screenshots/download_en.png" width="140" alt="Download"> | <img src="screenshots/downloads_en.png" width="140" alt="Downloads"> | <img src="screenshots/navdrawer_en.png" width="140" alt="Navigation"> | <img src="screenshots/settings_en.png" width="140" alt="Settings"> | <img src="screenshots/about_en.png" width="140" alt="About"> |
 
 ---
 
@@ -208,7 +218,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - [ ] **包名重命名**：从 `com.example` 改为正式命名空间后再发布
 - [ ] **测试**：补充 `TumblrParser`、`DownloadStateManager` 的单元测试，以及下载流程的 instrumentation 测试
 - [ ] **贡献指南**：创建 `CONTRIBUTING.md` 和 `CODE_OF_CONDUCT.md`
-- [ ] **截图**：在 README 中添加应用截图
+- [x] **截图**：在 README 中添加应用截图
 - [ ] **应用商店发布**：准备 Release 签名和商店上架材料
 
 ---

@@ -30,11 +30,17 @@ An Android app that downloads images and videos from Tumblr posts. Supports Andr
 
 ## Screenshots
 
-> _Screenshots coming soon._
+### English UI
 
-| Download Tab | Downloads List | Media Viewer |
-|---|---|---|
-| _(todo)_ | _(todo)_ | _(todo)_ |
+| Download | Downloads | Navigation | Settings | About |
+|---|---|---|---|---|
+| <img src="screenshots/download_en.png" width="140" alt="Download"> | <img src="screenshots/downloads_en.png" width="140" alt="Downloads"> | <img src="screenshots/navdrawer_en.png" width="140" alt="Navigation"> | <img src="screenshots/settings_en.png" width="140" alt="Settings"> | <img src="screenshots/about_en.png" width="140" alt="About"> |
+
+### Chinese UI (中文界面)
+
+| Download | Downloads | Navigation | Settings | About |
+|---|---|---|---|---|
+| <img src="screenshots/download_zh.png" width="140" alt="Download"> | <img src="screenshots/downloads_zh.png" width="140" alt="Downloads"> | <img src="screenshots/navdrawer_zh.png" width="140" alt="Navigation"> | <img src="screenshots/settings_zh.png" width="140" alt="Settings"> | <img src="screenshots/about_zh.png" width="140" alt="About"> |
 
 ---
 
@@ -212,7 +218,7 @@ For private or restricted posts:
 - [ ] **Package name**: Rename from `com.example` to a proper namespace before publishing.
 - [ ] **Tests**: Add unit tests for `TumblrParser`, `DownloadStateManager`, and instrumentation tests for the download flow.
 - [ ] **Contributing guide**: Create `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
-- [ ] **Screenshots**: Add app screenshots to README.
+- [x] **Screenshots**: Add app screenshots to README.
 - [ ] **Play Store / F-Droid**: Prepare release signing and store listings.
 
 ---
