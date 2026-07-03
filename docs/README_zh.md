@@ -11,6 +11,12 @@
   <img src="../logo.png" alt="Tumblr Downloader" width="128" height="128">
 </p>
 
+<p align="center">
+  <a href="https://ko-fi.com/E0C822IGF6">
+    <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi">
+  </a>
+</p>
+
 ---
 
 ## 功能特点
