@@ -5,6 +5,8 @@
 [![Min SDK](https://img.shields.io/badge/minSdk-30-brightgreen)](https://developer.android.com/studio)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9.22-7F52FF?logo=kotlin)](https://kotlinlang.org)
 
+[🇨🇳 **中文**](README_zh.md)
+
 An Android app that downloads images and videos from Tumblr posts. Supports Android 11+.
 
 <p align="center">

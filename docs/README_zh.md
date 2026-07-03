@@ -5,6 +5,8 @@
 [![Min SDK](https://img.shields.io/badge/minSdk-30-brightgreen)](https://developer.android.com/studio)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9.22-7F52FF?logo=kotlin)](https://kotlinlang.org)
 
+[🇬🇧 **English**](README.md)
+
 一个从 Tumblr 帖子中下载图片和视频的 Android 应用。支持 Android 11+。
 
 <p align="center">
