@@ -810,7 +810,13 @@ class DownloadService : Service() {
     private fun inferExtension(mediaUrl: String): String {
         val path = runCatching { Uri.parse(mediaUrl).lastPathSegment.orEmpty() }.getOrDefault("")
         val rawExt = path.substringAfterLast('.', "").lowercase(Locale.getDefault())
-        return if (rawExt in setOf("jpg", "jpeg", "png", "gif", "webp", "avif", "mp4", "m3u8", "mov", "webm")) rawExt else "bin"
+        // Map non-standard Tumblr extensions to standard ones so saved files are
+        // recognizable by gallery apps and file managers.
+        val mapped = when (rawExt) {
+            "pnj" -> "png"
+            else -> rawExt
+        }
+        return if (mapped in setOf("jpg", "jpeg", "png", "gif", "webp", "avif", "mp4", "m3u8", "mov", "webm")) mapped else "bin"
     }
 
     private fun inferMimeType(ext: String): String {

@@ -25,12 +25,12 @@ object TumblrParser {
     private val embedLinkRegex = Regex("data-href=\"([^\"]+)\"", RegexOption.IGNORE_CASE)
 
     private val imageUrlRegex =
-        Regex("https?://[^\"'\\s>]+\\.(?:jpg|jpeg|png|gif|webp|avif)(?:\\?[^\"'\\s>]*)?", RegexOption.IGNORE_CASE)
+        Regex("https?://[^\"'\\s>]+\\.(?:jpg|jpeg|png|pnj|gif|webp|avif)(?:\\?[^\"'\\s>]*)?", RegexOption.IGNORE_CASE)
     private val videoUrlRegex =
         Regex("https?://[^\"'\\s>]+\\.(?:mp4|m3u8|mov)(?:\\?[^\"'\\s>]*)?", RegexOption.IGNORE_CASE)
 
     private val mediaUrlRegex =
-        Regex("https?://[^\"'\\s>]+\\.(?:jpg|jpeg|png|gif|webp|avif|mp4|m3u8|mov)(?:\\?[^\"'\\s>]*)?", RegexOption.IGNORE_CASE)
+        Regex("https?://[^\"'\\s>]+\\.(?:jpg|jpeg|png|pnj|gif|webp|avif|mp4|m3u8|mov)(?:\\?[^\"'\\s>]*)?", RegexOption.IGNORE_CASE)
 
     private val imageMetaRegex =
         Regex("<meta[^>]+property=\"og:image\"[^>]+content=\"([^\"]+)\"", RegexOption.IGNORE_CASE)
@@ -104,7 +104,7 @@ object TumblrParser {
             lower.contains(".mp4") || lower.contains(".m3u8") || lower.contains(".mov") ||
                 videoUrlRegex.containsMatchIn(lower) -> MediaType.VIDEO
             lower.contains(".jpg") || lower.contains(".jpeg") || lower.contains(".png") ||
-                lower.contains(".gif") || lower.contains(".webp") || lower.contains(".avif") -> MediaType.IMAGE
+                lower.contains(".pnj") || lower.contains(".gif") || lower.contains(".webp") || lower.contains(".avif") -> MediaType.IMAGE
             else -> MediaType.UNKNOWN
         }
     }
@@ -356,11 +356,22 @@ object TumblrParser {
             }
             is String -> {
                 val trimmed = unescapeJsonText(value.trim())
-                if (!isLikelyPostMedia(trimmed) || !isLikelyPostMediaPath(jsonPath)) {
+                if (!isLikelyPostMediaPath(jsonPath)) {
                     return
                 }
-                mediaUrlRegex.findAll(trimmed).forEach { m ->
-                    urls.add(m.value)
+                // For JSON-structured data, match any media.tumblr.com URL instead of
+                // relying on file extension patterns.  The JSON path filtering + noise
+                // tokens already provide sufficient precision; extension-based matching
+                // is too fragile (Tumblr uses .pnj for high-quality images).
+                val jsonMediaUrlRegex = Regex(
+                    "https?://[^\"'\\s<>)\\]}]+media\\.tumblr\\.com[^\"'\\s<>)\\]}]+",
+                    RegexOption.IGNORE_CASE
+                )
+                jsonMediaUrlRegex.findAll(trimmed).forEach { m ->
+                    val url = m.value.trimEnd(')', ']', '}', ',', ';', '"', '\'')
+                    if (url.isNotBlank()) {
+                        urls.add(url)
+                    }
                 }
             }
         }
@@ -408,13 +419,33 @@ object TumblrParser {
     private fun extractVideoCandidates(html: String): List<String> =
         videoUrlRegex.findAll(html).map { it.value }.filter { isLikelyPostMedia(it) }.toList()
 
+    private val loginPageTitleRegex = Regex("<title[^>]*>([^<]+)</title>", RegexOption.IGNORE_CASE)
+
     private fun looksLikeLoginPage(html: String): Boolean {
         val lower = html.lowercase(Locale.ROOT)
-        return lower.contains("log in") ||
-            lower.contains("sign in") ||
-            lower.contains("/login") ||
-            lower.contains("password") ||
-            lower.contains("please login")
+
+        // Strong signal: presence of a password input field indicates a real login form
+        if (lower.contains("type=\"password\"") || lower.contains("type='password'")) {
+            return true
+        }
+
+        // Check page title — a real login page has "Log in" or "Sign in" in the title,
+        // whereas regular post pages have the blog name or post content as title.
+        val titleMatch = loginPageTitleRegex.find(html)
+        if (titleMatch != null) {
+            val title = titleMatch.groupValues[1].lowercase(Locale.ROOT)
+            if (title.contains("log in") || title.contains("sign in")) {
+                return true
+            }
+        }
+
+        // Explicit redirect to login_required (handled earlier via finalUrl check,
+        // but also check body for edge cases where the redirect isn't caught)
+        if (lower.contains("/login_required/")) {
+            return true
+        }
+
+        return false
     }
 
     private fun isLikelyPostMedia(url: String): Boolean {
@@ -453,10 +484,16 @@ object TumblrParser {
 
         if (!(host.endsWith("media.tumblr.com") || lower.contains("media.tumblr.com"))) return false
 
-        // keep real image/video files only
-        return lower.contains(".jpg") || lower.contains(".jpeg") || lower.contains(".png") ||
-            lower.contains(".gif") || lower.contains(".webp") || lower.contains(".avif") ||
-            lower.contains(".mp4") || lower.contains(".m3u8") || lower.contains(".mov")
+        // Accept any media.tumblr.com URL whose path has a file extension.
+        // We avoid a hardcoded extension list (jpg, png, gif, mp4, ...) because
+        // Tumblr occasionally introduces new variants (e.g., .pnj for high-quality
+        // images).  The domain check + noise path filters already provide sufficient
+        // precision; the extension requirement simply rules out directory paths.
+        val lastSegment = Uri.parse(url).lastPathSegment ?: return false
+        val dotIndex = lastSegment.lastIndexOf('.')
+        if (dotIndex < 0 || dotIndex == lastSegment.length - 1) return false
+        val ext = lastSegment.substring(dotIndex + 1)
+        return ext.length in 2..5 && ext.all { it.isLetterOrDigit() }
     }
 
     private val resolutionSegment = Regex("/s(\\d+)x(\\d+)", RegexOption.IGNORE_CASE)
