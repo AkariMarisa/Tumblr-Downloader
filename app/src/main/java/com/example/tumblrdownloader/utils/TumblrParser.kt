@@ -122,6 +122,14 @@ object TumblrParser {
             return@withContext TumblrShareParseResult.Error("Not a valid Tumblr share link")
         }
 
+        // Private posts (/private/ URLs) require JavaScript rendering — the
+        // current HTML parser cannot extract media from them.
+        if (normalizedUrl.contains("/private/")) {
+            return@withContext TumblrShareParseResult.Error(
+                "Private Tumblr posts are not supported yet"
+            )
+        }
+
         when (val oembedParsed = parseWithOEmbed(normalizedUrl)) {
             is TumblrShareParseResult.Success -> {
                 if (oembedParsed.media.isNotEmpty()) return@withContext oembedParsed

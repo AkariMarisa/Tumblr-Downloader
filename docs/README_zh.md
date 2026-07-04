@@ -192,6 +192,9 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - [x] **Cookie 同步竞态**：在 `TumblrCookieStore` 中添加了 `waitForCookiesReady()`——在重试解析前轮询 `CookieManager.getCookie()` 直至 Cookie 可见（超时 5 秒）。登录重试现在会等待 Cookie 实际就绪再执行。
 - [ ] **SharedPreferences 损坏**：下载历史记录和 Cookie 使用纯 JSON 存储在 SharedPreferences 中，并发写入或崩溃可能导致数据损坏。建议迁移到 Room 或事务性存储
 - [ ] **成人内容检测**：Tumblr 对含成人内容的帖子有额外拦截页，需改进 `looksLikeLoginPage` 对此边缘情况的处理
+- [ ] **私密帖子支持**：`/private/...` URL 无法通过 HTTP 解析（JS 动态渲染），两条路线待评估：
+  - **WebView 解析器**：用隐藏 WebView 加载帖子页面，等待 JS 渲染后通过 `evaluateJavascript()` 提取 `__INITIAL_STATE__` / DOM 里的媒体 URL
+  - **Tumblr API v2 + OAuth**：注册应用获取 API 凭证，用 `/posts/{id}` 接口 + OAuth 令牌获取帖子 JSON 数据
 
 ### 功能
 

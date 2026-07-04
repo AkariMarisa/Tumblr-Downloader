@@ -189,6 +189,9 @@ For private or restricted posts:
 - [x] **Cookie persistence race**: Added `waitForCookiesReady()` in `TumblrCookieStore` — polls `CookieManager.getCookie()` on login hosts with 5s timeout before retrying parse. Login retry now waits until cookies are actually visible.
 - [ ] **SharedPreferences corruption**: Download history and cookie store use plain JSON in SharedPreferences — can break on concurrent writes or crash during save. Migrate to Room or a transactional store.
 - [ ] **Adult content detection**: Posts behind Tumblr's "possible adult content" warning need an extra confirmation step; improve `looksLikeLoginPage` to handle this edge case.
+- [ ] **Private post support**: `/private/...` URLs cannot be parsed via HTTP (JS-rendered). Two approaches under consideration:
+  - **WebView parser**: Load URL in a hidden WebView, wait for JS rendering, extract `__INITIAL_STATE__` / DOM media URLs via `evaluateJavascript()`.
+  - **Tumblr API v2 + OAuth**: Register app for API credentials, use `/posts/{id}` endpoint with OAuth tokens to fetch post content as JSON.
 
 ### Features
 
