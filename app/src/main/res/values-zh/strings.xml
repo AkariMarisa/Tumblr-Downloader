@@ -107,4 +107,13 @@
     <string name="language_system">跟随系统</string>
     <string name="language_zh">中文</string>
     <string name="language_en">English</string>
+
+    <!-- Clipboard -->
+    <string name="pref_clipboard_auto_detect">自动检测剪切板</string>
+    <string name="pref_clipboard_auto_detect_summary">切换回本 app 时自动解析剪贴板中的 Tumblr 链接</string>
+
+    <!-- Cache -->
+    <string name="pref_clear_cache">清空自动检测缓存</string>
+    <string name="pref_clear_cache_dialog">这将清除所有已自动检测过的 URL 记录，同一链接可以重新被检测。</string>
+    <string name="cache_cleared_toast">自动检测缓存已清空</string>
 </resources>

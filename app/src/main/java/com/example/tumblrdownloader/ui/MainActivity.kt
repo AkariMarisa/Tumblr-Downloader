@@ -3,6 +3,7 @@ package com.example.tumblrdownloader.ui
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -35,12 +36,16 @@ import android.widget.Toast
 import android.util.Log
 
 private const val TAG = "MainActivity"
+private const val PREFS_NAME = "tumblr_downloader"
+private const val PREF_CLIPBOARD_AUTO_DETECT = "clipboard_auto_detect"
+private const val PREF_LAST_AUTO_URL = "last_auto_detected_url"
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private val viewModel: MainViewModel by viewModels()
-    private var lastAutoClipboardUrl: String? = null
+    private val prefs: SharedPreferences by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
+    private var isColdStart = true
     private val clipboardManager by lazy { getSystemService(android.content.ClipboardManager::class.java) }
     private lateinit var toggle: ActionBarDrawerToggle
     private var clearAllMenu: MenuItem? = null
@@ -57,10 +62,6 @@ class MainActivity : AppCompatActivity() {
                 viewModel.refreshTumblrAccount()
             }
         }
-    }
-
-    private val clipboardCallback = android.content.ClipboardManager.OnPrimaryClipChangedListener {
-        handleClipboardAutoDownload()
     }
 
     override fun attachBaseContext(newBase: Context) {
@@ -95,36 +96,31 @@ class MainActivity : AppCompatActivity() {
         handleIncomingIntent(intent)
     }
 
-    override fun onStart() {
-        super.onStart()
-        clipboardManager.addPrimaryClipChangedListener(clipboardCallback)
-    }
-
-    override fun onStop() {
-        clipboardManager.removePrimaryClipChangedListener(clipboardCallback)
-        super.onStop()
-    }
+    // Note: Clipboard is detected via onWindowFocusChanged, not
+    // OnPrimaryClipChangedListener. Android 10+ requires window focus
+    // to read the clipboard, so OnPrimaryClipChangedListener is unreliable
+    // (it fires before we can read). Focus-based detection covers all cases.
 
     override fun onResume() {
         super.onResume()
         viewModel.refreshTumblrAccount()
-        // Backup check: on some devices onWindowFocusChanged(true) may not fire
-        // after certain transitions. A delayed check here catches those edge cases.
-        Handler(Looper.getMainLooper()).postDelayed({
-            if (!isFinishing && !isDestroyed) {
-                handleClipboardAutoDownload()
-            }
-        }, 500)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
+            // Cold start: skip clipboard check so the app doesn't re-process
+            // stale links on every fresh launch. Only check when user switches
+            // back from another app (already-running process).
+            if (isColdStart) {
+                isColdStart = false
+                Log.d(TAG, "Cold start — skipping clipboard check")
+                return
+            }
             // onWindowFocusChanged(true) is the most reliable indicator that the
             // window has input focus, which is required by Android 10+ for
             // ClipboardManager.getPrimaryClip() to succeed (otherwise it throws
             // SecurityException).
-            // Small delay ensures the clipboard service is fully ready.
             Handler(Looper.getMainLooper()).postDelayed({
                 if (!isFinishing && !isDestroyed) {
                     handleClipboardAutoDownload()
@@ -230,13 +226,17 @@ class MainActivity : AppCompatActivity() {
             ?: return
 
         if (viewModel.enqueueFromUrl(text)) {
-            lastAutoClipboardUrl = text
             viewModel.notifyFromClipboard(text)
             binding.viewPager.currentItem = 0
         }
     }
 
     private fun handleClipboardAutoDownload() {
+        if (!prefs.getBoolean(PREF_CLIPBOARD_AUTO_DETECT, true)) {
+            Log.d(TAG, "Clipboard auto-detect disabled via settings")
+            return
+        }
+
         val clipText = try {
             getClipboardText()
         } catch (e: SecurityException) {
@@ -257,14 +257,16 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        if (clipText == lastAutoClipboardUrl) {
-            Log.d(TAG, "Clipboard URL already processed: ${clipText.take(60)}")
+        // Persistent dedup — skip silently if this URL was already auto-detected.
+        val lastUrl = prefs.getString(PREF_LAST_AUTO_URL, null)
+        if (clipText == lastUrl) {
+            Log.d(TAG, "Clipboard URL already auto-detected before: ${clipText.take(60)}")
             return
         }
 
         Log.d(TAG, "Clipboard auto-detect: ${clipText.take(80)}")
         if (viewModel.enqueueFromUrl(clipText)) {
-            lastAutoClipboardUrl = clipText
+            prefs.edit().putString(PREF_LAST_AUTO_URL, clipText).apply()
             viewModel.notifyFromClipboard(clipText)
             Log.d(TAG, "Clipboard auto-detect queued successfully")
         } else {

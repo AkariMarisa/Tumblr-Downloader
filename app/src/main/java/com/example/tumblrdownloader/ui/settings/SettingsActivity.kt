@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -25,10 +26,15 @@ import com.example.tumblrdownloader.utils.DownloadUtils
 import com.example.tumblrdownloader.utils.LocaleHelper
 import kotlinx.coroutines.launch
 
+private const val PREFS_NAME = "tumblr_downloader"
+private const val PREF_CLIPBOARD_AUTO_DETECT = "clipboard_auto_detect"
+private const val PREF_LAST_AUTO_URL = "last_auto_detected_url"
+
 class SettingsActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivitySettingsBinding
     private val viewModel: MainViewModel by viewModels()
+    private val prefs: SharedPreferences by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
 
     private val directoryPickerLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -84,9 +90,29 @@ class SettingsActivity : AppCompatActivity() {
             openDownloadDirectory()
         }
 
+        // ── Clipboard auto-detect toggle ──
+        binding.switchClipboardAutoDetect.isChecked = prefs.getBoolean(PREF_CLIPBOARD_AUTO_DETECT, true)
+        binding.switchClipboardAutoDetect.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean(PREF_CLIPBOARD_AUTO_DETECT, isChecked).apply()
+        }
+
+        // ── Clear cookies ──
         binding.btnClearCookies.setOnClickListener {
             viewModel.clearSavedCookies()
             Toast.makeText(this, R.string.cookies_cleared_toast, Toast.LENGTH_SHORT).show()
+        }
+
+        // ── Clear auto-detect cache ──
+        binding.btnClearCache.setOnClickListener {
+            android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.pref_clear_cache)
+                .setMessage(R.string.pref_clear_cache_dialog)
+                .setPositiveButton(android.R.string.ok) { _, _ ->
+                    prefs.edit().remove(PREF_LAST_AUTO_URL).apply()
+                    Toast.makeText(this, R.string.cache_cleared_toast, Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
         }
 
         lifecycleScope.launch {

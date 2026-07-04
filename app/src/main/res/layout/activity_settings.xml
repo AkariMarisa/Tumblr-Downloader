@@ -135,6 +135,56 @@
 
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- Card: 自动检测剪切板 -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="16dp"
+                android:layout_marginTop="12dp"
+                app:cardElevation="1dp"
+                app:cardCornerRadius="12dp"
+                app:strokeWidth="0dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingHorizontal="16dp"
+                    android:paddingVertical="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/pref_clipboard_auto_detect"
+                            android:textSize="16sp"
+                            android:textColor="?android:attr/textColorPrimary" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/pref_clipboard_auto_detect_summary"
+                            android:textSize="13sp"
+                            android:textColor="?android:attr/textColorSecondary"
+                            android:layout_marginTop="2dp" />
+
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switchClipboardAutoDetect"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
             <!-- Spacer between categories -->
             <View
                 android:layout_width="match_parent"
@@ -162,15 +212,32 @@
                 app:strokeWidth="0dp"
                 android:padding="0dp">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnClearCookies"
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/clear_cookie"
-                    android:textAlignment="center"
-                    style="@style/Widget.MaterialComponents.Button"
-                    app:backgroundTint="@color/yellow_600"
-                    android:textColor="@color/black" />
+                    android:orientation="vertical">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnClearCookies"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/clear_cookie"
+                        android:textAlignment="center"
+                        style="@style/Widget.MaterialComponents.Button"
+                        app:backgroundTint="@color/yellow_600"
+                        android:textColor="@color/black" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnClearCache"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/pref_clear_cache"
+                        android:textAlignment="center"
+                        style="@style/Widget.MaterialComponents.Button"
+                        app:backgroundTint="@color/yellow_600"
+                        android:textColor="@color/black" />
+
+                </LinearLayout>
 
             </com.google.android.material.card.MaterialCardView>
 

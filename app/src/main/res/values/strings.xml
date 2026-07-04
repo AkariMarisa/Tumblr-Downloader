@@ -107,4 +107,13 @@
     <string name="language_system">System default</string>
     <string name="language_zh">中文</string>
     <string name="language_en">English</string>
+
+    <!-- Clipboard -->
+    <string name="pref_clipboard_auto_detect">Auto-detect clipboard</string>
+    <string name="pref_clipboard_auto_detect_summary">Automatically parse Tumblr links when switching back to the app</string>
+
+    <!-- Cache -->
+    <string name="pref_clear_cache">Clear auto-detect cache</string>
+    <string name="pref_clear_cache_dialog">This will forget all previously auto-detected URLs so the same link can be re-detected.</string>
+    <string name="cache_cleared_toast">Auto-detect cache cleared</string>
 </resources>
