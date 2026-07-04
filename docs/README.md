@@ -184,7 +184,7 @@ For private or restricted posts:
 
 ### Reliability
 
-- [ ] **Clipboard auto-detect**: The clipboard monitoring often fails to trigger or triggers duplicate downloads. Needs a more robust listener with debounce and dedup.
+- [x] **Clipboard auto-detect**: Rewrote the detection mechanism to use `onWindowFocusChanged(true)` instead of relying on `OnPrimaryClipChangedListener`. Now reliably detects links copied from other apps when switching back. Includes proper debounce and dedup.
 - [ ] **Retry on network change**: Pause downloads when WiFi disconnects, auto-resume on reconnection.
 - [ ] **Cookie persistence race**: WebView login cookies don't always sync to the OkHttp client before the retry fires. Add a ready check before re-parsing.
 - [ ] **SharedPreferences corruption**: Download history and cookie store use plain JSON in SharedPreferences — can break on concurrent writes or crash during save. Migrate to Room or a transactional store.

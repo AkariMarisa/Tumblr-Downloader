@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Menu
 import android.view.MenuItem
 import androidx.activity.result.contract.ActivityResultContracts
@@ -104,11 +106,30 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Refresh after returning from Settings (separate ViewModel instance there)
         viewModel.refreshTumblrAccount()
-        // Check clipboard when activity is fully in foreground (onResume).
-        // onStart may be too early for getPrimaryClip() on some Android versions.
-        handleClipboardAutoDownload()
+        // Backup check: on some devices onWindowFocusChanged(true) may not fire
+        // after certain transitions. A delayed check here catches those edge cases.
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (!isFinishing && !isDestroyed) {
+                handleClipboardAutoDownload()
+            }
+        }, 500)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            // onWindowFocusChanged(true) is the most reliable indicator that the
+            // window has input focus, which is required by Android 10+ for
+            // ClipboardManager.getPrimaryClip() to succeed (otherwise it throws
+            // SecurityException).
+            // Small delay ensures the clipboard service is fully ready.
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!isFinishing && !isDestroyed) {
+                    handleClipboardAutoDownload()
+                }
+            }, 200)
+        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -214,16 +235,35 @@ class MainActivity : AppCompatActivity() {
         val clipText = try {
             getClipboardText()
         } catch (e: SecurityException) {
-            Log.w(TAG, "Clipboard read blocked: ${e.message}")
+            Log.w(TAG, "Clipboard read blocked (no window focus): ${e.message}")
+            null
+        } catch (e: Exception) {
+            Log.w(TAG, "Clipboard read failed", e)
             null
         } ?: return
 
-        if (!TumblrParser.isTumblrShareUrl(clipText) || clipText == lastAutoClipboardUrl) return
+        if (clipText.isBlank()) {
+            Log.d(TAG, "Clipboard is empty, skipping")
+            return
+        }
 
-        Log.d(TAG, "Clipboard detected: ${clipText.take(80)}")
+        if (!TumblrParser.isTumblrShareUrl(clipText)) {
+            Log.d(TAG, "Clipboard not a Tumblr URL: ${clipText.take(60)}")
+            return
+        }
+
+        if (clipText == lastAutoClipboardUrl) {
+            Log.d(TAG, "Clipboard URL already processed: ${clipText.take(60)}")
+            return
+        }
+
+        Log.d(TAG, "Clipboard auto-detect: ${clipText.take(80)}")
         if (viewModel.enqueueFromUrl(clipText)) {
             lastAutoClipboardUrl = clipText
             viewModel.notifyFromClipboard(clipText)
+            Log.d(TAG, "Clipboard auto-detect queued successfully")
+        } else {
+            Log.w(TAG, "Clipboard auto-detect enqueueFromUrl returned false")
         }
     }
 

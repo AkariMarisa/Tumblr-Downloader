@@ -187,7 +187,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ### 可靠性
 
-- [ ] **剪贴板自动检测**：现有时不触发或重复触发的问题，需要更健壮的监听器（防抖 + 去重）
+- [x] **剪贴板自动检测**：重写了检测机制，改用 `onWindowFocusChanged(true)` 而非依赖 `OnPrimaryClipChangedListener`。从其他 app 复制链接后切回本 app 时能可靠检测，并带有防抖和去重。
 - [ ] **网络切换时自动重试**：WiFi 断开时暂停下载，重新连接后自动继续
 - [ ] **Cookie 同步竞态**：WebView 登录后的 Cookie 有时不能及时同步到 OkHttp 客户端，重试解析时可能仍返回未登录。需要增加就绪检查
 - [ ] **SharedPreferences 损坏**：下载历史记录和 Cookie 使用纯 JSON 存储在 SharedPreferences 中，并发写入或崩溃可能导致数据损坏。建议迁移到 Room 或事务性存储

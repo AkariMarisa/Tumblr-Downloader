@@ -64,8 +64,7 @@ class DownloadFragment : Fragment() {
             viewModel.autoPasteUrl.collect { url ->
                 binding.etUrl.setText(url)
                 binding.etUrl.setSelection(url.length)
-                binding.tvPasteHint.visibility = View.VISIBLE
-                Toast.makeText(requireContext(), R.string.clipboard_link_detected, Toast.LENGTH_SHORT).show()
+                showLoading(true)
             }
         }
 
