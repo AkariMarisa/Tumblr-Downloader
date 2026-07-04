@@ -189,6 +189,7 @@ For private or restricted posts:
 - [x] **Cookie persistence race**: Added `waitForCookiesReady()` in `TumblrCookieStore` — polls `CookieManager.getCookie()` on login hosts with 5s timeout before retrying parse. Login retry now waits until cookies are actually visible.
 - [x] **Login loop fix**: `retryAfterLogin` flag prevents re-opening login page on failed retry. 10s throttle on login redirects. `loginLaunchPending` guard in DownloadFragment.
 - [ ] **SharedPreferences corruption**: Download history and cookie store use plain JSON in SharedPreferences — can break on concurrent writes or crash during save. Migrate to Room or a transactional store.
+  > **Note**: The auto-detect dedup cache (`last_auto_detected_url`) also uses SharedPreferences but is intentionally excluded from migration — it's a single string, written only on the main thread, and loss is harmless (at most the same URL gets re-detected once).
 - [x] **WebViewCookieJar subdomain fallback**: When `cookieManager.getCookie(url)` returns null for `*.tumblr.com` subdomain requests, fall back to `https://www.tumblr.com/` to retrieve cookies.
 - [ ] **Adult content detection**: Posts behind Tumblr's "possible adult content" warning need an extra confirmation step; improve `looksLikeLoginPage` to handle this edge case.
 - [ ] **Private post support**: `/private/...` URLs cannot be parsed via HTTP (JS-rendered). Two approaches under consideration:

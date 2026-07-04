@@ -192,6 +192,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - [x] **Cookie 同步竞态**：在 `TumblrCookieStore` 中添加了 `waitForCookiesReady()`——在重试解析前轮询 `CookieManager.getCookie()` 直至 Cookie 可见（超时 5 秒）。登录重试现在会等待 Cookie 实际就绪再执行。
 - [x] **登录循环修复**：`retryAfterLogin` 标志位防止重试失败后重复打开登录页。10 秒登录重定向节流。`loginLaunchPending` 守卫避免重复启动登录 Activity。
 - [ ] **SharedPreferences 损坏**：下载历史记录和 Cookie 使用纯 JSON 存储在 SharedPreferences 中，并发写入或崩溃可能导致数据损坏。建议迁移到 Room 或事务性存储
+  > **注**：自动检测去重缓存（`last_auto_detected_url`）同样使用 SharedPreferences，但故意不迁移——它只是一个字符串、只在主线程写入、丢失也无害（最多同一条链接被重新检测一次）。
 - [x] **WebViewCookieJar 子域名回退**：当 `cookieManager.getCookie(url)` 对 `*.tumblr.com` 子域名返回 null 时，回退到 `https://www.tumblr.com/` 获取 Cookie。
 - [ ] **成人内容检测**：Tumblr 对含成人内容的帖子有额外拦截页，需改进 `looksLikeLoginPage` 对此边缘情况的处理
 - [ ] **私密帖子支持**：`/private/...` URL 无法通过 HTTP 解析（JS 动态渲染），两条路线待评估：
