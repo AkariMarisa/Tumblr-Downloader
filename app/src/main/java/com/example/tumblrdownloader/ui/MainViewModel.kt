@@ -105,6 +105,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             if (cookiesReady) {
                 stateManager.consumePendingLoginUrl()
+                stateManager.markRetryAfterLogin()
                 enqueueFromUrl(url)
             } else {
                 Log.w(TAG, "retryPendingLoginUrl: cookie sync timeout, URL preserved for manual retry")

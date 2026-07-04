@@ -49,7 +49,7 @@ class DownloadStateManager(private val app: Application) {
     val parseEvent = _parseEvent.asSharedFlow()
 
     private var pendingLoginUrl: String? = null
-    private var lastLoginRedirectAt: Long = 0
+    private var retryAfterLogin = false
 
     // ── command queue (single consumer processes one at a time) ────────
     private sealed class Cmd {
@@ -90,28 +90,37 @@ class DownloadStateManager(private val app: Application) {
                 withContext(Dispatchers.Main) {
                     when (result) {
                         is TumblrShareParseResult.Success -> {
+                            retryAfterLogin = false
                             android.util.Log.d("DownloadSM", "enqueueFromUrl: ${result.media.size} candidates")
                             cmdCh.trySend(Cmd.Append(result.media))
                         }
                         is TumblrShareParseResult.LoginRequired -> {
-                        // Rate-limit: don't re-trigger login within 10s of the
-                        // previous redirect to prevent crash loops.
-                        val now = System.currentTimeMillis()
-                        if (now - lastLoginRedirectAt < 10_000) {
-                            android.util.Log.w("DownloadSM", "LoginRequired throttled (${now - lastLoginRedirectAt}ms since last)")
-                            return@withContext
+                            if (retryAfterLogin) {
+                                retryAfterLogin = false
+                                android.util.Log.w("DownloadSM", "LoginRequired after login retry — giving up")
+                                _parseEvent.tryEmit(
+                                    ParseEvent.CookieSecurityNotice(
+                                        app.getString(R.string.login_retry_failed)
+                                    )
+                                )
+                            } else {
+                                pendingLoginUrl = result.url.ifBlank { url }
+                                _parseEvent.tryEmit(
+                                    ParseEvent.LoginRequired(
+                                        url = result.url.ifBlank { url },
+                                        message = app.getString(R.string.parse_login_required)
+                                    )
+                                )
+                            }
                         }
-                        lastLoginRedirectAt = now
-                        pendingLoginUrl = result.url.ifBlank { url }
-                        _parseEvent.tryEmit(
-                            ParseEvent.LoginRequired(
-                                url = result.url.ifBlank { url },
-                                message = app.getString(R.string.parse_login_required)
-                            )
-                        )
-                    }
-                        is TumblrShareParseResult.Error -> _parseEvent.tryEmit(ParseEvent.Message(result.message))
-                        is TumblrShareParseResult.Empty -> _parseEvent.tryEmit(ParseEvent.Message(result.message))
+                        is TumblrShareParseResult.Error -> {
+                            retryAfterLogin = false
+                            _parseEvent.tryEmit(ParseEvent.Message(result.message))
+                        }
+                        is TumblrShareParseResult.Empty -> {
+                            retryAfterLogin = false
+                            _parseEvent.tryEmit(ParseEvent.Message(result.message))
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -137,6 +146,9 @@ class DownloadStateManager(private val app: Application) {
     fun clearAll() { cmdCh.trySend(Cmd.ClearAll) }
 
     fun peekPendingLoginUrl(): String? = pendingLoginUrl
+
+    /** Mark the next parse attempt as a post-login retry. */
+    fun markRetryAfterLogin() { retryAfterLogin = true }
 
     /** Emit a one-shot parse event from outside (e.g. cookie sync notice). */
     fun emitParseEvent(event: ParseEvent) {

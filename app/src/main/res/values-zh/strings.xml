@@ -29,6 +29,7 @@
     <string name="login_cookie_not_found">未检测到可保存的登录 Cookie，请确认已完成登录。</string>
     <string name="cookies_cleared_toast">已清除本地 Cookie 记录</string>
     <string name="cookie_sync_timeout">登录成功，但 Cookie 同步有延迟。链接已保留——请稍后重试。</string>
+    <string name="login_retry_failed">已检测到登录，但无法访问此帖子。请尝试重新粘贴链接。</string>
     <string name="select_download_directory">下载目录设置</string>
     <string name="reset_download_directory">恢复默认下载目录</string>
     <string name="download_directory_display_placeholder">当前下载目录：默认</string>
