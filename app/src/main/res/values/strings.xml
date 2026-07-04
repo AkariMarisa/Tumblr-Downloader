@@ -28,6 +28,7 @@
     <string name="login_cookie_saved">Login saved locally. Private content can be parsed automatically.</string>
     <string name="login_cookie_not_found">No login cookie found. Please make sure you are logged in.</string>
     <string name="cookies_cleared_toast">Local cookies cleared</string>
+    <string name="cookie_sync_timeout">Login successful, but cookie sync is delayed. The URL has been preserved — please try again.</string>
     <string name="select_download_directory">Set download directory</string>
     <string name="reset_download_directory">Reset download directory</string>
     <string name="download_directory_display_placeholder">Current directory: Default</string>

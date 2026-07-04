@@ -127,6 +127,13 @@ class DownloadStateManager(private val app: Application) {
 
     fun clearAll() { cmdCh.trySend(Cmd.ClearAll) }
 
+    fun peekPendingLoginUrl(): String? = pendingLoginUrl
+
+    /** Emit a one-shot parse event from outside (e.g. cookie sync notice). */
+    fun emitParseEvent(event: ParseEvent) {
+        _parseEvent.tryEmit(event)
+    }
+
     fun consumePendingLoginUrl(): String? {
         val u = pendingLoginUrl
         pendingLoginUrl = null

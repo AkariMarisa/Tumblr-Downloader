@@ -2,12 +2,14 @@ package com.example.tumblrdownloader.utils
 
 import android.content.Context
 import android.os.Build
+import android.util.Log
 import android.webkit.CookieManager
-
+import kotlinx.coroutines.delay
 import org.json.JSONObject
 import java.util.Locale
 
 object TumblrCookieStore {
+    private const val TAG = "TumblrCookieStore"
     private const val PREF_NAME = "tumblr_cookie_store"
     private const val PREF_KEY_COOKIES = "saved_tumblr_cookies"
     private const val PREF_KEY_SAVED_AT = "saved_tumblr_cookies_at"
@@ -79,6 +81,41 @@ object TumblrCookieStore {
             cookieManager.flush()
         }
         return restored
+    }
+
+    /**
+     * Poll [CookieManager] until cookies for a tracked Tumblr host are visible.
+     * On some Android versions, cookies set by WebView during login are not
+     * immediately available via [CookieManager.getCookie] — there is an async
+     * sync delay before they settle.
+     *
+     * @param timeoutMs  Max total time to wait.
+     * @param intervalMs Time between polling attempts.
+     * @return `true` if valid cookies appeared within the timeout.
+     */
+    suspend fun waitForCookiesReady(
+        timeoutMs: Long = 5_000,
+        intervalMs: Long = 300
+    ): Boolean {
+        val cookieManager = CookieManager.getInstance()
+        val deadline = System.currentTimeMillis() + timeoutMs
+
+        while (System.currentTimeMillis() < deadline) {
+            for (host in trackedCookieHosts) {
+                val rawCookie = cookieManager.getCookie(host)
+                if (!rawCookie.isNullOrBlank()) {
+                    val normalized = normalizeCookieString(rawCookie)
+                    if (normalized.isNotBlank()) {
+                        Log.d(TAG, "waitForCookiesReady: cookies available for $host")
+                        return true
+                    }
+                }
+            }
+            delay(intervalMs)
+        }
+
+        Log.w(TAG, "waitForCookiesReady: timeout after ${timeoutMs}ms — cookies not visible")
+        return false
     }
 
     fun clear(context: Context) {

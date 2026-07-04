@@ -186,7 +186,7 @@ For private or restricted posts:
 
 - [x] **Clipboard auto-detect**: Rewrote the detection mechanism to use `onWindowFocusChanged(true)` instead of relying on `OnPrimaryClipChangedListener`. Now reliably detects links copied from other apps when switching back. Includes proper debounce and dedup.
 - [ ] **Retry on network change**: Pause downloads when WiFi disconnects, auto-resume on reconnection.
-- [ ] **Cookie persistence race**: WebView login cookies don't always sync to the OkHttp client before the retry fires. Add a ready check before re-parsing.
+- [x] **Cookie persistence race**: Added `waitForCookiesReady()` in `TumblrCookieStore` — polls `CookieManager.getCookie()` on login hosts with 5s timeout before retrying parse. Login retry now waits until cookies are actually visible.
 - [ ] **SharedPreferences corruption**: Download history and cookie store use plain JSON in SharedPreferences — can break on concurrent writes or crash during save. Migrate to Room or a transactional store.
 - [ ] **Adult content detection**: Posts behind Tumblr's "possible adult content" warning need an extra confirmation step; improve `looksLikeLoginPage` to handle this edge case.
 

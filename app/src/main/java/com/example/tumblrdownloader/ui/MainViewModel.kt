@@ -2,17 +2,20 @@ package com.example.tumblrdownloader.ui
 
 import android.app.Application
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.tumblrdownloader.model.DownloadItem
 import com.example.tumblrdownloader.model.DownloadStateManager
 import com.example.tumblrdownloader.model.DownloadStatus
 import com.example.tumblrdownloader.service.DownloadService
+import com.example.tumblrdownloader.model.ParseEvent
 import com.example.tumblrdownloader.utils.DownloadHistoryStore
 import com.example.tumblrdownloader.utils.DownloadUtils
-import com.example.tumblrdownloader.utils.TumblrCookieStore
 import com.example.tumblrdownloader.utils.TumblrAccount
 import com.example.tumblrdownloader.utils.TumblrAccountStore
+import com.example.tumblrdownloader.R
+import com.example.tumblrdownloader.utils.TumblrCookieStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +26,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+
+    companion object {
+        private const val TAG = "MainViewModel"
+    }
 
     private val appContext = getApplication<Application>()
 
@@ -88,9 +95,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearAllDownloads() = stateManager.clearAll()
 
-    fun retryPendingLoginUrl(): Boolean {
-        val url = stateManager.consumePendingLoginUrl() ?: return false
-        return enqueueFromUrl(url)
+    fun retryPendingLoginUrl() {
+        val url = stateManager.peekPendingLoginUrl() ?: return
+
+        viewModelScope.launch {
+            val cookiesReady = withContext(Dispatchers.IO) {
+                TumblrCookieStore.waitForCookiesReady()
+            }
+
+            if (cookiesReady) {
+                stateManager.consumePendingLoginUrl()
+                enqueueFromUrl(url)
+            } else {
+                Log.w(TAG, "retryPendingLoginUrl: cookie sync timeout, URL preserved for manual retry")
+                stateManager.emitParseEvent(
+                    ParseEvent.CookieSecurityNotice(
+                        getApplication<Application>().getString(R.string.cookie_sync_timeout)
+                    )
+                )
+            }
+        }
     }
 
     // ── non-delegated VM methods ──────────────────────────────────────

@@ -189,7 +189,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 - [x] **剪贴板自动检测**：重写了检测机制，改用 `onWindowFocusChanged(true)` 而非依赖 `OnPrimaryClipChangedListener`。从其他 app 复制链接后切回本 app 时能可靠检测，并带有防抖和去重。
 - [ ] **网络切换时自动重试**：WiFi 断开时暂停下载，重新连接后自动继续
-- [ ] **Cookie 同步竞态**：WebView 登录后的 Cookie 有时不能及时同步到 OkHttp 客户端，重试解析时可能仍返回未登录。需要增加就绪检查
+- [x] **Cookie 同步竞态**：在 `TumblrCookieStore` 中添加了 `waitForCookiesReady()`——在重试解析前轮询 `CookieManager.getCookie()` 直至 Cookie 可见（超时 5 秒）。登录重试现在会等待 Cookie 实际就绪再执行。
 - [ ] **SharedPreferences 损坏**：下载历史记录和 Cookie 使用纯 JSON 存储在 SharedPreferences 中，并发写入或崩溃可能导致数据损坏。建议迁移到 Room 或事务性存储
 - [ ] **成人内容检测**：Tumblr 对含成人内容的帖子有额外拦截页，需改进 `looksLikeLoginPage` 对此边缘情况的处理
 
