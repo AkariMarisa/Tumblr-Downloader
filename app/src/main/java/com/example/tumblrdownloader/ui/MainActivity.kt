@@ -174,12 +174,14 @@ class MainActivity : AppCompatActivity() {
                     val username = header.findViewById<android.widget.TextView>(R.id.tvDrawerUserName)
                     val status = header.findViewById<android.widget.TextView>(R.id.tvDrawerUserStatus)
 
-                    username.text = if (account.isLoggedIn) {
+                    val loggedIn = account.isLoggedIn
+
+                    username.text = if (loggedIn) {
                         account.username ?: getString(R.string.drawer_user_logged_in)
                     } else {
                         getString(R.string.drawer_not_logged_in)
                     }
-                    status.text = if (account.isLoggedIn) {
+                    status.text = if (loggedIn) {
                         getString(R.string.drawer_user_status_logged_in,
                             account.status.orEmpty().ifBlank { getString(R.string.drawer_user_status_online) })
                     } else {
@@ -195,6 +197,9 @@ class MainActivity : AppCompatActivity() {
                         .into(avatar)
 
                     status.isVisible = true
+
+                    // Show logout button only when logged in
+                    binding.navView.menu.findItem(R.id.menu_logout)?.isVisible = loggedIn
                 }
             }
         }
