@@ -187,10 +187,12 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ### 可靠性
 
-- [x] **剪贴板自动检测**：重写了检测机制，改用 `onWindowFocusChanged(true)` 而非依赖 `OnPrimaryClipChangedListener`。从其他 app 复制链接后切回本 app 时能可靠检测，并带有防抖和去重。
+- [x] **剪贴板自动检测**：改用 `onWindowFocusChanged(true)`（Android 10+ 需要窗口聚焦才能读取剪切板）。冷启动跳过——只在切回时检测。持久化去重（SharedPreferences），删除/清空任务时自动重置缓存。设置页开关可关闭。检测时自动切换到下载 tab 显示 loading 遮罩。
 - [ ] **网络切换时自动重试**：WiFi 断开时暂停下载，重新连接后自动继续
 - [x] **Cookie 同步竞态**：在 `TumblrCookieStore` 中添加了 `waitForCookiesReady()`——在重试解析前轮询 `CookieManager.getCookie()` 直至 Cookie 可见（超时 5 秒）。登录重试现在会等待 Cookie 实际就绪再执行。
+- [x] **登录循环修复**：`retryAfterLogin` 标志位防止重试失败后重复打开登录页。10 秒登录重定向节流。`loginLaunchPending` 守卫避免重复启动登录 Activity。
 - [ ] **SharedPreferences 损坏**：下载历史记录和 Cookie 使用纯 JSON 存储在 SharedPreferences 中，并发写入或崩溃可能导致数据损坏。建议迁移到 Room 或事务性存储
+- [x] **WebViewCookieJar 子域名回退**：当 `cookieManager.getCookie(url)` 对 `*.tumblr.com` 子域名返回 null 时，回退到 `https://www.tumblr.com/` 获取 Cookie。
 - [ ] **成人内容检测**：Tumblr 对含成人内容的帖子有额外拦截页，需改进 `looksLikeLoginPage` 对此边缘情况的处理
 - [ ] **私密帖子支持**：`/private/...` URL 无法通过 HTTP 解析（JS 动态渲染），两条路线待评估：
   - **WebView 解析器**：用隐藏 WebView 加载帖子页面，等待 JS 渲染后通过 `evaluateJavascript()` 提取 `__INITIAL_STATE__` / DOM 里的媒体 URL

@@ -184,10 +184,12 @@ For private or restricted posts:
 
 ### Reliability
 
-- [x] **Clipboard auto-detect**: Rewrote the detection mechanism to use `onWindowFocusChanged(true)` instead of relying on `OnPrimaryClipChangedListener`. Now reliably detects links copied from other apps when switching back. Includes proper debounce and dedup.
+- [x] **Clipboard auto-detect**: Use `onWindowFocusChanged(true)` (Android 10+ requires focus to read clipboard). Cold start skip — only detect when switching back. Persistent dedup via SharedPreferences; delete/clear tasks resets cache. Settings toggle to disable. Auto-switch to Download tab with loading overlay on detection.
 - [ ] **Retry on network change**: Pause downloads when WiFi disconnects, auto-resume on reconnection.
 - [x] **Cookie persistence race**: Added `waitForCookiesReady()` in `TumblrCookieStore` — polls `CookieManager.getCookie()` on login hosts with 5s timeout before retrying parse. Login retry now waits until cookies are actually visible.
+- [x] **Login loop fix**: `retryAfterLogin` flag prevents re-opening login page on failed retry. 10s throttle on login redirects. `loginLaunchPending` guard in DownloadFragment.
 - [ ] **SharedPreferences corruption**: Download history and cookie store use plain JSON in SharedPreferences — can break on concurrent writes or crash during save. Migrate to Room or a transactional store.
+- [x] **WebViewCookieJar subdomain fallback**: When `cookieManager.getCookie(url)` returns null for `*.tumblr.com` subdomain requests, fall back to `https://www.tumblr.com/` to retrieve cookies.
 - [ ] **Adult content detection**: Posts behind Tumblr's "possible adult content" warning need an extra confirmation step; improve `looksLikeLoginPage` to handle this edge case.
 - [ ] **Private post support**: `/private/...` URLs cannot be parsed via HTTP (JS-rendered). Two approaches under consideration:
   - **WebView parser**: Load URL in a hidden WebView, wait for JS rendering, extract `__INITIAL_STATE__` / DOM media URLs via `evaluateJavascript()`.
