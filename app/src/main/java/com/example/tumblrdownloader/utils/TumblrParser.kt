@@ -127,7 +127,14 @@ object TumblrParser {
                 if (oembedParsed.media.isNotEmpty()) return@withContext oembedParsed
             }
 
-            is TumblrShareParseResult.LoginRequired -> return@withContext oembedParsed
+            is TumblrShareParseResult.LoginRequired -> {
+                // Don't return immediately — private posts don't have oEmbed
+                // representations even when authenticated. If cookies are
+                // present, fall through to page HTML which is more reliable.
+                if (!hasTumblrCookies()) {
+                    return@withContext oembedParsed
+                }
+            }
             else -> Unit
         }
 
@@ -600,6 +607,16 @@ object TumblrParser {
             val port = uri.port
             java.net.Proxy(java.net.Proxy.Type.HTTP, java.net.InetSocketAddress(host, port))
         }.getOrNull()
+    }
+
+    /** Check whether CookieManager has non-blank cookies for Tumblr hosts. */
+    private fun hasTumblrCookies(): Boolean {
+        val cookieManager = CookieManager.getInstance()
+        val hosts = listOf("https://www.tumblr.com", "https://tumblr.com")
+        return hosts.any { host ->
+            val cookies = cookieManager.getCookie(host)
+            !cookies.isNullOrBlank()
+        }
     }
 
     private class WebViewCookieJar : CookieJar {

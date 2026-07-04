@@ -2,6 +2,7 @@ package com.example.tumblrdownloader.ui.download
 
 import android.app.Activity
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -21,13 +22,20 @@ import kotlinx.coroutines.launch
 
 class DownloadFragment : Fragment() {
 
+    companion object {
+        private const val TAG = "DownloadFragment"
+    }
+
     private var _binding: FragmentDownloadBinding? = null
     private val binding get() = _binding!!
     private val viewModel: MainViewModel by activityViewModels()
 
+    private var loginLaunchPending = false
+
     private val loginLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
+        loginLaunchPending = false
         if (result.resultCode == Activity.RESULT_OK) {
             viewModel.refreshTumblrAccount()
             viewModel.retryPendingLoginUrl()
@@ -80,6 +88,11 @@ class DownloadFragment : Fragment() {
 
                     is ParseEvent.LoginRequired -> {
                         showLoading(false)
+                        if (loginLaunchPending) {
+                            Log.d(TAG, "LoginRequired but launch already pending, skipping")
+                            return@collect
+                        }
+                        loginLaunchPending = true
                         Toast.makeText(requireContext(), event.message, Toast.LENGTH_LONG).show()
                         loginLauncher.launch(TumblrLoginActivity.newIntent(requireContext(), event.url))
                     }
