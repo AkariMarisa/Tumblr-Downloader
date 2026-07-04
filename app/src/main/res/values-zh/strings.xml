@@ -38,6 +38,7 @@
     <string name="open_download_directory">打开下载目录</string>
     <string name="open_download_directory_failed">无法打开下载目录，请前往文件管理器手动查看下载目录。</string>
     <string name="menu_settings">设置</string>
+    <string name="menu_logout">退出登录</string>
     <string name="menu_about">关于</string>
     <string name="navigation_drawer_open">打开导航菜单</string>
     <string name="navigation_drawer_close">关闭导航菜单</string>

@@ -31,6 +31,7 @@ import com.example.tumblrdownloader.ui.download.DownloadFragment
 import com.example.tumblrdownloader.ui.download.DownloadsFragment
 import kotlinx.coroutines.launch
 import androidx.viewpager2.widget.ViewPager2
+import android.widget.Toast
 import android.util.Log
 
 private const val TAG = "MainActivity"
@@ -158,6 +159,10 @@ class MainActivity : AppCompatActivity() {
     private fun onNavItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
             R.id.menu_settings -> startActivity(Intent(this, SettingsActivity::class.java))
+            R.id.menu_logout -> {
+                viewModel.clearSavedCookies()
+                Toast.makeText(this, R.string.cookies_cleared_toast, Toast.LENGTH_SHORT).show()
+            }
             R.id.menu_about -> startActivity(Intent(this, AboutActivity::class.java))
         }
         binding.drawerLayout.closeDrawer(GravityCompat.START)
