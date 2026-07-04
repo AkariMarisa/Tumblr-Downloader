@@ -272,6 +272,8 @@ class MainActivity : AppCompatActivity() {
         Log.d(TAG, "Clipboard auto-detect: ${clipText.take(80)}")
         if (viewModel.enqueueFromUrl(clipText)) {
             prefs.edit().putString(PREF_LAST_AUTO_URL, clipText).apply()
+            // Switch to Download tab first so the user sees the loading overlay
+            binding.viewPager.currentItem = 0
             viewModel.notifyFromClipboard(clipText)
             Log.d(TAG, "Clipboard auto-detect queued successfully")
         } else {
