@@ -610,12 +610,23 @@ object TumblrParser {
     }
 
     /** Check whether CookieManager has non-blank cookies for Tumblr hosts. */
+    /**
+     * Check whether CookieManager has actual auth cookies (not just Cloudflare
+     * tracking cookies) for Tumblr hosts.
+     */
     private fun hasTumblrCookies(): Boolean {
         val cookieManager = CookieManager.getInstance()
         val hosts = listOf("https://www.tumblr.com", "https://tumblr.com")
         return hosts.any { host ->
-            val cookies = cookieManager.getCookie(host)
-            !cookies.isNullOrBlank()
+            val rawCookie = cookieManager.getCookie(host) ?: return@any false
+            // Filter out Cloudflare-only cookies — same logic as
+            // TumblrCookieStore.normalizeCookieString().
+            rawCookie.split(';').any { segment ->
+                val trimmed = segment.trim()
+                trimmed.isNotBlank() &&
+                    !trimmed.lowercase(Locale.ROOT).startsWith("__cf_bm=") &&
+                    !trimmed.lowercase(Locale.ROOT).startsWith("_cfuvid=")
+            }
         }
     }
 

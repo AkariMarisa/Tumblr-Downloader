@@ -49,6 +49,7 @@ class DownloadStateManager(private val app: Application) {
     val parseEvent = _parseEvent.asSharedFlow()
 
     private var pendingLoginUrl: String? = null
+    private var lastLoginRedirectAt: Long = 0
 
     // ── command queue (single consumer processes one at a time) ────────
     private sealed class Cmd {
@@ -93,14 +94,22 @@ class DownloadStateManager(private val app: Application) {
                             cmdCh.trySend(Cmd.Append(result.media))
                         }
                         is TumblrShareParseResult.LoginRequired -> {
-                            pendingLoginUrl = result.url.ifBlank { url }
-                            _parseEvent.tryEmit(
-                                ParseEvent.LoginRequired(
-                                    url = result.url.ifBlank { url },
-                                    message = app.getString(R.string.parse_login_required)
-                                )
-                            )
+                        // Rate-limit: don't re-trigger login within 10s of the
+                        // previous redirect to prevent crash loops.
+                        val now = System.currentTimeMillis()
+                        if (now - lastLoginRedirectAt < 10_000) {
+                            android.util.Log.w("DownloadSM", "LoginRequired throttled (${now - lastLoginRedirectAt}ms since last)")
+                            return@withContext
                         }
+                        lastLoginRedirectAt = now
+                        pendingLoginUrl = result.url.ifBlank { url }
+                        _parseEvent.tryEmit(
+                            ParseEvent.LoginRequired(
+                                url = result.url.ifBlank { url },
+                                message = app.getString(R.string.parse_login_required)
+                            )
+                        )
+                    }
                         is TumblrShareParseResult.Error -> _parseEvent.tryEmit(ParseEvent.Message(result.message))
                         is TumblrShareParseResult.Empty -> _parseEvent.tryEmit(ParseEvent.Message(result.message))
                     }
