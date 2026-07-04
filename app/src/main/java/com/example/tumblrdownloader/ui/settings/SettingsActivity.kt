@@ -96,12 +96,6 @@ class SettingsActivity : AppCompatActivity() {
             prefs.edit().putBoolean(PREF_CLIPBOARD_AUTO_DETECT, isChecked).apply()
         }
 
-        // ── Clear cookies ──
-        binding.btnClearCookies.setOnClickListener {
-            viewModel.clearSavedCookies()
-            Toast.makeText(this, R.string.cookies_cleared_toast, Toast.LENGTH_SHORT).show()
-        }
-
         // ── Clear auto-detect cache ──
         binding.btnClearCache.setOnClickListener {
             android.app.AlertDialog.Builder(this)
