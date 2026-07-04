@@ -215,6 +215,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 - [ ] **MIME 类型回退检测**：对于未知扩展名的 URL，先发 HEAD 请求检查 `Content-Type`，而非直接当成 `application/octet-stream`
 - [ ] **解析诊断面板**：显示解析失败的具体原因（404 / 限流 / 需要登录 / 未找到媒体）
+- [ ] **全链路日志系统**：本地日志记录（不上传云端）。覆盖下载流程、解析结果、Cookie 状态、WebView 交互。支持用户导出日志文件用于排查问题。
 - [ ] **限速配置**：可调节的下载速度限制（500 KB/s – 2 MB/s）和任务间隔时间
 - [ ] **Cookie 测试入口**：设置中提供手动粘贴 Cookie 的入口，方便调试私密帖子
 - [ ] **重构 `inferExtension`**：`DownloadService.kt` 和 `DownloadStateManager.kt` 中存在重复逻辑，应抽取到共享工具类
