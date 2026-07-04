@@ -92,6 +92,11 @@
     <string name="parse_duplicate_skipped">Media already in download list, duplicates skipped.</string>
     <string name="parse_no_new_media">No downloadable media found</string>
     <string name="parse_page_request_failed">Page request failed, HTTP %1$d</string>
+    <string name="parse_private_not_supported">Private Tumblr posts are not supported yet.</string>
+    <string name="parse_oembed_redirect_error">oEmbed redirect error (HTTP %1$d)</string>
+    <string name="parse_oembed_http_error">oEmbed request failed, HTTP %1$d</string>
+    <string name="parse_oembed_parsed_empty">No downloadable media found in oEmbed response</string>
+    <string name="restored_state_invalid">State invalid after app restart, please retry</string>
 
     <!-- Account -->
     <string name="status_online">Online</string>

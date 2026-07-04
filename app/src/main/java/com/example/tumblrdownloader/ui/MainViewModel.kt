@@ -63,7 +63,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         DownloadStatus.DOWNLOADING -> item.copy(
                             status = DownloadStatus.FAILED,
                             progress = 0,
-                            errorMessage = "State invalid after app restart, retry manually"
+                            errorMessage = appContext.getString(R.string.restored_state_invalid)
                         )
                         else -> item
                     }

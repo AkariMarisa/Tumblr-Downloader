@@ -281,7 +281,7 @@ object TumblrParser {
                         ParsedTumblrMedia(
                             sourceUrl = source,
                             mediaUrl = mediaUrl,
-                            title = "Tumblr media (${index + 1})",
+                            title = "#${index + 1}",
                             type = guessType(mediaUrl)
                         )
                     }

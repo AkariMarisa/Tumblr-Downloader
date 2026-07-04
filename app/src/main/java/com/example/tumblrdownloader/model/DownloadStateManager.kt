@@ -115,11 +115,11 @@ class DownloadStateManager(private val app: Application) {
                         }
                         is TumblrShareParseResult.Error -> {
                             retryAfterLogin = false
-                            _parseEvent.tryEmit(ParseEvent.Message(result.message))
+                            _parseEvent.tryEmit(ParseEvent.Message(localizeError(result.message)))
                         }
                         is TumblrShareParseResult.Empty -> {
                             retryAfterLogin = false
-                            _parseEvent.tryEmit(ParseEvent.Message(result.message))
+                            _parseEvent.tryEmit(ParseEvent.Message(localizeError(result.message)))
                         }
                     }
                 }
@@ -445,6 +445,39 @@ class DownloadStateManager(private val app: Application) {
             else -> rawExt
         }
         return if (mapped in setOf("jpg", "jpeg", "png", "gif", "webp", "avif", "mp4", "m3u8", "mov", "webm")) mapped else "bin"
+    }
+
+    /** Map known English parser error messages to localized strings. */
+    private fun localizeError(msg: String): String {
+        return when {
+            msg.startsWith("Not a valid Tumblr share link") ->
+                app.getString(R.string.parse_not_valid_url)
+            msg.startsWith("Private Tumblr posts are not supported yet") ->
+                app.getString(R.string.parse_private_not_supported)
+            msg.startsWith("oEmbed redirect error") -> {
+                val code = msg.filter { it.isDigit() }.toIntOrNull() ?: 0
+                app.getString(R.string.parse_oembed_redirect_error, code)
+            }
+            msg.startsWith("oEmbed request failed, HTTP") -> {
+                val code = msg.filter { it.isDigit() }.toIntOrNull() ?: 0
+                app.getString(R.string.parse_oembed_http_error, code)
+            }
+            msg.startsWith("oEmbed unavailable:") ->
+                app.getString(R.string.parse_oembed_unavailable, msg.substringAfter("oEmbed unavailable: "))
+            msg.startsWith("oEmbed parsed but no downloadable media found") ->
+                app.getString(R.string.parse_oembed_parsed_empty)
+            msg.startsWith("oEmbed parse failed:") ->
+                app.getString(R.string.parse_error_generic, msg.substringAfter("oEmbed parse failed: "))
+            msg.startsWith("Page request failed, HTTP") -> {
+                val code = msg.filter { it.isDigit() }.toIntOrNull() ?: 0
+                app.getString(R.string.parse_page_request_failed, code)
+            }
+            msg.startsWith("Page parse failed:") ->
+                app.getString(R.string.parse_error_generic, msg.substringAfter("Page parse failed: "))
+            msg.startsWith("No downloadable media found") ->
+                app.getString(R.string.parse_no_new_media)
+            else -> msg
+        }
     }
 }
 

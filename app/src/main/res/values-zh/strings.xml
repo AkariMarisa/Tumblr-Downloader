@@ -92,6 +92,11 @@
     <string name="parse_duplicate_skipped">该链接中的媒体已在下载列表中，已跳过重复项。</string>
     <string name="parse_no_new_media">该链接未识别到可下载媒体</string>
     <string name="parse_page_request_failed">页面请求失败，HTTP %1$d</string>
+    <string name="parse_private_not_supported">暂不支持下载私密帖子。</string>
+    <string name="parse_oembed_redirect_error">oEmbed 重定向错误（HTTP %1$d）</string>
+    <string name="parse_oembed_http_error">oEmbed 请求失败，HTTP %1$d</string>
+    <string name="parse_oembed_parsed_empty">oEmbed 响应中未找到可下载媒体</string>
+    <string name="restored_state_invalid">应用重启后状态失效，请重试</string>
 
     <!-- Account -->
     <string name="status_online">在线</string>
