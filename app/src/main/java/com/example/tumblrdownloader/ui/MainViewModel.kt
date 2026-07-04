@@ -1,6 +1,8 @@
 package com.example.tumblrdownloader.ui
 
 import android.app.Application
+import android.content.Context
+import android.content.SharedPreferences
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -32,6 +34,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private val appContext = getApplication<Application>()
+    private val prefs = appContext.getSharedPreferences("tumblr_downloader", Context.MODE_PRIVATE)
 
     // ── download state manager (sequential, race-free) ────────────────
     val stateManager = DownloadStateManager(appContext).also { sm ->
@@ -91,9 +94,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun pauseDownload(itemId: String) = stateManager.pause(itemId)
 
-    fun removeDownload(itemId: String) = stateManager.remove(itemId)
+    fun removeDownload(itemId: String) {
+        // Clear auto-detect cache so users can re-download the same link
+        // after deleting a task (the cache only blocks the exact last URL).
+        prefs.edit().remove("last_auto_detected_url").apply()
+        stateManager.remove(itemId)
+    }
 
-    fun clearAllDownloads() = stateManager.clearAll()
+    fun clearAllDownloads() {
+        prefs.edit().remove("last_auto_detected_url").apply()
+        stateManager.clearAll()
+    }
 
     fun retryPendingLoginUrl() {
         val url = stateManager.peekPendingLoginUrl() ?: return
