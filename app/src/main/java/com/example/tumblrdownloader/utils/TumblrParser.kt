@@ -634,7 +634,14 @@ object TumblrParser {
         private val cookieManager = CookieManager.getInstance()
 
         override fun loadForRequest(url: HttpUrl): List<Cookie> {
-            val rawCookie = cookieManager.getCookie(url.toString()) ?: return emptyList()
+            var rawCookie = cookieManager.getCookie(url.toString())
+            // Cookies set for www.tumblr.com (without wildcard domain) won't
+            // be returned for subdomain URLs like akarimarisa.tumblr.com.
+            // Fall back to the www origin when the host-specific check fails.
+            if (rawCookie.isNullOrBlank() && url.host.endsWith(".tumblr.com")) {
+                rawCookie = cookieManager.getCookie("https://www.tumblr.com/")
+            }
+            if (rawCookie.isNullOrBlank()) return emptyList()
             return rawCookie
                 .split(';')
                 .map { it.trim() }
