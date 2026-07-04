@@ -228,7 +228,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - [ ] **测试**：补充 `TumblrParser`、`DownloadStateManager` 的单元测试，以及下载流程的 instrumentation 测试
 - [ ] **贡献指南**：创建 `CONTRIBUTING.md` 和 `CODE_OF_CONDUCT.md`
 - [x] **截图**：在 README 中添加应用截图
-- [ ] **应用商店发布**：准备 Release 签名和商店上架材料
+- [ ] **应用商店发布**：准备 Release 签名和商店上架材料（发布到 F-Droid）
 
 ---
 

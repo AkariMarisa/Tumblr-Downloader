@@ -225,7 +225,7 @@ For private or restricted posts:
 - [ ] **Tests**: Add unit tests for `TumblrParser`, `DownloadStateManager`, and instrumentation tests for the download flow.
 - [ ] **Contributing guide**: Create `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
 - [x] **Screenshots**: Add app screenshots to README.
-- [ ] **Play Store / F-Droid**: Prepare release signing and store listings.
+- [ ] **Play Store / F-Droid**: Prepare release signing and store listings (publish to F-Droid).
 
 ---
 
