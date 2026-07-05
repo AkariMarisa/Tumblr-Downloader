@@ -156,7 +156,14 @@ class DownloadService : Service() {
                     return START_STICKY
                 }
 
-                startForeground(NOTIFICATION_ID, buildNotification(resumedItem.title, getString(R.string.status_queued), 0, null))
+                try {
+                    startForeground(NOTIFICATION_ID, buildNotification(resumedItem.title, getString(R.string.status_queued), 0, null))
+                } catch (e: Exception) {
+                    android.util.Log.w("DownloadSvc", "startForeground failed: ${e.message}")
+                    // On some ROMs (MIUI, ColorOS, etc.) startForeground may be
+                    // blocked.  Try to process the download anyway as a best-effort
+                    // background service.
+                }
                 queueChannel.trySend(resumedItem)
                 startWorkerIfNeeded()
             }
@@ -305,6 +312,7 @@ class DownloadService : Service() {
 
     /** @return COMPLETED / FAILED on terminal states, null on pause / remove. */
     private suspend fun processWithRetry(item: DownloadItem) {
+        android.util.Log.d("DownloadSvc", "processWithRetry: id=${item.id.take(8)}... url=${item.mediaUrl.take(60)}")
         var current = item
 
         // ponytail: pre-download check — 如果这个 media URL 已经被标记为已完成，
@@ -593,8 +601,10 @@ class DownloadService : Service() {
             requestBuilder.addHeader("Range", "bytes=$offsetBytes-")
         }
 
+        android.util.Log.d("DownloadSvc", "downloadWithRateLimit: requesting $mediaUrl (offset=$offsetBytes)")
         val request = requestBuilder.build()
         val response = client.newCall(request).execute()
+        android.util.Log.d("DownloadSvc", "downloadWithRateLimit: response code=${response.code}, len=${response.body?.contentLength()}")
         response.use { safeResponse ->
             // ponytail: when we sent a Range header but the server returned 200
             // (full content) instead of 206 (partial), the server doesn't support

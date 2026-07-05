@@ -50,6 +50,13 @@ class DownloadStateManager(private val app: Application) {
 
     private var pendingLoginUrl: String? = null
     private var retryAfterLogin = false
+    /**
+     * Set when [retryPendingLoginUrl] is in progress (has consumed the
+     * pending URL but hasn't called [enqueueFromUrl] yet).  Prevents
+     * clipboard auto-detect from racing ahead and stealing the parse slot.
+     */
+    @Volatile
+    private var retryUrlPending: String? = null
 
     // ── command queue (single consumer processes one at a time) ────────
     private sealed class Cmd {
@@ -66,7 +73,19 @@ class DownloadStateManager(private val app: Application) {
     private val scope = CoroutineScope(Dispatchers.Main)
 
     init {
-        scope.launch { for (cmd in cmdCh) process(cmd) }
+        scope.launch {
+            try {
+                for (cmd in cmdCh) {
+                    try {
+                        process(cmd)
+                    } catch (e: Exception) {
+                        android.util.Log.e("DownloadSM", "FATAL: command processor crashed on $cmd", e)
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("DownloadSM", "FATAL: channel consumer loop exited", e)
+            }
+        }
     }
 
     // ── public API ─────────────────────────────────────────────────────
@@ -78,9 +97,18 @@ class DownloadStateManager(private val app: Application) {
         }
     }
 
-    /** Parse and queue items from a Tumblr share URL.  Returns false if invalid or already parsing. */
+    /**
+     * Parse and queue items from a Tumblr share URL.  Returns false if
+     * invalid, already parsing, or the URL was already queued/succeeded.
+     */
     fun enqueueFromUrl(rawUrl: String): Boolean {
-        if (isParsing) return false
+        if (isParsing) {
+            android.util.Log.w("DownloadSM", "enqueueFromUrl: already parsing, rejecting $rawUrl")
+            return false
+        }
+        // If a login retry is pending (the URL was consumed but the actual
+        // parse hasn't started yet), reject clipboard-auto-detect attempts.
+        if (retryUrlPending != null) return false
         val url = TumblrParser.firstTumblrUrl(rawUrl.trim()) ?: return false
 
         isParsing = true
@@ -150,6 +178,28 @@ class DownloadStateManager(private val app: Application) {
     /** Mark the next parse attempt as a post-login retry. */
     fun markRetryAfterLogin() { retryAfterLogin = true }
 
+    /**
+     * Begin a retry sequence: consume the pending URL and set the retry
+     * guard so that clipboard auto-detect won't steal the slot.
+     * @return the pending URL, or null if none.
+     */
+    fun beginLoginRetry(): String? {
+        val url = pendingLoginUrl
+        pendingLoginUrl = null
+        if (url != null) {
+            retryUrlPending = url
+        }
+        return url
+    }
+
+    /**
+     * Called after [beginLoginRetry] when the actual parse starts.
+     * Clears the retry guard.
+     */
+    fun endLoginRetry() {
+        retryUrlPending = null
+    }
+
     /** Emit a one-shot parse event from outside (e.g. cookie sync notice). */
     fun emitParseEvent(event: ParseEvent) {
         _parseEvent.tryEmit(event)
@@ -185,7 +235,12 @@ class DownloadStateManager(private val app: Application) {
 
         val existing = _items.value
         android.util.Log.d("DownloadSM", "processAppend: ${existing.size} existing items")
-        val existingKeys = existing.map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }.toMutableSet()
+        // Only deduplicate against non-FAILED items.  A failed download
+        // should be retryable — the user shouldn't have to remove-and-re-add.
+        val existingKeys = existing
+            .filter { it.status != DownloadStatus.FAILED }
+            .map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }
+            .toMutableSet()
 
         val baseTime = System.currentTimeMillis()
         val added = candidates
@@ -290,16 +345,22 @@ class DownloadStateManager(private val app: Application) {
 
     // ── Progress callback (from service) ────────────────────────────────
     private fun processProgress(update: DownloadItem) {
+        android.util.Log.d("DownloadSM", "processProgress: id=${update.id.take(8)}... st=${update.status} prog=${update.progress} dl=${update.downloadedBytes}")
         _items.value = _items.value.map { existing ->
             if (existing.id != update.id) return@map existing
 
             // ponytail: ignore stale DOWNLOADING progress when user already paused
             // the item.  Allow COMPLETED/FAILED to go through even if stale.
-            when {
+            val oldSt = existing.status
+            val result = when {
                 existing.status == DownloadStatus.PAUSED && update.status == DownloadStatus.DOWNLOADING -> existing
                 existing.status == DownloadStatus.COMPLETED && update.status != DownloadStatus.COMPLETED -> existing
                 else -> update
             }
+            if (result !== existing) {
+                android.util.Log.d("DownloadSM", "processProgress: ${existing.id.take(8)}... ${oldSt}/${existing.progress}% → ${update.status}/${update.progress}%")
+            }
+            result
         }
         dirty = true
 

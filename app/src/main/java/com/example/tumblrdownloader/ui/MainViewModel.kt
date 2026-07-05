@@ -38,7 +38,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── download state manager (sequential, race-free) ────────────────
     val stateManager = DownloadStateManager(appContext).also { sm ->
-        DownloadService.progressListener = sm.serviceProgressListener
+        // Only set the static progressListener if it isn't already set.
+        // When a transient ViewModel is created after the real ViewModel
+        // already registered its listener, we must NOT overwrite —
+        // otherwise the transient VM's onCleared() would null out the
+        // listener the real VM needs to receive progress updates.
+        if (DownloadService.progressListener == null) {
+            DownloadService.progressListener = sm.serviceProgressListener
+        }
     }
 
     val downloads: StateFlow<List<DownloadItem>> = stateManager.items
@@ -107,7 +114,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun retryPendingLoginUrl() {
-        val url = stateManager.peekPendingLoginUrl() ?: return
+        // beginLoginRetry consumes the pending URL AND sets a guard so
+        // clipboard auto-detect won't race ahead and steal the parse slot.
+        val url = stateManager.beginLoginRetry() ?: return
 
         viewModelScope.launch {
             val cookiesReady = withContext(Dispatchers.IO) {
@@ -115,7 +124,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             if (cookiesReady) {
-                stateManager.consumePendingLoginUrl()
                 stateManager.markRetryAfterLogin()
                 enqueueFromUrl(url)
             } else {
@@ -126,6 +134,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 )
             }
+            stateManager.endLoginRetry()
         }
     }
 

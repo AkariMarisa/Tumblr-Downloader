@@ -274,6 +274,35 @@ object TumblrParser {
                         url = postUrl,
                         message = "Login page detected — this content may be private or require authentication."
                     )
+                } else if (candidates.isEmpty() && looksLikeAdultContentPage(html)) {
+                    // The adult content interstitial page may still contain the
+                    // post's media URLs in __INITIAL_STATE__, just under JSON
+                    // paths that [isLikelyPostMediaPath] rejects.  Try a relaxed
+                    // extraction (no path filtering) before requiring a browser
+                    // confirmation.
+                    val relaxedCandidates = extractFromJsonRelaxed(html)
+                        .filter { isLikelyPostMedia(it) }
+                        .let { dedupeAndNormalize(it) }
+                    if (relaxedCandidates.isNotEmpty()) {
+                        val media = relaxedCandidates.mapIndexed { index, mediaUrl ->
+                            ParsedTumblrMedia(
+                                sourceUrl = source,
+                                mediaUrl = mediaUrl,
+                                title = "#${index + 1}",
+                                type = guessType(mediaUrl)
+                            )
+                        }
+                        TumblrShareParseResult.Success(media)
+                    } else {
+                        // Truly empty — the interstitial hides everything until
+                        // the user clicks through in a browser.  Return LoginRequired
+                        // so the app opens a browser for confirmation; the retry will
+                        // have the cookie needed to bypass the interstitial.
+                        TumblrShareParseResult.LoginRequired(
+                            url = postUrl,
+                            message = "Adult content warning — open in browser to confirm and retry."
+                        )
+                    }
                 } else if (candidates.isEmpty()) {
                     TumblrShareParseResult.Empty("No downloadable media found")
                 } else {
@@ -338,6 +367,42 @@ object TumblrParser {
         return applicationJsonScriptRegex.findAll(html).flatMap { match ->
             extractUrlsFromJsonText(match.groupValues.getOrNull(1).orEmpty()).asSequence()
         }.toList()
+    }
+
+    /**
+     * Extract media URLs from JSON scripts without JSON-path filtering.
+     *
+     * Tumblr's adult-content interstitial page still loads the post data in
+     * [initialStateScriptRegex] but the JSON structure may put media URLs
+     * under paths that [isLikelyPostMediaPath] rejects (e.g. keys unrelated
+     * to "media", "photo", "video").  This function collects ALL
+     * media.tumblr.com URLs from every JSON script block, relying on
+     * [isLikelyPostMedia] (URL-level filtering) for noise removal.
+     */
+    private fun extractFromJsonRelaxed(html: String): List<String> {
+        val urls = LinkedHashSet<String>()
+        val jsonMediaUrlRegex = Regex(
+            "https?://[^\"'\\s<>)\\]}]+media\\.tumblr\\.com[^\"'\\s<>)\\]}]+",
+            RegexOption.IGNORE_CASE
+        )
+
+        fun extractFromText(raw: String) {
+            jsonMediaUrlRegex.findAll(unescapeJsonText(raw)).forEach { m ->
+                val url = m.value.trimEnd(')', ']', '}', ',', ';', '"', '\'', '>')
+                if (url.isNotBlank()) {
+                    urls.add(url)
+                }
+            }
+        }
+
+        initialStateScriptRegex.findAll(html).forEach { match ->
+            extractFromText(match.groupValues.getOrNull(1).orEmpty())
+        }
+        applicationJsonScriptRegex.findAll(html).forEach { match ->
+            extractFromText(match.groupValues.getOrNull(1).orEmpty())
+        }
+
+        return urls.toList()
     }
 
     private fun extractUrlsFromJsonText(jsonText: String): List<String> {
@@ -440,6 +505,55 @@ object TumblrParser {
 
     private val loginPageTitleRegex = Regex("<title[^>]*>([^<]+)</title>", RegexOption.IGNORE_CASE)
 
+    /**
+     * Detect whether the page HTML is a Tumblr adult-content interstitial.
+     *
+     * Tumblr shows a full-page overlay for blogs/posts flagged as adult content
+     * when the viewer has not explicitly confirmed they wish to view it.  The
+     * actual post content is hidden behind this interstitial and requires either
+     * a valid confirmation cookie or a click-through in a JavaScript-capable
+     * context (WebView) to reach.
+     */
+    private fun looksLikeAdultContentPage(html: String): Boolean {
+        val lower = html.lowercase(Locale.ROOT)
+
+        // Strong adult-content warning signals — look for the interstitial
+        // heading text and the confirmation button/link text so that regular
+        // posts mentioning these phrases are not falsely flagged.
+        val adultHeadings = listOf(
+            "this blog may contain adult content",
+            "this blog may contain mature content",
+            "this blog may contain sensitive content",
+            "this post may contain adult content",
+            "this post may contain mature content",
+            "this post may contain sensitive content",
+            "possible adult content",
+            "this blog contains adult content",
+            "adult content warning",
+            "mature content warning",
+        )
+        val hasHeading = adultHeadings.any { lower.contains(it) }
+        if (!hasHeading) return false
+
+        // Require at least one confirmation-action signal to reduce false
+        // positives (e.g. a post that merely *mentions* adult content).
+        val actionSignals = listOf(
+            "view this post anyway",
+            "continue to this post",
+            "show adult content",
+            "i understand, continue",
+            "i understand and wish to proceed",
+            "continue to tumblr",
+            "adult_interstitial",
+            "adult-warning",
+            "class=\"adult\"".lowercase(),
+            "name=\"adult_confirm\"".lowercase(),
+        )
+        val hasAction = actionSignals.any { lower.contains(it) }
+
+        return hasAction
+    }
+
     private fun looksLikeLoginPage(html: String): Boolean {
         val lower = html.lowercase(Locale.ROOT)
 
@@ -503,14 +617,19 @@ object TumblrParser {
 
         if (!(host.endsWith("media.tumblr.com") || lower.contains("media.tumblr.com"))) return false
 
-        // Accept any media.tumblr.com URL whose path has a file extension.
-        // We avoid a hardcoded extension list (jpg, png, gif, mp4, ...) because
-        // Tumblr occasionally introduces new variants (e.g., .pnj for high-quality
-        // images).  The domain check + noise path filters already provide sufficient
-        // precision; the extension requirement simply rules out directory paths.
+        // Accept media.tumblr.com URLs both with and without file extensions.
+        // Some Tumblr posts serve media at extensionless paths (e.g.
+        // /HASH1/HASH2/) while others have traditional extensions (.jpg, .png,
+        // .mp4, .pnj, etc.).  The domain check + noise path filters already
+        // provide sufficient precision; the extension requirement was too
+        // aggressive and silently dropped valid post media.
         val lastSegment = Uri.parse(url).lastPathSegment ?: return false
         val dotIndex = lastSegment.lastIndexOf('.')
-        if (dotIndex < 0 || dotIndex == lastSegment.length - 1) return false
+        if (dotIndex < 0 || dotIndex == lastSegment.length - 1) {
+            // No extension — accept if it looks like a typical Tumblr media
+            // hash (two path segments, alphanumeric with dashes/underscores).
+            return true
+        }
         val ext = lastSegment.substring(dotIndex + 1)
         return ext.length in 2..5 && ext.all { it.isLetterOrDigit() }
     }

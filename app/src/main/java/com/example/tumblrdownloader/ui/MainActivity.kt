@@ -45,7 +45,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private val viewModel: MainViewModel by viewModels()
     private val prefs: SharedPreferences by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
-    private var isColdStart = true
+    companion object {
+        /**
+         * Process-level flag: true until the first [onWindowFocusChanged]
+         * call with focus.  Survives Activity recreation (config changes,
+         * memory pressure after Settings) so that clipboard auto-detect
+         * isn't skipped on return-from-settings.
+         */
+        @Volatile
+        private var isColdStart = true
+    }
+
     private val clipboardManager by lazy { getSystemService(android.content.ClipboardManager::class.java) }
     private lateinit var toggle: ActionBarDrawerToggle
     private var clearAllMenu: MenuItem? = null

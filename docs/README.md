@@ -190,8 +190,13 @@ For private or restricted posts:
 - [x] **Login loop fix**: `retryAfterLogin` flag prevents re-opening login page on failed retry. 10s throttle on login redirects. `loginLaunchPending` guard in DownloadFragment.
 - [ ] **SharedPreferences corruption**: Download history and cookie store use plain JSON in SharedPreferences — can break on concurrent writes or crash during save. Migrate to Room or a transactional store.
   > **Note**: The auto-detect dedup cache (`last_auto_detected_url`) also uses SharedPreferences but is intentionally excluded from migration — it's a single string, written only on the main thread, and loss is harmless (at most the same URL gets re-detected once).
+- [x] **Progress listener race**: Fixed ViewModel `onCleared()` incorrectly nulling `DownloadService.progressListener` when a transient ViewModel overwrote it. Guard: only set the static listener if it isn't already set — the first ViewModel to register wins.
+- [x] **Crash-safe command processor**: `for` loop in `DownloadStateManager` wrapped in `try`/`catch` so an unhandled exception won't silently kill the channel consumer.
+- [x] **`isColdStart` survives Activity recreation**: Changed from `MainActivity` instance field to `companion object @Volatile` flag so clipboard check isn't skipped after recreation.
+- [x] **`isLikelyPostMedia` accepts extensionless URLs**: Accept `media.tumblr.com` URLs without file extension — the noise-path + host-domain filters already provide sufficient precision.
+- [x] **Retry failed downloads**: `processAppend` dedup skips `FAILED` items — users can re-download a failed post without manually removing it first.
 - [x] **WebViewCookieJar subdomain fallback**: When `cookieManager.getCookie(url)` returns null for `*.tumblr.com` subdomain requests, fall back to `https://www.tumblr.com/` to retrieve cookies.
-- [ ] **Adult content detection**: Posts behind Tumblr's "possible adult content" warning need an extra confirmation step; improve `looksLikeLoginPage` to handle this edge case.
+- [x] **Adult content detection**: Added `looksLikeAdultContentPage()` to detect Tumblr's adult content interstitial. The parser now first tries a relaxed JSON extraction (media URLs are often still in `__INITIAL_STATE__` under non-standard keys), and falls back to returning `LoginRequired` to open a browser for the user to click through the warning.
 - [ ] **Private post support**: `/private/...` URLs cannot be parsed via HTTP (JS-rendered). Two approaches under consideration:
   - **WebView parser**: Load URL in a hidden WebView, wait for JS rendering, extract `__INITIAL_STATE__` / DOM media URLs via `evaluateJavascript()`.
   - **Tumblr API v2 + OAuth**: Register app for API credentials, use `/posts/{id}` endpoint with OAuth tokens to fetch post content as JSON.
