@@ -338,7 +338,9 @@ class DownloadStateManager(private val app: Application) {
     private fun processClearAll() {
         _items.value = emptyList()
         CompletedMediaStore.clear(app)
-        DownloadHistoryStore.clear(app)
+        scope.launch {
+            DownloadHistoryStore.clear(app)
+        }
         sendClearAllIntent()
         dirty = false
     }

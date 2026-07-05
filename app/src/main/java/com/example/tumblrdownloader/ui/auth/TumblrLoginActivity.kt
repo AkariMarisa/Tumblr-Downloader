@@ -11,11 +11,13 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.example.tumblrdownloader.R
 import com.example.tumblrdownloader.databinding.ActivityTumblrLoginBinding
 import com.example.tumblrdownloader.utils.LocaleHelper
 import com.example.tumblrdownloader.utils.TumblrAccountStore
 import com.example.tumblrdownloader.utils.TumblrCookieStore
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.util.Locale
 
@@ -76,9 +78,12 @@ class TumblrLoginActivity : AppCompatActivity() {
             finish()
         }
 
-        val hasPersisted = TumblrCookieStore.hasSavedCookies(this)
-        if (hasPersisted && TumblrCookieStore.shouldShowSecurityNotice(this)) {
-            showCookieSecurityReminder()
+        // Cookie check is now async (Room-backed).
+        lifecycleScope.launch {
+            val hasPersisted = TumblrCookieStore.hasSavedCookies(this@TumblrLoginActivity)
+            if (hasPersisted && TumblrCookieStore.shouldShowSecurityNotice(this@TumblrLoginActivity)) {
+                showCookieSecurityReminder()
+            }
         }
 
         val initialUrl = if (loginTargetUrl.isBlank()) {
@@ -90,8 +95,10 @@ class TumblrLoginActivity : AppCompatActivity() {
     }
 
     private fun finishWithAccount(username: String) {
-        TumblrCookieStore.saveFromWebView(this)
-        TumblrCookieStore.markSecurityNoticeShown(this)
+        lifecycleScope.launch {
+            TumblrCookieStore.saveFromWebView(this@TumblrLoginActivity)
+            TumblrCookieStore.markSecurityNoticeShown(this@TumblrLoginActivity)
+        }
 
         val account = com.example.tumblrdownloader.utils.TumblrAccount(
             username = username,
@@ -128,29 +135,33 @@ class TumblrLoginActivity : AppCompatActivity() {
     }
 
     private fun showLoginSavedNotice() {
-        val saved = TumblrCookieStore.saveFromWebView(this)
-        val title = getString(R.string.cookie_security_title)
-        val message = if (saved) {
-            getString(R.string.login_cookie_saved) + "\n" + getString(R.string.cookie_security_message)
-        } else {
-            getString(R.string.login_cookie_not_found)
-        }
+        lifecycleScope.launch {
+            val saved = TumblrCookieStore.saveFromWebView(this@TumblrLoginActivity)
+            val title = getString(R.string.cookie_security_title)
+            val message = if (saved) {
+                getString(R.string.login_cookie_saved) + "\n" + getString(R.string.cookie_security_message)
+            } else {
+                getString(R.string.login_cookie_not_found)
+            }
 
-        AlertDialog.Builder(this)
-            .setTitle(title)
-            .setMessage(message)
-            .setPositiveButton(android.R.string.ok) { _, _ ->
-                if (saved) {
-                    TumblrCookieStore.markSecurityNoticeShown(this)
+            AlertDialog.Builder(this@TumblrLoginActivity)
+                .setTitle(title)
+                .setMessage(message)
+                .setPositiveButton(android.R.string.ok) { _, _ ->
+                    if (saved) {
+                        lifecycleScope.launch {
+                            TumblrCookieStore.markSecurityNoticeShown(this@TumblrLoginActivity)
+                        }
+                    }
+                    setResult(Activity.RESULT_OK)
+                    finish()
                 }
-                setResult(Activity.RESULT_OK)
-                finish()
-            }
-            .setOnCancelListener {
-                setResult(Activity.RESULT_OK)
-                finish()
-            }
-            .show()
+                .setOnCancelListener {
+                    setResult(Activity.RESULT_OK)
+                    finish()
+                }
+                .show()
+        }
     }
 
     private fun showCookieSecurityReminder() {
@@ -158,7 +169,9 @@ class TumblrLoginActivity : AppCompatActivity() {
             .setTitle(R.string.cookie_security_title)
             .setMessage(R.string.cookie_security_message)
             .setPositiveButton(android.R.string.ok) { _, _ ->
-                TumblrCookieStore.markSecurityNoticeShown(this)
+                lifecycleScope.launch {
+                    TumblrCookieStore.markSecurityNoticeShown(this@TumblrLoginActivity)
+                }
             }
             .show()
     }

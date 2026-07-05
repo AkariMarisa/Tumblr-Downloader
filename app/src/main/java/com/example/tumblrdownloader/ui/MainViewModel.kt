@@ -62,29 +62,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val tumblrAccount: StateFlow<TumblrAccount> = _tumblrAccount.asStateFlow()
 
     init {
-        // Restore persisted items on boot — uses main thread (immediate);
-        // the DiskHistoryStore load runs on IO, but the restore call itself is
-        // on main after the suspend completes, so the restored list is set before
-        // any user interaction queued on the main thread.
         viewModelScope.launch {
-            val restored = withContext(Dispatchers.IO) {
-                DownloadHistoryStore.load(appContext).map { item ->
-                    when (item.status) {
-                        DownloadStatus.DOWNLOADING -> item.copy(
-                            status = DownloadStatus.FAILED,
-                            progress = 0,
-                            errorMessage = appContext.getString(R.string.restored_state_invalid)
-                        )
-                        else -> item
-                    }
+            val restored = DownloadHistoryStore.load(appContext).map { item ->
+                when (item.status) {
+                    DownloadStatus.DOWNLOADING -> item.copy(
+                        status = DownloadStatus.FAILED,
+                        progress = 0,
+                        errorMessage = appContext.getString(R.string.restored_state_invalid)
+                    )
+                    else -> item
                 }
             }
             stateManager.restore(restored)
+
+            // Cookie status hint — now backed by Room.
+            val showHint = withContext(Dispatchers.IO) {
+                TumblrCookieStore.hasSavedCookies(appContext) &&
+                        TumblrCookieStore.shouldShowSecurityNotice(appContext)
+            }
+            if (showHint) {
+                TumblrCookieStore.markSecurityNoticeShown(appContext)
+            }
         }
 
         refreshDownloadDirectoryLabel()
         refreshTumblrAccount()
-        emitCookieStatusHint()
     }
 
     override fun onCleared() {
@@ -162,8 +164,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearSavedCookies() {
-        TumblrCookieStore.clear(appContext)
-        _tumblrAccount.value = TumblrAccount()
+        viewModelScope.launch {
+            TumblrCookieStore.clear(appContext)
+            _tumblrAccount.value = TumblrAccount()
+        }
     }
 
     fun setCustomDownloadDirectory(uri: Uri) {
@@ -180,10 +184,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _downloadDirectoryLabel.value = DownloadUtils.getDownloadDirectoryLabel(appContext)
     }
 
-    private fun emitCookieStatusHint() {
-        val showHint = TumblrCookieStore.hasSavedCookies(appContext) &&
-            TumblrCookieStore.shouldShowSecurityNotice(appContext)
-        if (!showHint) return
-        TumblrCookieStore.markSecurityNoticeShown(appContext)
-    }
+    /*
+     * emitCookieStatusHint was moved into the init {} coroutine above
+     * when the stores migrated to Room (suspend functions).
+     */
 }

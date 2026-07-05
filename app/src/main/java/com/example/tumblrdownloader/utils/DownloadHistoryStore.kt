@@ -1,72 +1,103 @@
 package com.example.tumblrdownloader.utils
 
 import android.content.Context
+import com.example.tumblrdownloader.db.AppDatabase
+import com.example.tumblrdownloader.db.DownloadHistoryEntity
 import com.example.tumblrdownloader.model.DownloadItem
-import com.example.tumblrdownloader.model.DownloadStatus
-import com.example.tumblrdownloader.model.MediaType
-import org.json.JSONArray
-import org.json.JSONObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
-private const val PREF_NAME_DOWNLOAD_HISTORY = "download_history_store"
-private const val KEY_HISTORY = "download_items"
-
+/**
+ * Thread-safe persistence for download history backed by Room.
+ *
+ * Replaces the old JSON-in-SharedPreferences implementation, which was
+ * vulnerable to data loss on concurrent writes or crash during save
+ * (writing the entire list as one JSON string atomically is impossible
+ * with SharedPreferences).
+ *
+ * All public functions are suspend — call from a background dispatcher.
+ */
 object DownloadHistoryStore {
 
-    fun load(context: Context): List<DownloadItem> {
-        val prefs = context.getSharedPreferences(PREF_NAME_DOWNLOAD_HISTORY, Context.MODE_PRIVATE)
-        val raw = prefs.getString(KEY_HISTORY, null) ?: return emptyList()
+    /**
+     * Load all persisted download items.
+     */
+    suspend fun load(context: Context): List<DownloadItem> = withContext(Dispatchers.IO) {
+        val entities = AppDatabase.getInstance(context)
+            .downloadHistoryDao()
+            .getAll()
+        entities.map { it.toDownloadItem() }
+    }
+
+    /**
+     * Atomically replace the entire history with [items].
+     *
+     * Uses a Room @Transaction so the delete + insert either both succeed
+     * or both roll back — no corruption.
+     */
+    suspend fun save(context: Context, items: List<DownloadItem>) = withContext(Dispatchers.IO) {
+        val entities = items.map { DownloadHistoryEntity.fromItem(it) }
+        AppDatabase.getInstance(context)
+            .downloadHistoryDao()
+            .replaceAll(entities)
+    }
+
+    /**
+     * Clear all persisted history.
+     */
+    suspend fun clear(context: Context) = withContext(Dispatchers.IO) {
+        AppDatabase.getInstance(context)
+            .downloadHistoryDao()
+            .deleteAll()
+    }
+
+    // ── migration helpers ──────────────────────────────────────────────
+
+    /**
+     * Migrate data from the old SharedPreferences store into Room.
+     *
+     * Safe to call multiple times — only migrates if Room is empty.
+     */
+    suspend fun migrateFromSharedPrefs(context: Context) {
+        val dao = AppDatabase.getInstance(context).downloadHistoryDao()
+        if (dao.getAll().isNotEmpty()) return // already migrated
+
+        val legacy = loadLegacy(context)
+        if (legacy.isEmpty()) return
+
+        dao.insertAll(legacy.map { DownloadHistoryEntity.fromItem(it) })
+
+        // Wipe the legacy store so we don't re-migrate.
+        legacyPrefs(context).edit().clear().apply()
+    }
+
+    private fun loadLegacy(context: Context): List<DownloadItem> {
+        val prefs = legacyPrefs(context)
+        val raw = prefs.getString(LEGACY_KEY_HISTORY, null) ?: return emptyList()
         if (raw.isBlank()) return emptyList()
-
         return runCatching {
-            val arr = JSONArray(raw)
+            val arr = org.json.JSONArray(raw)
             MutableList(arr.length()) { index ->
-                decodeItem(arr.getJSONObject(index))
+                decodeLegacy(arr.getJSONObject(index))
             }.toList()
-        }.getOrElse { emptyList() }
+        }.getOrDefault(emptyList())
     }
 
-    fun save(context: Context, items: List<DownloadItem>) {
-        val prefs = context.getSharedPreferences(PREF_NAME_DOWNLOAD_HISTORY, Context.MODE_PRIVATE)
-        val arr = JSONArray()
-        items.forEach { item ->
-            arr.put(encodeItem(item))
-        }
-        prefs.edit().putString(KEY_HISTORY, arr.toString()).apply()
-    }
+    private fun legacyPrefs(context: Context) =
+        context.getSharedPreferences(LEGACY_PREF_NAME, Context.MODE_PRIVATE)
 
-    fun clear(context: Context) {
-        context.getSharedPreferences(PREF_NAME_DOWNLOAD_HISTORY, Context.MODE_PRIVATE)
-            .edit()
-            .remove(KEY_HISTORY)
-            .apply()
-    }
-
-    private fun encodeItem(item: DownloadItem): JSONObject {
-        return JSONObject().apply {
-            put("id", item.id)
-            put("sourceUrl", item.sourceUrl)
-            put("mediaUrl", item.mediaUrl)
-            put("title", item.title)
-            put("type", item.type.name)
-            put("status", item.status.name)
-            put("progress", item.progress)
-            put("errorMessage", item.errorMessage)
-            put("retryCount", item.retryCount)
-            put("maxRetries", item.maxRetries)
-            put("createdAt", item.createdAt)
-            put("downloadedBytes", item.downloadedBytes)
-            put("downloadFileUri", item.downloadFileUri)
-        }
-    }
-
-    private fun decodeItem(obj: JSONObject): DownloadItem {
+    private fun decodeLegacy(obj: org.json.JSONObject): DownloadItem {
         val status = runCatching {
-            DownloadStatus.valueOf(obj.optString("status", DownloadStatus.QUEUED.name))
-        }.getOrDefault(DownloadStatus.QUEUED)
+            com.example.tumblrdownloader.model.DownloadStatus.valueOf(
+                obj.optString("status", com.example.tumblrdownloader.model.DownloadStatus.QUEUED.name)
+            )
+        }.getOrDefault(com.example.tumblrdownloader.model.DownloadStatus.QUEUED)
 
         val type = runCatching {
-            MediaType.valueOf(obj.optString("type", MediaType.UNKNOWN.name))
-        }.getOrDefault(MediaType.UNKNOWN)
+            com.example.tumblrdownloader.model.MediaType.valueOf(
+                obj.optString("type", com.example.tumblrdownloader.model.MediaType.UNKNOWN.name)
+            )
+        }.getOrDefault(com.example.tumblrdownloader.model.MediaType.UNKNOWN)
 
         return DownloadItem(
             id = obj.optString("id").ifBlank { java.util.UUID.randomUUID().toString() },
@@ -83,9 +114,11 @@ object DownloadHistoryStore {
             maxRetries = obj.optInt("maxRetries", 3),
             createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
             downloadedBytes = obj.optLong("downloadedBytes", 0L),
-            downloadFileUri = obj.takeIf { !it.isNull("downloadFileUri") }
-                ?.optString("downloadFileUri", null)
-                ?.ifBlank { null }
+            downloadFileUri = if (obj.isNull("downloadFileUri")) null
+            else obj.optString("downloadFileUri", "").ifBlank { null }
         )
     }
+
+    private const val LEGACY_PREF_NAME = "download_history_store"
+    private const val LEGACY_KEY_HISTORY = "download_items"
 }

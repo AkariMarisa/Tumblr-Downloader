@@ -4,37 +4,52 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import android.webkit.CookieManager
+import com.example.tumblrdownloader.db.AppDatabase
+import com.example.tumblrdownloader.db.CookieEntity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.Locale
 
+/**
+ * Persist / restore Tumblr login cookies via Room (replaces old JSON-in-SP).
+ *
+ * Cookie data is small (1–2 host entries) but must survive app restart.
+ * Room's transactional writes protect against partial-write corruption.
+ */
 object TumblrCookieStore {
     private const val TAG = "TumblrCookieStore"
-    private const val PREF_NAME = "tumblr_cookie_store"
-    private const val PREF_KEY_COOKIES = "saved_tumblr_cookies"
-    private const val PREF_KEY_SAVED_AT = "saved_tumblr_cookies_at"
-    private const val PREF_KEY_TIP_SHOWN = "cookie_tip_shown"
 
     private val trackedCookieHosts = listOf("https://www.tumblr.com", "https://tumblr.com")
 
-    fun hasSavedCookies(context: Context): Boolean {
-        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(PREF_KEY_COOKIES, null).isNullOrBlank().not()
+    // ── synchronous helpers for callers that aren't in a coroutine ──────
+    // These touch only Room (not CookieManager) so they're fast enough
+    // to call from the main thread via runBlocking-free lazy reads.
+
+    suspend fun hasSavedCookies(context: Context): Boolean = withContext(Dispatchers.IO) {
+        val row = AppDatabase.getInstance(context).cookieDao().get()
+        !row?.cookiesJson.isNullOrBlank()
     }
 
-    fun shouldShowSecurityNotice(context: Context): Boolean {
-        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        return !prefs.getBoolean(PREF_KEY_TIP_SHOWN, false)
+    suspend fun shouldShowSecurityNotice(context: Context): Boolean = withContext(Dispatchers.IO) {
+        AppDatabase.getInstance(context).cookieDao().get()?.tipShown != true
     }
 
-    fun markSecurityNoticeShown(context: Context) {
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(PREF_KEY_TIP_SHOWN, true)
-            .apply()
+    suspend fun markSecurityNoticeShown(context: Context) = withContext(Dispatchers.IO) {
+        val dao = AppDatabase.getInstance(context).cookieDao()
+        val row = dao.get() ?: CookieEntity()
+        dao.upsert(row.copy(tipShown = true))
     }
 
-    fun saveFromWebView(context: Context): Boolean {
+    // ── save / restore (involve CookieManager, run on IO) ───────────────
+
+    /**
+     * Read cookies from WebView's [CookieManager] and persist to Room.
+     *
+     * @return `true` if any cookies were saved.
+     */
+    suspend fun saveFromWebView(context: Context): Boolean = withContext(Dispatchers.IO) {
         val cookieManager = CookieManager.getInstance()
         val payload = JSONObject()
 
@@ -47,23 +62,33 @@ object TumblrCookieStore {
 
         cookieManager.flush()
 
-        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        return if (payload.length() == 0) {
-            prefs.edit().remove(PREF_KEY_COOKIES).remove(PREF_KEY_SAVED_AT).apply()
-            false
-        } else {
-            prefs.edit()
-                .putString(PREF_KEY_COOKIES, payload.toString())
-                .putLong(PREF_KEY_SAVED_AT, System.currentTimeMillis())
-                .apply()
-            true
+        if (payload.length() == 0) {
+            // No cookies found — clear any stale data.
+            AppDatabase.getInstance(context).cookieDao().deleteAll()
+            return@withContext false
         }
+
+        val dao = AppDatabase.getInstance(context).cookieDao()
+        val existing = dao.get() ?: CookieEntity()
+        dao.upsert(
+            existing.copy(
+                cookiesJson = payload.toString(),
+                savedAt = System.currentTimeMillis()
+            )
+        )
+        return@withContext true
     }
 
-    fun restoreIfNeeded(context: Context): Boolean {
-        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        val raw = prefs.getString(PREF_KEY_COOKIES, null) ?: return false
-        if (raw.isBlank()) return false
+    /**
+     * Restore persisted cookies into WebView's [CookieManager].
+     *
+     * @return `true` if cookies were restored.
+     */
+    suspend fun restoreIfNeeded(context: Context): Boolean = withContext(Dispatchers.IO) {
+        val dao = AppDatabase.getInstance(context).cookieDao()
+        val row = dao.get() ?: return@withContext false
+        val raw = row.cookiesJson ?: return@withContext false
+        if (raw.isBlank()) return@withContext false
 
         val cookieManager = CookieManager.getInstance()
         val restored = runCatching {
@@ -80,8 +105,28 @@ object TumblrCookieStore {
         if (restored) {
             cookieManager.flush()
         }
-        return restored
+        return@withContext restored
     }
+
+    // ── clear ───────────────────────────────────────────────────────────
+
+    suspend fun clear(context: Context) = withContext(Dispatchers.IO) {
+        AppDatabase.getInstance(context).cookieDao().deleteAll()
+
+        // Also clear cached account info.
+        TumblrAccountStore.clear(context)
+
+        val cookieManager = CookieManager.getInstance()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            cookieManager.removeAllCookies(null)
+        } else {
+            @Suppress("DEPRECATION")
+            cookieManager.removeAllCookie()
+        }
+        cookieManager.flush()
+    }
+
+    // ── polling helper ──────────────────────────────────────────────────
 
     /**
      * Poll [CookieManager] until cookies for a tracked Tumblr host are visible.
@@ -118,22 +163,42 @@ object TumblrCookieStore {
         return false
     }
 
-    fun clear(context: Context) {
-        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        prefs.edit().clear().apply()
+    // ── migration helper ────────────────────────────────────────────────
 
-        // Also clear cached account info
-        TumblrAccountStore.clear(context)
+    /**
+     * Migrate data from the old SharedPreferences store into Room.
+     *
+     * Safe to call multiple times — only migrates if Room has no row yet.
+     */
+    suspend fun migrateFromSharedPrefs(context: Context) = withContext(Dispatchers.IO) {
+        val dao = AppDatabase.getInstance(context).cookieDao()
+        if (dao.get() != null) return@withContext // already migrated
 
-        val cookieManager = CookieManager.getInstance()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            cookieManager.removeAllCookies(null)
-        } else {
-            @Suppress("DEPRECATION")
-            cookieManager.removeAllCookie()
+        val legacy = legacyPrefs(context)
+        val cookiesJson = legacy.getString(LEGACY_KEY_COOKIES, null)
+        val savedAt = legacy.getLong(LEGACY_KEY_SAVED_AT, 0L)
+        val tipShown = legacy.getBoolean(LEGACY_KEY_TIP_SHOWN, false)
+
+        if (cookiesJson.isNullOrBlank() && savedAt == 0L && !tipShown) {
+            return@withContext // nothing to migrate
         }
-        cookieManager.flush()
+
+        dao.upsert(
+            CookieEntity(
+                cookiesJson = cookiesJson,
+                savedAt = savedAt,
+                tipShown = tipShown
+            )
+        )
+
+        // Wipe legacy.
+        legacy.edit().clear().apply()
     }
+
+    private fun legacyPrefs(context: Context) =
+        context.getSharedPreferences(LEGACY_PREF_NAME, Context.MODE_PRIVATE)
+
+    // ── internal helpers ────────────────────────────────────────────────
 
     private fun restoreCookieString(cookieManager: CookieManager, host: String, rawCookie: String) {
         rawCookie.split(';')
@@ -153,4 +218,9 @@ object TumblrCookieStore {
             }
             .joinToString(";")
     }
+
+    private const val LEGACY_PREF_NAME = "tumblr_cookie_store"
+    private const val LEGACY_KEY_COOKIES = "saved_tumblr_cookies"
+    private const val LEGACY_KEY_SAVED_AT = "saved_tumblr_cookies_at"
+    private const val LEGACY_KEY_TIP_SHOWN = "cookie_tip_shown"
 }
