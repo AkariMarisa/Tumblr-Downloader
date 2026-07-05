@@ -158,7 +158,12 @@ class MainActivity : AppCompatActivity() {
 
         binding.navView.getHeaderView(0).setOnClickListener {
             binding.drawerLayout.closeDrawer(GravityCompat.START)
-            loginLauncher.launch(TumblrLoginActivity.newIntent(this, ""))
+            // If already logged in, don't re-open the login page
+            // (Tumblr shows the dashboard, which is confusing).
+            // TODO: navigate to user settings / profile instead.
+            if (!viewModel.tumblrAccount.value.isLoggedIn) {
+                loginLauncher.launch(TumblrLoginActivity.newIntent(this, ""))
+            }
         }
     }
 

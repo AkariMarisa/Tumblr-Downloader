@@ -200,8 +200,7 @@ For private or restricted posts:
   - **WebView parser**: Load URL in a hidden WebView, wait for JS rendering, extract `__INITIAL_STATE__` / DOM media URLs via `evaluateJavascript()`.
   - **Tumblr API v2 + OAuth**: Register app for API credentials, use `/posts/{id}` endpoint with OAuth tokens to fetch post content as JSON.
 
-### Features
-
+- [ ] **Drawer avatar: navigate to user settings when logged in**: Currently clicking the avatar only opens the login page. When already logged in, the login page shows the dashboard (confusing). Should open user settings or profile instead.
 - [ ] **Parallel downloads**: Currently sequential only (one at a time). Allow configurable parallel downloads (2-3).
 - [ ] **Batch download**: Download all media from a blog, tag, or collection of posts.
 - [ ] **Video quality selection**: Let users prefer 480p / 720p / 1080p when multiple renditions exist.
