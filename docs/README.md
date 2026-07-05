@@ -227,7 +227,8 @@ For private or restricted posts:
 - [ ] **Gradle wrapper**: Add `gradlew` so builds don't require a system Gradle installation.
 - [ ] **CI/CD**: GitHub Actions for automated build, lint, and test on every PR.
 - [ ] **Package name**: Rename from `com.example` to a proper namespace before publishing.
-- [ ] **Tests**: Add unit tests for `TumblrParser`, `DownloadStateManager`, and instrumentation tests for the download flow.
+- [x] **Room DAO + migration tests**: 19 unit tests for `DownloadHistoryDao`, `CookieDao`, and migration from SharedPreferences (Robolectric + Room in-memory).
+- [ ] **More tests**: Add unit tests for `TumblrParser`, `DownloadStateManager`, and instrumentation tests for the full download flow.
 - [ ] **Contributing guide**: Create `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
 - [x] **Screenshots**: Add app screenshots to README.
 - [ ] **Play Store / F-Droid**: Prepare release signing and store listings (publish to F-Droid).

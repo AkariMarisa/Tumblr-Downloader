@@ -17,6 +17,9 @@ interface CookieDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(cookie: CookieEntity)
 
+    @Query("SELECT COUNT(*) FROM tumblr_cookies")
+    suspend fun count(): Int
+
     @Query("DELETE FROM tumblr_cookies")
     suspend fun deleteAll()
 }
