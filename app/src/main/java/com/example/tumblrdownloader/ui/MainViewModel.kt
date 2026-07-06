@@ -18,6 +18,7 @@ import com.example.tumblrdownloader.utils.TumblrAccount
 import com.example.tumblrdownloader.utils.TumblrAccountStore
 import com.example.tumblrdownloader.R
 import com.example.tumblrdownloader.utils.TumblrCookieStore
+import com.example.tumblrdownloader.utils.TumblrParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -141,6 +142,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ── non-delegated VM methods ──────────────────────────────────────
+
+    /**
+     * Returns true if all items associated with the given Tumblr URL
+     * have been fully downloaded (status == COMPLETED).
+     * Used by clipboard auto-detect to avoid re-parsing already-downloaded posts.
+     */
+    fun isUrlFullyCompleted(rawUrl: String): Boolean {
+        val normalized = TumblrParser.firstTumblrUrl(rawUrl.trim()) ?: return false
+        val urlBase = normalized.substringBefore('?').trimEnd('/')
+        val itemsForUrl = stateManager.items.value.filter { item ->
+            item.sourceUrl.substringBefore('?').trimEnd('/') == urlBase
+        }
+        return itemsForUrl.isNotEmpty() && itemsForUrl.all { it.status == DownloadStatus.COMPLETED }
+    }
+
     fun notifyFromClipboard(url: String) {
         viewModelScope.launch { _autoPasteUrl.emit(url) }
     }
