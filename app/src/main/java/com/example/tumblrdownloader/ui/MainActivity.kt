@@ -245,6 +245,12 @@ class MainActivity : AppCompatActivity() {
             ?: intent.clipData?.getItemAt(0)?.coerceToText(this)?.toString()
             ?: return
 
+        // Skip if this URL is already fully downloaded (same guard as clipboard auto-detect).
+        if (viewModel.isUrlFullyCompleted(text)) {
+            Log.d(TAG, "Incoming share URL already fully downloaded, skipping: ${text.take(60)}")
+            return
+        }
+
         if (viewModel.enqueueFromUrl(text)) {
             viewModel.notifyFromClipboard(text)
             binding.viewPager.currentItem = 0
@@ -281,6 +287,14 @@ class MainActivity : AppCompatActivity() {
         val lastUrl = prefs.getString(PREF_LAST_AUTO_URL, null)
         if (clipText == lastUrl) {
             Log.d(TAG, "Clipboard URL already auto-detected before: ${clipText.take(60)}")
+            return
+        }
+
+        // Skip if all items for this source URL are already fully downloaded.
+        // This prevents spurious loading when returning from the media viewer
+        // with a previously-completed Tumblr URL still in the clipboard.
+        if (viewModel.isUrlFullyCompleted(clipText)) {
+            Log.d(TAG, "Clipboard URL already fully downloaded, skipping: ${clipText.take(60)}")
             return
         }
 
