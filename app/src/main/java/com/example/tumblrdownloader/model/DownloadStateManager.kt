@@ -67,6 +67,8 @@ class DownloadStateManager(private val app: Application) {
         data class Remove(val itemId: String) : Cmd()
         data object ClearAll : Cmd()
         data class Progress(val item: DownloadItem) : Cmd()
+        data object PauseAll : Cmd()
+        data object ResumeAll : Cmd()
     }
 
     private val cmdCh = Channel<Cmd>(Channel.UNLIMITED)
@@ -173,6 +175,10 @@ class DownloadStateManager(private val app: Application) {
 
     fun clearAll() { cmdCh.trySend(Cmd.ClearAll) }
 
+    fun pauseAll() { cmdCh.trySend(Cmd.PauseAll) }
+
+    fun resumeAll() { cmdCh.trySend(Cmd.ResumeAll) }
+
     fun peekPendingLoginUrl(): String? = pendingLoginUrl
 
     /** Mark the next parse attempt as a post-login retry. */
@@ -220,6 +226,8 @@ class DownloadStateManager(private val app: Application) {
             is Cmd.Pause -> processPause(cmd.itemId)
             is Cmd.Remove -> processRemove(cmd.itemId)
             is Cmd.ClearAll -> processClearAll()
+            is Cmd.PauseAll -> processPauseAll()
+            is Cmd.ResumeAll -> processResumeAll()
             is Cmd.Progress -> processProgress(cmd.item)
         }
         persistDirty()
@@ -334,15 +342,72 @@ class DownloadStateManager(private val app: Application) {
         sendRemoveIntent(itemId)
     }
 
-    // ── Clear All ───────────────────────────────────────────────────────
+    // ── Clear Completed ────────────────────────────────────────────────
+    /**
+     * Remove only [DownloadStatus.COMPLETED] items from the list.
+     * Non-completed items (paused, failed, queued, downloading) are kept
+     * so the user can retry or resume them later.
+     */
     private fun processClearAll() {
-        _items.value = emptyList()
-        CompletedMediaStore.clear(app)
-        scope.launch {
-            DownloadHistoryStore.clear(app)
+        val toRemove = _items.value.filter { it.status == DownloadStatus.COMPLETED }
+        if (toRemove.isEmpty()) return
+
+        toRemove.forEach { item ->
+            CompletedMediaStore.remove(app, item.mediaUrl)
         }
-        sendClearAllIntent()
-        dirty = false
+        _items.value = _items.value.filterNot { it.status == DownloadStatus.COMPLETED }
+        dirty = true
+    }
+
+    // ── Pause All / Resume All ─────────────────────────────────────────
+    private fun processPauseAll() {
+        // Send a single batch intent to the service first (cancels active +
+        // drains queue), then update all local statuses.
+        sendPauseAllIntent()
+
+        var changed = false
+        _items.value = _items.value.map { item ->
+            if (item.status == DownloadStatus.DOWNLOADING || item.status == DownloadStatus.QUEUED) {
+                changed = true
+                item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = null)
+            } else item
+        }
+        if (changed) dirty = true
+    }
+
+    private fun processResumeAll() {
+        val items = _items.value
+        val hasActive = items.any { it.status == DownloadStatus.DOWNLOADING }
+        var startedOne = false
+
+        for (item in items) {
+            if (item.status != DownloadStatus.PAUSED && item.status != DownloadStatus.FAILED) continue
+
+            val idx = items.indexOfFirst { it.id == item.id }
+            if (idx < 0) continue
+
+            if (!startedOne && !hasActive) {
+                startedOne = true
+                val toStart = item.copy(
+                    status = DownloadStatus.DOWNLOADING,
+                    progress = 0,
+                    errorMessage = null,
+                    retryCount = if (item.status == DownloadStatus.FAILED) 0 else item.retryCount
+                )
+                replaceItem(idx, toStart)
+                sendStartIntent(toStart)
+            } else {
+                // Already have a running download or just started one;
+                // put the rest in QUEUED so they auto-start when the
+                // slot opens.
+                replaceItem(idx, item.copy(
+                    status = DownloadStatus.QUEUED,
+                    progress = 0,
+                    errorMessage = null,
+                    retryCount = if (item.status == DownloadStatus.FAILED) 0 else item.retryCount
+                ))
+            }
+        }
     }
 
     // ── Progress callback (from service) ────────────────────────────────
@@ -352,10 +417,14 @@ class DownloadStateManager(private val app: Application) {
             if (existing.id != update.id) return@map existing
 
             // ponytail: ignore stale DOWNLOADING progress when user already paused
-            // the item.  Allow COMPLETED/FAILED to go through even if stale.
+            // the item.  Also coalesce successive PAUSED (the service's
+            // cancellation handler may emit PAUSED after processPauseAll already
+            // set it) to avoid unnecessary StateFlow emissions that cause
+            // RecyclerView flicker.
             val oldSt = existing.status
             val result = when {
                 existing.status == DownloadStatus.PAUSED && update.status == DownloadStatus.DOWNLOADING -> existing
+                existing.status == DownloadStatus.PAUSED && update.status == DownloadStatus.PAUSED -> existing
                 existing.status == DownloadStatus.COMPLETED && update.status != DownloadStatus.COMPLETED -> existing
                 else -> update
             }
@@ -448,6 +517,13 @@ class DownloadStateManager(private val app: Application) {
     private fun sendClearAllIntent() {
         val intent = Intent(app, DownloadService::class.java).apply {
             action = DownloadService.ACTION_CLEAR_ALL
+        }
+        app.startService(intent)
+    }
+
+    private fun sendPauseAllIntent() {
+        val intent = Intent(app, DownloadService::class.java).apply {
+            action = DownloadService.ACTION_PAUSE_ALL
         }
         app.startService(intent)
     }

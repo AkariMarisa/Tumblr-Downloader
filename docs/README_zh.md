@@ -188,7 +188,9 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ### 可靠性
 
 - [x] **剪贴板自动检测**：改用 `onWindowFocusChanged(true)`（Android 10+ 需要窗口聚焦才能读取剪切板）。冷启动跳过——只在切回时检测。持久化去重（SharedPreferences），删除/清空任务时自动重置缓存。设置页开关可关闭。检测时自动切换到下载 tab 显示 loading 遮罩。
-- [ ] **网络切换时暂停排队中任务**：WiFi 断开时活跃下载正常 3 次重试后失败，排队中任务立即暂停。不自动恢复。添加「全部暂停」和「全部开始」按钮统一控制下载队列
+- [x] **网络切换时暂停排队中任务**：WiFi 断开时活跃下载正常 3 次重试后失败，排队中任务立即暂停。不自动恢复
+- [x] **「全部暂停」和「全部开始」按钮**：在下载列表顶部添加批量控制按钮，统一操作下载队列
+- [x] **卡片闪烁修复**：DiffUtil payload 区分仅进度变化，避免 Glide 重复加载缩略图导致的 UI 闪烁
 - [x] **Cookie 同步竞态**：在 `TumblrCookieStore` 中添加了 `waitForCookiesReady()`——在重试解析前轮询 `CookieManager.getCookie()` 直至 Cookie 可见（超时 5 秒）。登录重试现在会等待 Cookie 实际就绪再执行。
 - [x] **登录循环修复**：`retryAfterLogin` 标志位防止重试失败后重复打开登录页。10 秒登录重定向节流。`loginLaunchPending` 守卫避免重复启动登录 Activity。
 - [x] **进度监听器竞态**：修复 ViewModel `onCleared()` 错误地将 `DownloadService.progressListener` 置空的问题。守卫逻辑：仅当静态 listener 未设置时才注册——先到先得。

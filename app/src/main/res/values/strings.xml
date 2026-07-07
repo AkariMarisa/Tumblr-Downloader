@@ -21,7 +21,7 @@
     <string name="retry_download">Retry</string>
     <string name="start_download">Start download</string>
     <string name="pause_download">Pause download</string>
-    <string name="remove_download">Remove task</string>
+    <string name="remove_download">Remove download</string>
     <string name="clear_cookie">Clear login cookie</string>
     <string name="cookie_security_title">Cookie Security Notice</string>
     <string name="cookie_security_message">A Tumblr login cookie has been detected. It is stored locally on this device and used only for parsing. It will never be uploaded. Do not keep it on public devices. You can clear it anytime.</string>
@@ -50,8 +50,14 @@
     <string name="drawer_user_status_logged_out">Not logged in</string>
     <string name="about_description">A lightweight Tumblr media downloader. Quickly download images and videos from Tumblr posts via share links or pasted URLs.</string>
     <string name="about_version">Version: %1$s</string>
-    <string name="clear_all_downloads">Clear list</string>
+    <string name="clear_all_downloads">Clear completed downloads</string>
+    <string name="pause_all">Pause All</string>
+    <string name="resume_all">Resume All</string>
 
+    <string name="clear_all_confirm_message">All finished downloads will be removed from the list. Paused, failed, and queued items will stay right where they are.</string>
+    <string name="remove_confirm_message">Remove this item from the download list? Downloads already completed will not be deleted.</string>
+    <string name="remove_confirm">Remove</string>
+    <string name="clear_all_confirm">Clear</string>
     <!-- Onboarding -->
     <string name="onboarding_skip">Skip</string>
     <string name="onboarding_get_started">Get started</string>

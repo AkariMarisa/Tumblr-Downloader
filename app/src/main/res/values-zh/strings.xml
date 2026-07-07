@@ -21,7 +21,7 @@
     <string name="retry_download">重试下载</string>
     <string name="start_download">开始下载</string>
     <string name="pause_download">暂停下载</string>
-    <string name="remove_download">移除任务</string>
+    <string name="remove_download">移除下载项</string>
     <string name="clear_cookie">清除登录 Cookie</string>
     <string name="cookie_security_title">Cookie 安全说明</string>
     <string name="cookie_security_message">当前已检测到本地保存的 Tumblr 登录 Cookie，仅用于当前设备内访问解析，不会上传到任何服务器；请勿在公共设备长期保留，并可随时点击"清除登录 Cookie"移除。</string>
@@ -50,8 +50,14 @@
     <string name="drawer_user_status_logged_out">未登录</string>
     <string name="about_description">一个轻量级的 Tumblr 媒体下载工具。支持通过分享链接或粘贴链接的方式，快速下载 Tumblr 帖子中的图片和视频。</string>
     <string name="about_version">版本：%1$s</string>
-    <string name="clear_all_downloads">清空列表</string>
+    <string name="clear_all_downloads">清空已完成下载</string>
+    <string name="pause_all">全部暂停</string>
+    <string name="resume_all">全部开始</string>
 
+    <string name="clear_all_confirm_message">已完成的项目将被清出列表，暂停、失败和排队中的项目会保留不动。</string>
+    <string name="remove_confirm_message">从列表中移除该项？已经下载好的文件不会被删除，放心～</string>
+    <string name="remove_confirm">移除</string>
+    <string name="clear_all_confirm">清空</string>
     <!-- Onboarding -->
     <string name="onboarding_skip">跳过</string>
     <string name="onboarding_get_started">开始使用</string>

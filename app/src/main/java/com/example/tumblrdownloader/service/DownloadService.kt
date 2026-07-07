@@ -75,6 +75,8 @@ class DownloadService : Service() {
         const val ACTION_PAUSE = "com.example.tumblrdownloader.action.PAUSE_DOWNLOAD"
         const val ACTION_REMOVE = "com.example.tumblrdownloader.action.REMOVE_DOWNLOAD"
         const val ACTION_CLEAR_ALL = "com.example.tumblrdownloader.action.CLEAR_ALL"
+        const val ACTION_PAUSE_ALL = "com.example.tumblrdownloader.action.PAUSE_ALL"
+        const val ACTION_RESUME_ALL = "com.example.tumblrdownloader.action.RESUME_ALL"
 
         const val EXTRA_ITEM_ID = "extra_item_id"
         const val EXTRA_SOURCE_URL = "extra_source_url"
@@ -254,6 +256,21 @@ class DownloadService : Service() {
                 notificationManager.cancel(NOTIFICATION_ID)
                 stopSelf()
                 return START_NOT_STICKY
+            }
+
+            ACTION_PAUSE_ALL -> {
+                // Cancel the active download job so the retry loop stops
+                activeTaskJob?.cancel(CancellationException("Paused by user"))
+                // Drain the queue channel so queued items don't start
+                while (queueChannel.tryReceive().isSuccess) { }
+                return START_STICKY
+            }
+
+            ACTION_RESUME_ALL -> {
+                // All the work is done by DownloadStateManager (updates
+                // statuses and sends individual ACTION_START intents).
+                // The service has nothing extra to do here.
+                return START_STICKY
             }
 
             else -> return START_STICKY
@@ -840,26 +857,12 @@ class DownloadService : Service() {
 
         val folderName = DownloadUtils.getDefaultDownloadFolderName(this@DownloadService)
 
-        // ponytail: delete stale file AND stale MediaStore rows before
-        // inserting.  MediaStore creates "(1)" copies when the filename OR a
-        // database row with the same display_name already exists.
         val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/$folderName"
-        val fsPath = java.io.File(
-            Environment.getExternalStorageDirectory(), relativePath + "/$fileName"
-        )
-        if (fsPath.exists()) {
-            android.util.Log.d("DownloadSvc", "createMediaStoreTarget: deleting stale file: $fileName")
-            fsPath.delete()
-        }
-        // Delete any stale MediaStore rows — they cause "(1)" naming even if
-        // the file was already deleted.
-        runCatching {
-            val delWhere = "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.RELATIVE_PATH} = ?"
-            val delArgs = arrayOf(fileName, relativePath)
-            val deleted = contentResolver.delete(collection, delWhere, delArgs)
-            if (deleted > 0) android.util.Log.d("DownloadSvc", "deleted $deleted stale MediaStore rows")
-        }
 
+        // Let MediaStore handle naming conflicts naturally — it appends "(1)",
+        // "(2)", etc. when the DISPLAY_NAME already exists in its database.
+        // We no longer delete stale files/rows so re-downloads won't overwrite
+        // previously saved files.
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
             put(MediaStore.Downloads.MIME_TYPE, mimeType)
