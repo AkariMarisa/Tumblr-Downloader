@@ -81,6 +81,7 @@
     <string name="download_unknown_error">未知错误</string>
     <string name="download_completed_notification">下载完成</string>
     <string name="download_timed_out">下载超时（10 分钟），请重试</string>
+    <string name="download_waiting_network">等待网络连接…</string>
 
     <!-- Parser / state messages -->
     <string name="parse_error_generic">解析失败：%1$s</string>
