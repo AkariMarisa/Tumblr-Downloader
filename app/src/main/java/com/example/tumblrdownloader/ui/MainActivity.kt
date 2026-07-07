@@ -22,6 +22,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.bumptech.glide.Glide
 import com.example.tumblrdownloader.R
 import com.example.tumblrdownloader.databinding.ActivityMainBinding
+import com.example.tumblrdownloader.model.DownloadStatus
 import com.example.tumblrdownloader.ui.auth.TumblrLoginActivity
 import com.example.tumblrdownloader.ui.about.AboutActivity
 import com.example.tumblrdownloader.ui.settings.SettingsActivity
@@ -59,6 +60,8 @@ class MainActivity : AppCompatActivity() {
     private val clipboardManager by lazy { getSystemService(android.content.ClipboardManager::class.java) }
     private lateinit var toggle: ActionBarDrawerToggle
     private var clearAllMenu: MenuItem? = null
+    private var pauseAllMenu: MenuItem? = null
+    private var resumeAllMenu: MenuItem? = null
 
     private val loginLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -97,12 +100,16 @@ class MainActivity : AppCompatActivity() {
 
         binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
-                clearAllMenu?.isVisible = (position == 1)
+                val isDownloadsTab = position == 1
+                clearAllMenu?.isVisible = isDownloadsTab
+                pauseAllMenu?.isVisible = isDownloadsTab
+                resumeAllMenu?.isVisible = isDownloadsTab
             }
         })
 
         setupDrawer()
         collectTumblrAccount()
+        collectDownloadsState()
         handleIncomingIntent(intent)
     }
 
@@ -223,18 +230,47 @@ class MainActivity : AppCompatActivity() {
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.toolbar_menu, menu)
         clearAllMenu = menu.findItem(R.id.menu_clear_all)
-        clearAllMenu?.isVisible = (binding.viewPager.currentItem == 1)
+        pauseAllMenu = menu.findItem(R.id.menu_pause_all)
+        resumeAllMenu = menu.findItem(R.id.menu_resume_all)
+        val isDownloadsTab = binding.viewPager.currentItem == 1
+        clearAllMenu?.isVisible = isDownloadsTab
+        pauseAllMenu?.isVisible = isDownloadsTab
+        resumeAllMenu?.isVisible = isDownloadsTab
         return true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         if (toggle.onOptionsItemSelected(item)) return true
         return when (item.itemId) {
+            R.id.menu_pause_all -> {
+                viewModel.pauseAllDownloads()
+                true
+            }
+            R.id.menu_resume_all -> {
+                viewModel.resumeAllDownloads()
+                true
+            }
             R.id.menu_clear_all -> {
                 viewModel.clearAllDownloads()
                 true
             }
             else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    private fun collectDownloadsState() {
+        lifecycleScope.launch {
+            viewModel.downloads.collect { list ->
+                // Update overflow menu item states based on download list.
+                val hasPausable = list.any {
+                    it.status == DownloadStatus.DOWNLOADING || it.status == DownloadStatus.QUEUED
+                }
+                val hasResumable = list.any {
+                    it.status == DownloadStatus.PAUSED || it.status == DownloadStatus.FAILED
+                }
+                pauseAllMenu?.isEnabled = hasPausable
+                resumeAllMenu?.isEnabled = hasResumable
+            }
         }
     }
 

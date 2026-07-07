@@ -51,6 +51,8 @@
     <string name="about_description">A lightweight Tumblr media downloader. Quickly download images and videos from Tumblr posts via share links or pasted URLs.</string>
     <string name="about_version">Version: %1$s</string>
     <string name="clear_all_downloads">Clear list</string>
+    <string name="pause_all">Pause All</string>
+    <string name="resume_all">Resume All</string>
 
     <!-- Onboarding -->
     <string name="onboarding_skip">Skip</string>

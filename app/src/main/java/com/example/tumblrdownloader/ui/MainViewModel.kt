@@ -116,6 +116,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         stateManager.clearAll()
     }
 
+    fun pauseAllDownloads() = stateManager.pauseAll()
+
+    fun resumeAllDownloads() = stateManager.resumeAll()
+
     fun retryPendingLoginUrl() {
         // beginLoginRetry consumes the pending URL AND sets a guard so
         // clipboard auto-detect won't race ahead and steal the parse slot.

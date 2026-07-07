@@ -75,6 +75,8 @@ class DownloadService : Service() {
         const val ACTION_PAUSE = "com.example.tumblrdownloader.action.PAUSE_DOWNLOAD"
         const val ACTION_REMOVE = "com.example.tumblrdownloader.action.REMOVE_DOWNLOAD"
         const val ACTION_CLEAR_ALL = "com.example.tumblrdownloader.action.CLEAR_ALL"
+        const val ACTION_PAUSE_ALL = "com.example.tumblrdownloader.action.PAUSE_ALL"
+        const val ACTION_RESUME_ALL = "com.example.tumblrdownloader.action.RESUME_ALL"
 
         const val EXTRA_ITEM_ID = "extra_item_id"
         const val EXTRA_SOURCE_URL = "extra_source_url"
@@ -254,6 +256,21 @@ class DownloadService : Service() {
                 notificationManager.cancel(NOTIFICATION_ID)
                 stopSelf()
                 return START_NOT_STICKY
+            }
+
+            ACTION_PAUSE_ALL -> {
+                // Cancel the active download job so the retry loop stops
+                activeTaskJob?.cancel(CancellationException("Paused by user"))
+                // Drain the queue channel so queued items don't start
+                while (queueChannel.tryReceive().isSuccess) { }
+                return START_STICKY
+            }
+
+            ACTION_RESUME_ALL -> {
+                // All the work is done by DownloadStateManager (updates
+                // statuses and sends individual ACTION_START intents).
+                // The service has nothing extra to do here.
+                return START_STICKY
             }
 
             else -> return START_STICKY

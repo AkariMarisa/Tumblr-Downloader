@@ -31,46 +31,26 @@ class DownloadsAdapter(
         holder.bind(getItem(position))
     }
 
+    override fun onBindViewHolder(
+        holder: DownloadVH,
+        position: Int,
+        payloads: MutableList<Any>
+    ) {
+        if (payloads.isEmpty()) {
+            onBindViewHolder(holder, position)
+        } else {
+            holder.bindPartial(getItem(position))
+        }
+    }
+
     inner class DownloadVH(
         private val binding: ItemDownloadBinding
     ) : RecyclerView.ViewHolder(binding.root) {
 
+        /** Full bind — reloads everything including the thumbnail. */
         fun bind(item: DownloadItem) {
-            binding.tvTitle.text = item.title
-            binding.tvStatus.text = statusText(item)
+            bindTextAndButtons(item)
 
-            val progressText = when {
-                item.progress < 0 -> "--%"
-                item.status == DownloadStatus.FAILED && !item.errorMessage.isNullOrBlank() -> item.errorMessage
-                else -> "${item.progress}%"
-            }
-            binding.tvProgress.text = progressText
-
-            val canPause = item.status == DownloadStatus.DOWNLOADING
-            val canStart = item.status in setOf(DownloadStatus.QUEUED, DownloadStatus.PAUSED, DownloadStatus.FAILED)
-            binding.btnStart.isVisible = canStart
-            binding.btnPause.isVisible = canPause
-            binding.btnRemove.isVisible = true
-
-            if (canStart) {
-                binding.btnStart.setOnClickListener {
-                    onStartOrResume(item)
-                }
-            } else {
-                binding.btnStart.setOnClickListener(null)
-            }
-
-            if (canPause) {
-                binding.btnPause.setOnClickListener {
-                    onPause(item)
-                }
-            } else {
-                binding.btnPause.setOnClickListener(null)
-            }
-
-            binding.btnRemove.setOnClickListener {
-                onRemove(item)
-            }
             binding.ivThumb.clearColorFilter()
             binding.ivThumb.setBackgroundColor(0)
 
@@ -103,6 +83,50 @@ class DownloadsAdapter(
             itemView.setOnClickListener { onClick(item) }
         }
 
+        /**
+         * Partial bind — only updates text and buttons.
+         * Called when DiffUtil detects a progress-only change.
+         * Skips thumbnail reload to avoid visible flicker during
+         * rapid progress updates.
+         */
+        fun bindPartial(item: DownloadItem) {
+            bindTextAndButtons(item)
+            itemView.setOnClickListener { onClick(item) }
+        }
+
+        /** Shared text + button update used by both [bind] and [bindPartial]. */
+        private fun bindTextAndButtons(item: DownloadItem) {
+            binding.tvTitle.text = item.title
+            binding.tvStatus.text = statusText(item)
+
+            val progressText = when {
+                item.progress < 0 -> "--%"
+                item.status == DownloadStatus.FAILED && !item.errorMessage.isNullOrBlank() -> item.errorMessage
+                else -> "${item.progress}%"
+            }
+            binding.tvProgress.text = progressText
+
+            val canPause = item.status == DownloadStatus.DOWNLOADING
+            val canStart = item.status in setOf(DownloadStatus.QUEUED, DownloadStatus.PAUSED, DownloadStatus.FAILED)
+            binding.btnStart.isVisible = canStart
+            binding.btnPause.isVisible = canPause
+            binding.btnRemove.isVisible = true
+
+            if (canStart) {
+                binding.btnStart.setOnClickListener { onStartOrResume(item) }
+            } else {
+                binding.btnStart.setOnClickListener(null)
+            }
+
+            if (canPause) {
+                binding.btnPause.setOnClickListener { onPause(item) }
+            } else {
+                binding.btnPause.setOnClickListener(null)
+            }
+
+            binding.btnRemove.setOnClickListener { onRemove(item) }
+        }
+
         private fun statusText(item: DownloadItem): String {
             val ctx = itemView.context
             return when (item.status) {
@@ -123,6 +147,21 @@ class DownloadsAdapter(
 
             override fun areContentsTheSame(oldItem: DownloadItem, newItem: DownloadItem): Boolean {
                 return oldItem == newItem
+            }
+
+            override fun getChangePayload(
+                oldItem: DownloadItem,
+                newItem: DownloadItem
+            ): Any? {
+                // When only progress/text fields changed, return a non-null
+                // payload so the adapter skips the full rebind (thumbnail).
+                val mediaUrlDiff = oldItem.mediaUrl != newItem.mediaUrl
+                val typeDiff = oldItem.type != newItem.type
+                val titleDiff = oldItem.title != newItem.title
+                if (!mediaUrlDiff && !typeDiff && !titleDiff) {
+                    return "progress_only"
+                }
+                return null // full rebind needed
             }
         }
     }
