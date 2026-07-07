@@ -12,6 +12,8 @@ import android.os.Build
 import android.os.Environment
 import android.os.IBinder
 import android.os.SystemClock
+import android.net.ConnectivityManager
+import android.net.Network
 import androidx.core.app.NotificationCompat
 import androidx.documentfile.provider.DocumentFile
 import com.example.tumblrdownloader.R
@@ -127,6 +129,60 @@ class DownloadService : Service() {
     private var workerJob: Job? = null
     private var lastTaskCompletedAtMs = 0L
 
+    // ── network-aware auto-pause/resume ──────────────────────────────
+    @Volatile
+    private var isNetworkAvailable = true
+    private val networkPausedItems = Collections.synchronizedMap(mutableMapOf<String, DownloadItem>())
+    @Volatile
+    private var lastActiveItem: DownloadItem? = null
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onLost(network: Network) {
+            super.onLost(network)
+            android.util.Log.d("DownloadSvc", "Network lost: $network")
+            isNetworkAvailable = false
+
+            val item = lastActiveItem
+            val id = activeItemId
+            if (item != null && id != null && item.id == id) {
+                android.util.Log.d("DownloadSvc", "Pausing ${id.take(8)}... due to network loss")
+                networkPausedItems[id] = item
+                activeTaskJob?.cancel(CancellationException("Paused by network"))
+            }
+        }
+
+        override fun onAvailable(network: Network) {
+            super.onAvailable(network)
+            android.util.Log.d("DownloadSvc", "Network available: $network")
+            isNetworkAvailable = true
+
+            if (networkPausedItems.isEmpty()) return
+
+            android.util.Log.d("DownloadSvc", "Resuming ${networkPausedItems.size} network-paused item(s)")
+            val toResume = HashMap(networkPausedItems)
+            networkPausedItems.clear()
+
+            for ((id, item) in toResume) {
+                val saved = pauseStateMap.remove(id)
+                val intent = Intent(this@DownloadService, DownloadService::class.java).apply {
+                    action = ACTION_START
+                    putExtra(EXTRA_ITEM_ID, id)
+                    putExtra(EXTRA_SOURCE_URL, item.sourceUrl)
+                    putExtra(EXTRA_MEDIA_URL, item.mediaUrl)
+                    putExtra(EXTRA_TYPE, item.type.name)
+                    putExtra(EXTRA_TITLE, item.title)
+                    putExtra(EXTRA_RETRY_COUNT, item.retryCount)
+                    putExtra(EXTRA_MAX_RETRIES, item.maxRetries)
+                    if (saved != null) {
+                        putExtra(EXTRA_DOWNLOADED_BYTES, saved.downloadedBytes)
+                        putExtra(EXTRA_FILE_URI, saved.fileUri)
+                    }
+                }
+                startService(intent)
+            }
+        }
+    }
+
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(LocaleHelper.applyToContext(base))
     }
@@ -135,6 +191,7 @@ class DownloadService : Service() {
         super.onCreate()
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         createNotificationChannel()
+        registerNetworkCallback()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -270,6 +327,19 @@ class DownloadService : Service() {
                     }
                 }
 
+                // Network-aware: if we lost connectivity and this item isn't already
+                // tracked as network-paused, pause it and wait for reconnection.
+                if (!isNetworkAvailable && item.id !in networkPausedItems) {
+                    android.util.Log.d("DownloadSvc", "runQueue: network unavailable, pausing ${item.id.take(8)}...")
+                    networkPausedItems[item.id] = item
+                    emitProgress(item.copy(
+                        status = DownloadStatus.PAUSED,
+                        progress = 0,
+                        errorMessage = getString(R.string.download_waiting_network)
+                    ))
+                    continue
+                }
+
                 activeItemId = item.id
                 activeDownloadedBytes = item.downloadedBytes
                 activeTaskJob = serviceScope.launch {
@@ -314,6 +384,8 @@ class DownloadService : Service() {
     private suspend fun processWithRetry(item: DownloadItem) {
         android.util.Log.d("DownloadSvc", "processWithRetry: id=${item.id.take(8)}... url=${item.mediaUrl.take(60)}")
         var current = item
+        // Capture for network-loss pause (onLost may need the current item data)
+        lastActiveItem = current
 
         // ponytail: pre-download check — 如果这个 media URL 已经被标记为已完成，
         // 直接跳过后面的下载流程。这是 `processAppend` 去重之外的第二道防线，
@@ -926,9 +998,32 @@ class DownloadService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        unregisterNetworkCallback()
         queueChannel.close()
         serviceScope.cancel()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    // ── network callback helpers ──────────────────────────────────────
+
+    private fun registerNetworkCallback() {
+        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        try {
+            connectivityManager.registerDefaultNetworkCallback(networkCallback)
+            android.util.Log.d("DownloadSvc", "Network callback registered")
+        } catch (e: Exception) {
+            android.util.Log.w("DownloadSvc", "Failed to register network callback", e)
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        try {
+            val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+            android.util.Log.d("DownloadSvc", "Network callback unregistered")
+        } catch (e: Exception) {
+            android.util.Log.w("DownloadSvc", "Failed to unregister network callback", e)
+        }
+    }
 }
