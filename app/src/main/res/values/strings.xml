@@ -54,6 +54,8 @@
     <string name="pause_all">Pause All</string>
     <string name="resume_all">Resume All</string>
 
+    <string name="clear_all_confirm_message">This will clear the download list. Downloads in progress will be cancelled.</string>
+    <string name="clear_all_confirm">Clear</string>
     <!-- Onboarding -->
     <string name="onboarding_skip">Skip</string>
     <string name="onboarding_get_started">Get started</string>

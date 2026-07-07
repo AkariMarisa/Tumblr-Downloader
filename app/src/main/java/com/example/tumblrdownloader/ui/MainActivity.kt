@@ -251,11 +251,22 @@ class MainActivity : AppCompatActivity() {
                 true
             }
             R.id.menu_clear_all -> {
-                viewModel.clearAllDownloads()
+                showClearAllConfirmation()
                 true
             }
             else -> super.onOptionsItemSelected(item)
         }
+    }
+
+    private fun showClearAllConfirmation() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.clear_all_downloads)
+            .setMessage(R.string.clear_all_confirm_message)
+            .setPositiveButton(R.string.clear_all_confirm) { _, _ ->
+                viewModel.clearAllDownloads()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun collectDownloadsState() {

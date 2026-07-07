@@ -54,6 +54,8 @@
     <string name="pause_all">全部暂停</string>
     <string name="resume_all">全部开始</string>
 
+    <string name="clear_all_confirm_message">将清空下载列表，正在进行的下载将被取消。</string>
+    <string name="clear_all_confirm">清空</string>
     <!-- Onboarding -->
     <string name="onboarding_skip">跳过</string>
     <string name="onboarding_get_started">开始使用</string>
