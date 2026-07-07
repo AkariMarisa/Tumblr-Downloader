@@ -12,8 +12,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.IBinder
 import android.os.SystemClock
-import android.net.ConnectivityManager
-import android.net.Network
+import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationCompat
 import androidx.documentfile.provider.DocumentFile
 import com.example.tumblrdownloader.R
@@ -29,6 +28,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.yield
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -129,25 +129,46 @@ class DownloadService : Service() {
     private var workerJob: Job? = null
     private var lastTaskCompletedAtMs = 0L
 
-    // ── network-aware queue guard ────────────────────────────────────
-    // Flags updated by network callback; used by onStartCommand to pause
-    // newly arriving items when connectivity is lost.  Active downloads
-    // continue naturally (retry 3× → FAILED).
+    // ── heartbeat connectivity check ─────────────────────────────────
+    // Periodically pings www.tumblr.com to detect actual network reachability.
+    // This is more reliable than ConnectivityManager callbacks, which can
+    // report availability as connected even through VPN when the actual
+    // network path to Tumblr's CDN is broken.
+    private val heartbeatClient by lazy {
+        okhttp3.OkHttpClient.Builder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(5, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .build()
+    }
+
     @Volatile
     private var isNetworkAvailable = true
+    private var heartbeatJob: Job? = null
 
-    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
-        override fun onLost(network: Network) {
-            super.onLost(network)
-            android.util.Log.d("DownloadSvc", "Network lost: $network")
-            isNetworkAvailable = false
+    private fun startHeartbeat() {
+        heartbeatJob?.cancel()
+        heartbeatJob = serviceScope.launch {
+            while (isActive) {
+                isNetworkAvailable = try {
+                    val req = okhttp3.Request.Builder()
+                        .url("https://www.tumblr.com/")
+                        .head()
+                        .build()
+                    heartbeatClient.newCall(req).execute().use { response ->
+                        response.isSuccessful
+                    }
+                } catch (_: Exception) {
+                    false
+                }
+                delay(15_000L)
+            }
         }
+    }
 
-        override fun onAvailable(network: Network) {
-            super.onAvailable(network)
-            android.util.Log.d("DownloadSvc", "Network available: $network")
-            isNetworkAvailable = true
-        }
+    private fun stopHeartbeat() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
     }
 
     override fun attachBaseContext(base: Context) {
@@ -158,7 +179,7 @@ class DownloadService : Service() {
         super.onCreate()
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         createNotificationChannel()
-        registerNetworkCallback()
+        startHeartbeat()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -291,17 +312,28 @@ class DownloadService : Service() {
                 queuedItemIds.remove(item.id)
 
                 if (suspendedItemIds.contains(item.id) || removedItemIds.remove(item.id)) {
-                    emitProgress(item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = getString(R.string.status_paused)))
+                    emitProgress(item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = resolveString(R.string.status_paused)))
                     continue
                 }
 
                 val gap = calcGapDelay()
                 if (gap > 0) {
-                    emitProgress(item.copy(status = DownloadStatus.QUEUED, progress = 0, errorMessage = getString(R.string.download_waiting, gap)))
+                    emitProgress(item.copy(status = DownloadStatus.QUEUED, progress = 0, errorMessage = getStringSafely(R.string.download_waiting, gap)))
                     delay(gap)
 
                     if (suspendedItemIds.contains(item.id) || removedItemIds.remove(item.id)) {
-                        emitProgress(item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = getString(R.string.status_paused)))
+                        emitProgress(item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = resolveString(R.string.status_paused)))
+                        continue
+                    }
+
+                    // Re-check network after the gap delay — it may have
+                    // dropped while we were waiting.
+                    if (!isNetworkConnected()) {
+                        emitProgress(item.copy(
+                            status = DownloadStatus.PAUSED,
+                            progress = 0,
+                            errorMessage = getNetworkWaitingString()
+                        ))
                         continue
                     }
                 }
@@ -364,6 +396,31 @@ class DownloadService : Service() {
         var lastProgress = 0
 
         while (true) {
+            // Network guard: if connectivity is gone during a retry loop,
+            // pause immediately instead of wasting retries (each retry
+            // would wait for the read timeout before throwing IOException).
+            // This also prevents queued items behind this one from being
+            // blocked longer than necessary.
+            if (!isNetworkConnected()) {
+                // Save partial state so user can resume later.
+                val uri = downloadTargetMap[current.id]?.toString() ?: current.downloadFileUri
+                val savedBytes = bytesThisSession.coerceAtLeast(current.downloadedBytes)
+                if (uri != null && savedBytes > 0L) {
+                    pauseStateMap[current.id] = PauseState(
+                        fileUri = uri,
+                        downloadedBytes = savedBytes
+                    )
+                }
+                emitProgress(current.copy(
+                    status = DownloadStatus.PAUSED,
+                    progress = lastProgress,
+                    downloadedBytes = savedBytes,
+                    downloadFileUri = uri,
+                    errorMessage = getNetworkWaitingString()
+                ))
+                return
+            }
+
             emitProgress(current.copy(status = DownloadStatus.DOWNLOADING, progress = 0, errorMessage = retryHint(current)))
 
             // ── create or reuse the output target ──────────────────────────
@@ -890,11 +947,33 @@ class DownloadService : Service() {
 
     private fun statusText(item: DownloadItem): String {
         return when (item.status) {
-            DownloadStatus.QUEUED -> item.errorMessage ?: getString(R.string.status_queued)
-            DownloadStatus.DOWNLOADING -> item.errorMessage ?: getString(R.string.status_downloading)
-            DownloadStatus.PAUSED -> getString(R.string.status_paused)
-            DownloadStatus.COMPLETED -> getString(R.string.download_completed_notification)
-            DownloadStatus.FAILED -> item.errorMessage ?: getString(R.string.status_failed)
+            DownloadStatus.QUEUED -> item.errorMessage ?: resolveString(R.string.status_queued)
+            DownloadStatus.DOWNLOADING -> item.errorMessage ?: resolveString(R.string.status_downloading)
+            DownloadStatus.PAUSED -> resolveString(R.string.status_paused)
+            DownloadStatus.COMPLETED -> resolveString(R.string.download_completed_notification)
+            DownloadStatus.FAILED -> item.errorMessage ?: resolveString(R.string.status_failed)
+        }
+    }
+
+    /**
+     * Resolve a string resource with a fallback chain.
+     * This prevents [Resources.NotFoundException] crashes in environments
+     * where the resource table is not fully available (e.g. Robolectric).
+     */
+    private fun resolveString(@androidx.annotation.StringRes resId: Int): String {
+        return try {
+            getString(resId)
+        } catch (_: Exception) {
+            try {
+                applicationContext.getString(resId)
+            } catch (_: Exception) {
+                // If all else fails, return the resource name as a placeholder.
+                try {
+                    resources.getResourceEntryName(resId)
+                } catch (_: Exception) {
+                    "…"
+                }
+            }
         }
     }
 
@@ -962,34 +1041,12 @@ class DownloadService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        unregisterNetworkCallback()
+        stopHeartbeat()
         queueChannel.close()
         serviceScope.cancel()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    // ── network callback helpers ──────────────────────────────────────
-
-    private fun registerNetworkCallback() {
-        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
-        try {
-            connectivityManager.registerDefaultNetworkCallback(networkCallback)
-            android.util.Log.d("DownloadSvc", "Network callback registered")
-        } catch (e: Throwable) {
-            android.util.Log.w("DownloadSvc", "Failed to register network callback", e)
-        }
-    }
-
-    private fun unregisterNetworkCallback() {
-        try {
-            val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
-            connectivityManager.unregisterNetworkCallback(networkCallback)
-            android.util.Log.d("DownloadSvc", "Network callback unregistered")
-        } catch (e: Throwable) {
-            android.util.Log.w("DownloadSvc", "Failed to unregister network callback", e)
-        }
-    }
 
     /**
      * Direct connectivity check, independent of the network-callback flag.
@@ -999,32 +1056,32 @@ class DownloadService : Service() {
      * yet or its [CancellationException] couldn't be delivered through a
      * blocking read.
      */
-    /** Resolve the network-waiting string via applicationContext as a fallback. */
-    private fun getNetworkWaitingString(): String {
+    /** Resolve the network-waiting string with fallback. */
+    private fun getNetworkWaitingString(): String = resolveString(R.string.download_waiting_network)
+
+    /** Resolve a format-string resource with fallback. */
+    private fun getStringSafely(@androidx.annotation.StringRes resId: Int, vararg formatArgs: Any): String {
         return try {
-            getString(R.string.download_waiting_network)
+            getString(resId, *formatArgs)
         } catch (_: Exception) {
             try {
-                applicationContext.getString(R.string.download_waiting_network)
+                applicationContext.getString(resId, *formatArgs)
             } catch (_: Exception) {
-                "Waiting for network…"
+                resolveString(resId)
             }
         }
     }
 
-    private fun isNetworkConnected(): Boolean {
-        // Fast path: if the callback already flagged no-network, trust it.
-        if (!isNetworkAvailable) return false
+    /**
+     * Check connectivity based on the heartbeat probe result.
+     * Falls back to [isNetworkAvailable] (initialised to `true` so that
+     * the first heartbeat cycle doesn't prevent legitimate downloads).
+     */
+    private fun isNetworkConnected(): Boolean = isNetworkAvailable
 
-        // Verify against ConnectivityManager directly for correctness.
-        return try {
-            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return true
-            @Suppress("DEPRECATION")
-            val info = cm.activeNetworkInfo
-            if (info == null) return isNetworkAvailable
-            info.isConnected && info.isAvailable
-        } catch (_: Throwable) {
-            true // be conservative — let the download attempt fail naturally
-        }
+    /** Test-only hook to simulate connectivity loss/gain. */
+    @VisibleForTesting
+    internal fun setNetworkAvailableForTest(available: Boolean) {
+        isNetworkAvailable = available
     }
 }
