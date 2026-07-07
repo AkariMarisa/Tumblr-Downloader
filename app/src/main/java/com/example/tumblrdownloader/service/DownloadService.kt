@@ -14,6 +14,7 @@ import android.os.IBinder
 import android.os.SystemClock
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import androidx.core.app.NotificationCompat
 import androidx.documentfile.provider.DocumentFile
 import com.example.tumblrdownloader.R
@@ -402,6 +403,22 @@ class DownloadService : Service() {
         while (true) {
             emitProgress(current.copy(status = DownloadStatus.DOWNLOADING, progress = 0, errorMessage = retryHint(current)))
 
+            // Network check before each attempt — even if onLost hasn't fired
+            // yet (or was delayed), proactively avoid futile IO on a dead link.
+            if (!isNetworkConnected()) {
+                android.util.Log.d("DownloadSvc", "processWithRetry: network unavailable, pausing ${current.id.take(8)}...")
+                pauseStateMap[current.id] = PauseState(
+                    fileUri = current.downloadFileUri.orEmpty(),
+                    downloadedBytes = current.downloadedBytes
+                )
+                emitProgress(current.copy(
+                    status = DownloadStatus.PAUSED,
+                    progress = lastProgress,
+                    errorMessage = getString(R.string.download_waiting_network)
+                ))
+                return
+            }
+
             // ── create or reuse the output target ──────────────────────────
             val output = runCatching {
                 if (isResume && current.downloadedBytes > 0L) {
@@ -560,6 +577,25 @@ class DownloadService : Service() {
                 }
                 return
             } catch (e: Exception) {
+                // If network is gone, don't waste time retrying — pause immediately.
+                if (!isNetworkConnected()) {
+                    android.util.Log.d("DownloadSvc", "processWithRetry: catch-block — network unavailable, pausing ${current.id.take(8)}...")
+                    // Don't delete the partial file — keep it for resume.
+                    output.onFailure()
+                    pauseStateMap[current.id] = PauseState(
+                        fileUri = output.uri.toString(),
+                        downloadedBytes = if (isResume) current.downloadedBytes else bytesThisSession
+                    )
+                    emitProgress(current.copy(
+                        status = DownloadStatus.PAUSED,
+                        progress = lastProgress,
+                        downloadedBytes = current.downloadedBytes,
+                        downloadFileUri = output.uri.toString(),
+                        errorMessage = getString(R.string.download_waiting_network)
+                    ))
+                    return
+                }
+
                 // ponytail: for cached URIs (retry), don't delete the file —
                 // truncate (create fresh) on the same URI instead.  Only
                 // delete uncached (first-attempt) files.
@@ -1024,6 +1060,29 @@ class DownloadService : Service() {
             android.util.Log.d("DownloadSvc", "Network callback unregistered")
         } catch (e: Throwable) {
             android.util.Log.w("DownloadSvc", "Failed to unregister network callback", e)
+        }
+    }
+
+    /**
+     * Direct connectivity check, independent of the network-callback flag.
+     *
+     * This is used in [processWithRetry] to proactively detect network loss
+     * during retry loops or blocking IO, where [onLost] may not have fired
+     * yet or its [CancellationException] couldn't be delivered through a
+     * blocking read.
+     */
+    private fun isNetworkConnected(): Boolean {
+        // Fast path: if the callback already flagged no-network, trust it.
+        if (!isNetworkAvailable) return false
+
+        // Verify against ConnectivityManager directly for correctness.
+        return try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return true
+            val network = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(network) ?: return false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        } catch (_: Exception) {
+            true // be conservative — let the download attempt fail naturally
         }
     }
 }
