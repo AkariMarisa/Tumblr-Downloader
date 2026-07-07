@@ -1012,7 +1012,7 @@ class DownloadService : Service() {
         try {
             connectivityManager.registerDefaultNetworkCallback(networkCallback)
             android.util.Log.d("DownloadSvc", "Network callback registered")
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             android.util.Log.w("DownloadSvc", "Failed to register network callback", e)
         }
     }
@@ -1022,7 +1022,7 @@ class DownloadService : Service() {
             val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
             connectivityManager.unregisterNetworkCallback(networkCallback)
             android.util.Log.d("DownloadSvc", "Network callback unregistered")
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             android.util.Log.w("DownloadSvc", "Failed to unregister network callback", e)
         }
     }
