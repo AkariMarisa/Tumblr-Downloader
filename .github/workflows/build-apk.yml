@@ -57,10 +57,38 @@ jobs:
       contents: write
 
     steps:
-      - name: Generate tag
+      - name: Checkout with full history (for changelog)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate tag, version, and changelog
         id: info
         run: |
-          echo "tag=build-$(date +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
+          # 从 build.gradle.kts 提取版本号
+          VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          DATE=$(date +%Y%m%d)
+          TAG="v${VERSION}-build.${DATE}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+          # 生成 changelog：对比上一个 tag 到当前 HEAD
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          {
+            echo "## What's Changed"
+            echo ""
+            if [ -n "$LAST_TAG" ]; then
+              git log "$LAST_TAG..HEAD" --oneline --format="- %s (%h)"
+            else
+              git log --oneline --format="- %s (%h)"
+            fi
+            echo ""
+            echo "---"
+            if [ -n "$LAST_TAG" ]; then
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$LAST_TAG...${{ github.sha }}"
+            else
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/releases/tag/${TAG}"
+            fi
+          } > release_body.md
 
       - name: Download APK artifact
         uses: actions/download-artifact@v4
@@ -71,10 +99,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.info.outputs.tag }}
-          name: Build ${{ steps.info.outputs.tag }}
-          body: |
-            ## Tumblr Downloader
-
-            **提交**: ${{ github.sha }}
+          name: ${{ steps.info.outputs.tag }}
+          body_path: release_body.md
           files: app-debug.apk
           make_latest: true
