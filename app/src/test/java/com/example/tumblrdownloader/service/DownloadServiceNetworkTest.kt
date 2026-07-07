@@ -19,6 +19,7 @@ import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowConnectivityManager
 
+
 /**
  * Tests for [DownloadService] network-aware pause/resume integration.
  *
@@ -40,6 +41,7 @@ class DownloadServiceNetworkTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
+
         service = Robolectric.buildService(DownloadService::class.java).create().get()
         shadowConnectivityManager = Shadows.shadowOf(
             service.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
