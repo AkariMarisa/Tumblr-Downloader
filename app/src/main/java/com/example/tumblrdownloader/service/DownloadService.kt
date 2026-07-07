@@ -857,26 +857,12 @@ class DownloadService : Service() {
 
         val folderName = DownloadUtils.getDefaultDownloadFolderName(this@DownloadService)
 
-        // ponytail: delete stale file AND stale MediaStore rows before
-        // inserting.  MediaStore creates "(1)" copies when the filename OR a
-        // database row with the same display_name already exists.
         val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/$folderName"
-        val fsPath = java.io.File(
-            Environment.getExternalStorageDirectory(), relativePath + "/$fileName"
-        )
-        if (fsPath.exists()) {
-            android.util.Log.d("DownloadSvc", "createMediaStoreTarget: deleting stale file: $fileName")
-            fsPath.delete()
-        }
-        // Delete any stale MediaStore rows — they cause "(1)" naming even if
-        // the file was already deleted.
-        runCatching {
-            val delWhere = "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.RELATIVE_PATH} = ?"
-            val delArgs = arrayOf(fileName, relativePath)
-            val deleted = contentResolver.delete(collection, delWhere, delArgs)
-            if (deleted > 0) android.util.Log.d("DownloadSvc", "deleted $deleted stale MediaStore rows")
-        }
 
+        // Let MediaStore handle naming conflicts naturally — it appends "(1)",
+        // "(2)", etc. when the DISPLAY_NAME already exists in its database.
+        // We no longer delete stale files/rows so re-downloads won't overwrite
+        // previously saved files.
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
             put(MediaStore.Downloads.MIME_TYPE, mimeType)

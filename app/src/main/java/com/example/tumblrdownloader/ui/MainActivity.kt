@@ -263,6 +263,13 @@ class MainActivity : AppCompatActivity() {
             .setTitle(R.string.clear_all_downloads)
             .setMessage(R.string.clear_all_confirm_message)
             .setPositiveButton(R.string.clear_all_confirm) { _, _ ->
+                // Clear clipboard to prevent re-detection of the same URL
+                // when the user switches away and back.
+                runCatching {
+                    clipboardManager.setPrimaryClip(
+                        android.content.ClipData.newPlainText(null, "")
+                    )
+                }
                 viewModel.clearAllDownloads()
             }
             .setNegativeButton(android.R.string.cancel, null)
