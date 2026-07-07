@@ -191,10 +191,14 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - [ ] **网络切换时自动重试**：WiFi 断开时暂停下载，重新连接后自动继续
 - [x] **Cookie 同步竞态**：在 `TumblrCookieStore` 中添加了 `waitForCookiesReady()`——在重试解析前轮询 `CookieManager.getCookie()` 直至 Cookie 可见（超时 5 秒）。登录重试现在会等待 Cookie 实际就绪再执行。
 - [x] **登录循环修复**：`retryAfterLogin` 标志位防止重试失败后重复打开登录页。10 秒登录重定向节流。`loginLaunchPending` 守卫避免重复启动登录 Activity。
-- [ ] **SharedPreferences 损坏**：下载历史记录和 Cookie 使用纯 JSON 存储在 SharedPreferences 中，并发写入或崩溃可能导致数据损坏。建议迁移到 Room 或事务性存储
-  > **注**：自动检测去重缓存（`last_auto_detected_url`）同样使用 SharedPreferences，但故意不迁移——它只是一个字符串、只在主线程写入、丢失也无害（最多同一条链接被重新检测一次）。
+- [x] **进度监听器竞态**：修复 ViewModel `onCleared()` 错误地将 `DownloadService.progressListener` 置空的问题。守卫逻辑：仅当静态 listener 未设置时才注册——先到先得。
+- [x] **崩溃安全命令处理器**：`DownloadStateManager` 的 `for` 循环包裹了 `try`/`catch`，防止未捕获异常静默杀死通道消费者。
+- [x] **`isColdStart` 存活**：从 `MainActivity` 实例字段改为 `companion object @Volatile` 标志，确保 Activity 重建后不会跳过剪切板检测。
+- [x] **`isLikelyPostMedia` 接受无后缀 URL**：接受 `media.tumblr.com` 不带文件扩展名的 URL——噪声路径 + 域名过滤已提供足够的精确度。
+- [x] **FAILED 可重试**：`processAppend` 去重跳过 `FAILED` 状态的项目——用户无需手动移除即可重新下载失败的帖子。
+- [x] **SharedPreferences 损坏**：下载历史记录和 Cookie 已迁移到 Room（AppDatabase + DAO）。首次启动时自动迁移遗留数据，迁移完成后清除 SharedPreferences。自动检测去重缓存（`last_auto_detected_url`）故意保留在 SharedPreferences（单个字符串、仅主线程写入、丢失无害）。
 - [x] **WebViewCookieJar 子域名回退**：当 `cookieManager.getCookie(url)` 对 `*.tumblr.com` 子域名返回 null 时，回退到 `https://www.tumblr.com/` 获取 Cookie。
-- [ ] **成人内容检测**：Tumblr 对含成人内容的帖子有额外拦截页，需改进 `looksLikeLoginPage` 对此边缘情况的处理
+- [x] **成人内容检测**：添加 `looksLikeAdultContentPage()` 检测 Tumblr 成人内容拦截页，先用宽松 JSON 提取模式（`extractFromJsonRelaxed`）尝试获取媒体 URL，失败则返回 `LoginRequired` 引导用户浏览器确认
 - [ ] **私密帖子支持**：`/private/...` URL 无法通过 HTTP 解析（JS 动态渲染），两条路线待评估：
   - **WebView 解析器**：用隐藏 WebView 加载帖子页面，等待 JS 渲染后通过 `evaluateJavascript()` 提取 `__INITIAL_STATE__` / DOM 里的媒体 URL
   - **Tumblr API v2 + OAuth**：注册应用获取 API 凭证，用 `/posts/{id}` 接口 + OAuth 令牌获取帖子 JSON 数据
@@ -224,9 +228,10 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 - [ ] **LICENSE 文件**：在仓库根目录创建实际的 MIT `LICENSE` 文件（README 已引用但文件不存在）
 - [ ] **Gradle wrapper**：添加 `gradlew` 以便无需系统安装 Gradle 即可构建
-- [ ] **CI/CD**：配置 GitHub Actions，PR 时自动构建、lint、跑测试
+- [x] **CI/CD**：配置了 GitHub Actions，每次 push master 自动构建 APK 并发布 Release
 - [ ] **包名重命名**：从 `com.example` 改为正式命名空间后再发布
-- [ ] **测试**：补充 `TumblrParser`、`DownloadStateManager` 的单元测试，以及下载流程的 instrumentation 测试
+- [x] **Room DAO + 迁移测试**：19 个单元测试覆盖 `DownloadHistoryDao`、`CookieDao` 及 SharedPreferences 迁移（Robolectric + Room in-memory）
+- [ ] **更多测试**：补充 `TumblrParser`、`DownloadStateManager` 的单元测试，以及下载流程的 instrumentation 测试
 - [ ] **贡献指南**：创建 `CONTRIBUTING.md` 和 `CODE_OF_CONDUCT.md`
 - [x] **截图**：在 README 中添加应用截图
 - [ ] **应用商店发布**：准备 Release 签名和商店上架材料（发布到 F-Droid）
