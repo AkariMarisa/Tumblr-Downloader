@@ -72,6 +72,13 @@ class DownloadsFragment : Fragment() {
             .setTitle(R.string.remove_download)
             .setMessage(R.string.remove_confirm_message)
             .setPositiveButton(R.string.remove_confirm) { _, _ ->
+                // Clear clipboard to prevent re-detection of the same URL
+                runCatching {
+                    val cm = requireContext().getSystemService(
+                        android.content.ClipboardManager::class.java
+                    )
+                    cm?.setPrimaryClip(android.content.ClipData.newPlainText(null, ""))
+                }
                 viewModel.removeDownload(item.id)
             }
             .setNegativeButton(android.R.string.cancel, null)
