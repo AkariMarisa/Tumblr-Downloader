@@ -50,11 +50,13 @@
     <string name="drawer_user_status_logged_out">未登录</string>
     <string name="about_description">一个轻量级的 Tumblr 媒体下载工具。支持通过分享链接或粘贴链接的方式，快速下载 Tumblr 帖子中的图片和视频。</string>
     <string name="about_version">版本：%1$s</string>
-    <string name="clear_all_downloads">清空列表</string>
+    <string name="clear_all_downloads">清空已完成</string>
     <string name="pause_all">全部暂停</string>
     <string name="resume_all">全部开始</string>
 
-    <string name="clear_all_confirm_message">将清空下载列表，正在进行的下载将被取消。</string>
+    <string name="clear_all_confirm_message">将清空所有已完成的项目，未完成的项目不受影响。</string>
+    <string name="remove_confirm_message">将该项从下载列表中移除，不会删除已下载的文件。</string>
+    <string name="remove_confirm">移除</string>
     <string name="clear_all_confirm">清空</string>
     <!-- Onboarding -->
     <string name="onboarding_skip">跳过</string>

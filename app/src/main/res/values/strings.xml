@@ -50,11 +50,13 @@
     <string name="drawer_user_status_logged_out">Not logged in</string>
     <string name="about_description">A lightweight Tumblr media downloader. Quickly download images and videos from Tumblr posts via share links or pasted URLs.</string>
     <string name="about_version">Version: %1$s</string>
-    <string name="clear_all_downloads">Clear list</string>
+    <string name="clear_all_downloads">Clear completed</string>
     <string name="pause_all">Pause All</string>
     <string name="resume_all">Resume All</string>
 
-    <string name="clear_all_confirm_message">This will clear the download list. Downloads in progress will be cancelled.</string>
+    <string name="clear_all_confirm_message">This will remove all completed items from the download list.</string>
+    <string name="remove_confirm_message">Remove this item from the download list? Local files are not affected.</string>
+    <string name="remove_confirm">Remove</string>
     <string name="clear_all_confirm">Clear</string>
     <!-- Onboarding -->
     <string name="onboarding_skip">Skip</string>

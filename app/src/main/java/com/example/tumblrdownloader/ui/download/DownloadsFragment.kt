@@ -4,12 +4,14 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.example.tumblrdownloader.R
 import com.example.tumblrdownloader.databinding.FragmentDownloadsBinding
 import com.example.tumblrdownloader.model.DownloadItem
 import com.example.tumblrdownloader.ui.MainViewModel
@@ -26,7 +28,7 @@ class DownloadsFragment : Fragment() {
         onClick = ::openViewer,
         onStartOrResume = { item -> viewModel.startOrResumeDownload(item.id) },
         onPause = { item -> viewModel.pauseDownload(item.id) },
-        onRemove = { item -> viewModel.removeDownload(item.id) }
+        onRemove = { item -> confirmRemoveDownload(item) }
     )
 
     override fun onCreateView(
@@ -63,6 +65,17 @@ class DownloadsFragment : Fragment() {
                 binding.rvDownloads.scrollToPosition(0)
             }
         }
+    }
+
+    private fun confirmRemoveDownload(item: DownloadItem) {
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.remove_download)
+            .setMessage(R.string.remove_confirm_message)
+            .setPositiveButton(R.string.remove_confirm) { _, _ ->
+                viewModel.removeDownload(item.id)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun openViewer(item: DownloadItem) {

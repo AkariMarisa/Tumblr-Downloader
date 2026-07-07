@@ -205,14 +205,21 @@ class DownloadStateManagerTest {
     // ── clearAll ────────────────────────────────────────────────────────
 
     @Test
-    fun clearAll_removesAllItems() = runTest(testDispatcher) {
-        stateManager.restore(listOf(item("m"), item("n"), item("o")))
+    fun clearAll_removesOnlyCompletedItems() = runTest(testDispatcher) {
+        stateManager.restore(listOf(
+            item("m", status = DownloadStatus.COMPLETED),
+            item("n", status = DownloadStatus.PAUSED),
+            item("o", status = DownloadStatus.FAILED)
+        ))
         testDispatcher.scheduler.advanceUntilIdle()
 
         stateManager.clearAll()
         testDispatcher.scheduler.advanceUntilIdle()
 
-        assertTrue("all items should be removed", stateManager.items.value.isEmpty())
+        val remaining = stateManager.items.value
+        assertFalse("completed item should be removed", remaining.any { it.id == "m" })
+        assertTrue("paused item should remain", remaining.any { it.id == "n" })
+        assertTrue("failed item should remain", remaining.any { it.id == "o" })
     }
 
     // ── restore ─────────────────────────────────────────────────────────

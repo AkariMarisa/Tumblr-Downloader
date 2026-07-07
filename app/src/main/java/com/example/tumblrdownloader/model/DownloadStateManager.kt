@@ -342,15 +342,21 @@ class DownloadStateManager(private val app: Application) {
         sendRemoveIntent(itemId)
     }
 
-    // ── Clear All ───────────────────────────────────────────────────────
+    // ── Clear Completed ────────────────────────────────────────────────
+    /**
+     * Remove only [DownloadStatus.COMPLETED] items from the list.
+     * Non-completed items (paused, failed, queued, downloading) are kept
+     * so the user can retry or resume them later.
+     */
     private fun processClearAll() {
-        _items.value = emptyList()
-        CompletedMediaStore.clear(app)
-        scope.launch {
-            DownloadHistoryStore.clear(app)
+        val toRemove = _items.value.filter { it.status == DownloadStatus.COMPLETED }
+        if (toRemove.isEmpty()) return
+
+        toRemove.forEach { item ->
+            CompletedMediaStore.remove(app, item.mediaUrl)
         }
-        sendClearAllIntent()
-        dirty = false
+        _items.value = _items.value.filterNot { it.status == DownloadStatus.COMPLETED }
+        dirty = true
     }
 
     // ── Pause All / Resume All ─────────────────────────────────────────
