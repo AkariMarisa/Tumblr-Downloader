@@ -186,7 +186,8 @@ For private or restricted posts:
 
 - [x] **Clipboard auto-detect**: Use `onWindowFocusChanged(true)` (Android 10+ requires focus to read clipboard). Cold start skip — only detect when switching back. Persistent dedup via SharedPreferences; delete/clear tasks resets cache. Settings toggle to disable. Auto-switch to Download tab with loading overlay on detection.
 - [x] **Network-aware queue management**: When WiFi disconnects, active downloads fail naturally after 3 retries; queued items pause immediately. No auto-resume.
-- [ ] **"Pause All" / "Resume All" buttons**: Add batch control buttons at the top of the download list to pause/resume the entire queue.
+- [x] **"Pause All" / "Resume All" buttons**: Add batch control buttons at the top of the download list to pause/resume the entire queue.
+- [x] **Card flicker fix**: DiffUtil payload distinguishes progress-only changes to avoid Glide thumbnail reloads causing UI flicker during rapid progress updates.
 - [x] **Cookie persistence race**: Added `waitForCookiesReady()` in `TumblrCookieStore` — polls `CookieManager.getCookie()` on login hosts with 5s timeout before retrying parse. Login retry now waits until cookies are actually visible.
 - [x] **Login loop fix**: `retryAfterLogin` flag prevents re-opening login page on failed retry. 10s throttle on login redirects. `loginLaunchPending` guard in DownloadFragment.
 - [x] **SharedPreferences corruption**: Download history and cookie store use plain JSON in SharedPreferences — can break on concurrent writes or crash during save. Migrated to Room (AppDatabase with DAOs). Legacy data auto-migrated on first launch; SharedPreferences are cleared after migration. Auto-detect dedup cache (`last_auto_detected_url`) intentionally left in SharedPreferences (single string, loss is harmless).
