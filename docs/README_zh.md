@@ -50,7 +50,7 @@
 ## 项目结构
 
 ```
-app/src/main/java/com/example/tumblrdownloader/
+app/src/main/java/io/github/akarimarisa/tumblrdownloader/
 ├── TumblrDownloaderApplication.kt      # 应用入口
 ├── MainActivity.kt                     # 主 Activity（单 Activity + TabLayout）
 ├── MainViewModel.kt                    # 共享 ViewModel，连接 UI 与状态管理
@@ -231,7 +231,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - [ ] **LICENSE 文件**：在仓库根目录创建实际的 MIT `LICENSE` 文件（README 已引用但文件不存在）
 - [ ] **Gradle wrapper**：添加 `gradlew` 以便无需系统安装 Gradle 即可构建
 - [x] **CI/CD**：配置了 GitHub Actions，每次 push master 自动构建 APK 并发布 Release
-- [ ] **包名重命名**：从 `com.example` 改为正式命名空间后再发布
+- [ ] **包名重命名**：已改为 `io.github.akarimarisa.tumblrdownloader`
 - [x] **Room DAO + 迁移测试**：19 个单元测试覆盖 `DownloadHistoryDao`、`CookieDao` 及 SharedPreferences 迁移（Robolectric + Room in-memory）
 - [ ] **更多测试**：补充 `TumblrParser`、`DownloadStateManager` 的单元测试，以及下载流程的 instrumentation 测试
 - [ ] **贡献指南**：创建 `CONTRIBUTING.md` 和 `CODE_OF_CONDUCT.md`
