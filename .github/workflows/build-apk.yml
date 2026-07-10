@@ -100,28 +100,79 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease
 
-      - name: Generate changelog
+      - name: Generate changelog (EN)
         id: info
         run: |
           TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
           LAST_TAG=$(git describe --tags --abbrev=0 --exclude="$TAG" 2>/dev/null || true)
+          CHANGES=$(if [ -n "$LAST_TAG" ]; then
+            git log "$LAST_TAG..HEAD" --oneline --format="- %s"
+          else
+            git log --oneline --format="- %s"
+          fi)
+
+          # Try to read fastlane changelog for this version
+          CHANGELOG_FILE="fastlane/metadata/android/en-US/changelogs/$(grep 'versionCode' app/build.gradle.kts | grep -o '[0-9]*' | head -1).txt"
+          FL_CHANGELOG=""
+          if [ -f "$CHANGELOG_FILE" ]; then
+            FL_CHANGELOG=$(cat "$CHANGELOG_FILE")
+          fi
+
+          cat > release_body_en.md << ENDBODY
+          ## 📦 What's New in ${TAG}
+          
+          ### ✨ Features
+          ${FL_CHANGELOG:-No changelog provided}
+          
+          ### 📝 Commits
+          ${CHANGES}
+          
+          ---
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/${LAST_TAG:-$(git rev-list --max-parents=0 HEAD | head -1)}...${TAG}
+          ENDBODY
+
+      - name: Generate changelog (ZH)
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          LAST_TAG=$(git describe --tags --abbrev=0 --exclude="$TAG" 2>/dev/null || true)
+          CHANGES=$(if [ -n "$LAST_TAG" ]; then
+            git log "$LAST_TAG..HEAD" --oneline --format="- %s"
+          else
+            git log --oneline --format="- %s"
+          fi)
+
+          CHANGELOG_FILE="fastlane/metadata/android/zh-CN/changelogs/$(grep 'versionCode' app/build.gradle.kts | grep -o '[0-9]*' | head -1).txt"
+          FL_CHANGELOG=""
+          if [ -f "$CHANGELOG_FILE" ]; then
+            FL_CHANGELOG=$(cat "$CHANGELOG_FILE")
+          fi
+
+          cat > release_body_zh.md << ZHBODY
+          ## 📦 ${TAG} 更新内容
+          
+          ### ✨ 功能特性
+          ${FL_CHANGELOG:-暂无更新日志}
+          
+          ### 📝 提交记录
+          ${CHANGES}
+          
+          ---
+          **完整变更日志**: https://github.com/${{ github.repository }}/compare/${LAST_TAG:-$(git rev-list --max-parents=0 HEAD | head -1)}...${TAG}
+          ZHBODY
+
+      - name: Merge bilingual release body
+        run: |
           {
-            echo "## What's Changed"
-            echo ""
-            if [ -n "$LAST_TAG" ]; then
-              git log "$LAST_TAG..HEAD" --oneline --format="- %s (%h)"
-            else
-              git log --oneline --format="- %s (%h)"
-            fi
+            cat release_body_en.md
             echo ""
             echo "---"
-            if [ -n "$LAST_TAG" ]; then
-              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$LAST_TAG...${TAG}"
-            else
-              echo "**Full Changelog**: https://github.com/${{ github.repository }}/releases/tag/${TAG}"
-            fi
+            echo ""
+            echo "# 🌐 中文版"
+            echo ""
+            cat release_body_zh.md
           } > release_body.md
 
       - name: Create Release

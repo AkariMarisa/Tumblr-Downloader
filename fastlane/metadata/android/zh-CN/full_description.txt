@@ -1,0 +1,24 @@
+Tumblr Downloader 是一款 Android 应用，支持从 Tumblr 帖子中下载图片和视频。
+
+功能特点：
+• 粘贴链接即可下载 Tumblr 媒体
+• 自动检测剪贴板中的 Tumblr URL
+• 从其他应用分享到本应用开始下载
+• 内置 WebView 登录，支持访问私密/受限帖子
+• Cookie 持久化，重启后自动复用登录状态
+• 下载队列，支持暂停/继续/重试
+• Room 数据库持久化下载记录
+• 内置图片和视频查看器
+• 通过 Storage Access Framework 自选保存目录
+• 多语言支持（中文和英文）
+• Material Design 3 界面，支持深色模式
+• 网络感知，断网自动暂停
+• 成人内容检测与过滤
+
+隐私保护：
+• 登录凭证使用 Android Keystore 本地加密存储
+• 无数据收集或追踪
+• 无广告
+• 基于 MIT 协议完全开源
+
+需要 Android 11 或更高版本。

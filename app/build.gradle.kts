@@ -5,15 +5,15 @@ plugins {
 }
 
 android {
-    namespace = "com.example.tumblrdownloader"
+    namespace = "io.github.akarimarisa.tumblrdownloader"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.tumblrdownloader"
+        applicationId = "io.github.akarimarisa.tumblrdownloader"
         minSdk = 30
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 1
+        versionName = "1.0.0"
     }
 
     signingConfigs {

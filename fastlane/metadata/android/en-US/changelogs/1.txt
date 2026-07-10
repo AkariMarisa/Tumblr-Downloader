@@ -1,0 +1,16 @@
+Initial release of Tumblr Downloader:
+
+• Download images and videos from Tumblr posts
+• Automatic clipboard detection for Tumblr URLs
+• Share from other apps to start downloading
+• Built-in WebView login for private/restricted posts
+• Persistent cookies across restarts
+• Download queue with pause/resume/retry
+• Download history with Room database
+• Built-in media viewer
+• Custom save directory via SAF
+• Material Design 3 UI
+• Multi-language support (EN/ZH)
+• Network-aware auto-pause
+• Adult content detection
+• Fully open source (MIT)
