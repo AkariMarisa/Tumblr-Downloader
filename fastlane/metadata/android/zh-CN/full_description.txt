@@ -21,4 +21,7 @@ Tumblr Downloader 是一款 Android 应用，支持从 Tumblr 帖子中下载图
 • 无广告
 • 基于 MIT 协议完全开源
 
+支持：
+• 如果你觉得这个应用有用，请考虑请我喝杯咖啡：https://ko-fi.com/E0C822IGF6
+
 需要 Android 11 或更高版本。

@@ -21,4 +21,7 @@ Privacy:
 • No ads
 • Fully open source under MIT license
 
+Support:
+• If you find this app useful, consider buying me a coffee: https://ko-fi.com/E0C822IGF6
+
 Requires Android 11 or later.
