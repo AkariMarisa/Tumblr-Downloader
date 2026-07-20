@@ -377,7 +377,16 @@ class DownloadService : Service() {
                 activeDownloadedBytesMap[item.id] = item.downloadedBytes
                 val job = serviceScope.launch {
                     try {
-                        processWithRetry(item)
+                        withTimeout(10 * 60_000L) { // 10 minutes max per item
+                            processWithRetry(item)
+                        }
+                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                        android.util.Log.w("DownloadSvc", "runQueue: download job timed out for ${item.id}")
+                        emitProgress(item.copy(
+                            status = DownloadStatus.FAILED,
+                            progress = 0,
+                            errorMessage = getString(R.string.download_timed_out)
+                        ))
                     } finally {
                         activeJobs.remove(item.id)
                         activeDownloadedBytesMap.remove(item.id)
