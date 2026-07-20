@@ -31,5 +31,7 @@ data class DownloadItem(
     /** Bytes already written to disk for HTTP Range resume. */
     val downloadedBytes: Long = 0L,
     /** Content URI of the partial file for append-on-resume. */
-    val downloadFileUri: String? = null
+    val downloadFileUri: String? = null,
+    /** Current download speed in bytes per second (transient, not persisted). */
+    val speedBytesPerSecond: Long = 0L
 )

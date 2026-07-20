@@ -33,6 +33,7 @@ import kotlinx.coroutines.yield
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Semaphore
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import android.provider.MediaStore
@@ -70,6 +71,25 @@ class DownloadService : Service() {
         private const val MAX_TASK_GAP_MS = 1_500L
         private const val MAX_BYTES_PER_SECOND = 1_024L * 1_024L
         private const val RETRY_DELAY_MS = 1_000L
+        private const val PREFS_NAME = "tumblr_downloader"
+        private const val PREF_MAX_CONCURRENT = "max_concurrent_downloads"
+        /** Number of milliseconds over which the speed is averaged. */
+        private const val SPEED_WINDOW_MS = 1_000L
+
+        /**
+         * Format bytes-per-second into a human-readable speed string.
+         * e.g. 256000 -> "256 KB/s", 1572864 -> "1.5 MB/s"
+         */
+        fun formatSpeed(bytesPerSecond: Long): String {
+            if (bytesPerSecond <= 0) return ""
+            return if (bytesPerSecond < 1024 * 1024) {
+                val kb = bytesPerSecond / 1024.0
+                String.format(Locale.US, "%.1f KB/s", kb)
+            } else {
+                val mb = bytesPerSecond / (1024.0 * 1024.0)
+                String.format(Locale.US, "%.1f MB/s", mb)
+            }
+        }
 
         const val ACTION_START = "io.github.akarimarisa.tumblrdownloader.action.START_DOWNLOAD"
         const val ACTION_PAUSE = "io.github.akarimarisa.tumblrdownloader.action.PAUSE_DOWNLOAD"
@@ -106,10 +126,10 @@ class DownloadService : Service() {
      */
     private val downloadTargetMap = Collections.synchronizedMap(mutableMapOf<String, Uri>())
 
-    private var activeTaskJob: Job? = null
-    @Volatile
-    private var activeItemId: String? = null
-    private var activeDownloadedBytes = 0L
+    // ── parallel download support ───────────────────────────────────
+    private val concurrencySemaphore = kotlinx.coroutines.sync.Semaphore(getMaxConcurrentDownloads())
+    private val activeJobs = Collections.synchronizedMap(mutableMapOf<String, Job>())
+    private val activeDownloadedBytesMap = Collections.synchronizedMap(mutableMapOf<String, Long>())
     private val client by lazy {
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
@@ -238,8 +258,9 @@ class DownloadService : Service() {
             }
 
             ACTION_CLEAR_ALL -> {
-                // Cancel active download
-                activeTaskJob?.cancel(CancellationException("Cleared by user"))
+                // Cancel all active downloads
+                activeJobs.values.forEach { it.cancel(CancellationException("Cleared by user")) }
+                activeJobs.clear()
                 workerJob?.cancel()
 
                 // Drain the queue channel
@@ -251,6 +272,7 @@ class DownloadService : Service() {
                 removedItemIds.clear()
                 pauseStateMap.clear()
                 downloadTargetMap.clear()
+                activeDownloadedBytesMap.clear()
 
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 notificationManager.cancel(NOTIFICATION_ID)
@@ -259,8 +281,9 @@ class DownloadService : Service() {
             }
 
             ACTION_PAUSE_ALL -> {
-                // Cancel the active download job so the retry loop stops
-                activeTaskJob?.cancel(CancellationException("Paused by user"))
+                // Cancel all active download jobs
+                activeJobs.values.forEach { it.cancel(CancellationException("Paused by user")) }
+                activeJobs.clear()
                 // Drain the queue channel so queued items don't start
                 while (queueChannel.tryReceive().isSuccess) { }
                 return START_STICKY
@@ -283,18 +306,12 @@ class DownloadService : Service() {
         val id = itemId?.trim().orEmpty()
         if (id.isBlank()) return
 
-        // Don't write pauseStateMap here — the in-flight `processWithRetry` has
-        // the real fileUri. Its CancellationException handler is the sole writer.
-        if (activeItemId != id) {
-            suspendedItemIds.add(id)
-            queuedItemIds.remove(id)
-            return
-        }
-
         suspendedItemIds.add(id)
         queuedItemIds.remove(id)
-        if (activeItemId == id) {
-            activeTaskJob?.cancel(CancellationException("Paused by user"))
+        // Cancel the active job if this item is currently downloading
+        val job = activeJobs.remove(id)
+        if (job != null) {
+            job.cancel(CancellationException("Paused by user"))
         }
     }
 
@@ -307,8 +324,10 @@ class DownloadService : Service() {
         queuedItemIds.remove(id)
         pauseStateMap.remove(id)
         downloadTargetMap.remove(id)
-        if (activeItemId == id) {
-            activeTaskJob?.cancel(CancellationException("Removed by user"))
+        // Cancel the active job if this item is currently downloading
+        val job = activeJobs.remove(id)
+        if (job != null) {
+            job.cancel(CancellationException("Removed by user"))
         }
     }
 
@@ -343,8 +362,6 @@ class DownloadService : Service() {
                         continue
                     }
 
-                    // Re-check network after the gap delay — it may have
-                    // dropped while we were waiting.
                     if (!isNetworkConnected()) {
                         emitProgress(item.copy(
                             status = DownloadStatus.PAUSED,
@@ -355,32 +372,20 @@ class DownloadService : Service() {
                     }
                 }
 
-                activeItemId = item.id
-                activeDownloadedBytes = item.downloadedBytes
-                activeTaskJob = serviceScope.launch {
-                    processWithRetry(item)
-                }
-                // FAIL-SAFE: don't let a single stuck download block the queue forever.
-                // If the download job doesn't finish within the timeout, cancel it and
-                // emit a FAILED status so subsequent queued items can proceed.
-                try {
-                    withTimeout(10 * 60_000L) { // 10 minutes max per item
-                        activeTaskJob?.join()
+                // Acquire semaphore permit — blocks if max concurrency reached
+                concurrencySemaphore.acquire()
+                activeDownloadedBytesMap[item.id] = item.downloadedBytes
+                val job = serviceScope.launch {
+                    try {
+                        processWithRetry(item)
+                    } finally {
+                        activeJobs.remove(item.id)
+                        activeDownloadedBytesMap.remove(item.id)
+                        concurrencySemaphore.release()
+                        lastTaskCompletedAtMs = SystemClock.elapsedRealtime()
                     }
-                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                    android.util.Log.w("DownloadSvc", "runQueue: download job timed out for ${item.id}")
-                    activeTaskJob?.cancel(CancellationException("Download timed out"))
-                    activeTaskJob?.join() // wait for cancellation to complete
-                    emitProgress(item.copy(
-                        status = DownloadStatus.FAILED,
-                        progress = 0,
-                        errorMessage = getString(R.string.download_timed_out)
-                    ))
                 }
-
-                activeItemId = null
-                activeTaskJob = null
-                lastTaskCompletedAtMs = SystemClock.elapsedRealtime()
+                activeJobs[item.id] = job
             }
         } finally {
             workerJob = null
@@ -552,9 +557,8 @@ class DownloadService : Service() {
                     mediaUrl = current.mediaUrl,
                     outputStream = output.outputStream,
                     offsetBytes = if (isResume) current.downloadedBytes else 0L
-                ) { totalDownloaded, totalFileBytes ->
+                ) { totalDownloaded, totalFileBytes, speed ->
                     bytesThisSession = totalDownloaded
-                    activeDownloadedBytes = totalDownloaded
                     lastProgress = calcProgress(totalDownloaded, totalFileBytes)
                     val percent = lastProgress
                     emitProgress(
@@ -563,7 +567,8 @@ class DownloadService : Service() {
                             progress = percent,
                             downloadedBytes = totalDownloaded,
                             downloadFileUri = output.uri.toString(),
-                            errorMessage = retryHint(current)
+                            errorMessage = retryHint(current),
+                            speedBytesPerSecond = speed
                         )
                     )
                 }
@@ -697,7 +702,7 @@ class DownloadService : Service() {
         mediaUrl: String,
         outputStream: OutputStream,
         offsetBytes: Long = 0L,
-        onProgress: (downloaded: Long, total: Long) -> Unit
+        onProgress: (downloaded: Long, total: Long, speedBytesPerSecond: Long) -> Unit
     ) {
         val requestBuilder = Request.Builder()
             .url(mediaUrl)
@@ -748,6 +753,9 @@ class DownloadService : Service() {
 
             var downloadedThisRequest = 0L
             val startedAt = SystemClock.elapsedRealtime()
+            // Speed calculation: sliding window of SPEED_WINDOW_MS
+            var windowStartMs = startedAt
+            var windowBytes = 0L
 
             responseBody.byteStream().use { input ->
                 outputStream.use { output ->
@@ -763,7 +771,24 @@ class DownloadService : Service() {
 
                         output.write(buffer, 0, len)
                         downloadedThisRequest += len.toLong()
-                        onProgress(offsetBytes + downloadedThisRequest, totalBytes)
+                        windowBytes += len.toLong()
+
+                        // Calculate speed over the sliding window
+                        val nowMs = SystemClock.elapsedRealtime()
+                        val windowElapsed = nowMs - windowStartMs
+                        val speed = if (windowElapsed >= SPEED_WINDOW_MS) {
+                            val bps = windowBytes * 1000L / windowElapsed
+                            // Reset window
+                            windowStartMs = nowMs
+                            windowBytes = 0L
+                            bps
+                        } else {
+                            // Not enough time elapsed yet; use total time for initial estimate
+                            val totalElapsed = nowMs - startedAt
+                            if (totalElapsed > 0) downloadedThisRequest * 1000L / totalElapsed else 0L
+                        }
+
+                        onProgress(offsetBytes + downloadedThisRequest, totalBytes, speed)
                         enforceRateLimit(downloadedThisRequest, startedAt)
                     }
                 }
@@ -942,9 +967,17 @@ class DownloadService : Service() {
 
     private fun emitProgress(item: DownloadItem) {
         progressListener?.onDownloadUpdate(item)
+        val speedText = if (item.status == DownloadStatus.DOWNLOADING && item.speedBytesPerSecond > 0) {
+            formatSpeed(item.speedBytesPerSecond)
+        } else null
+        val contentText = if (speedText != null && item.progress >= 0) {
+            getString(R.string.download_speed_notification, item.progress, speedText)
+        } else {
+            statusText(item)
+        }
         notificationManager.notify(
             NOTIFICATION_ID,
-            buildNotification(item.title, statusText(item), item.progress, item.errorMessage)
+            buildNotification(item.title, contentText, item.progress, item.errorMessage)
         )
     }
 
@@ -1073,6 +1106,13 @@ class DownloadService : Service() {
                 resolveString(resId)
             }
         }
+    }
+
+    private fun getMaxConcurrentDownloads(): Int {
+        return try {
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getInt(PREF_MAX_CONCURRENT, 1).coerceIn(1, 4)
+        } catch (_: Exception) { 1 }
     }
 
     /**

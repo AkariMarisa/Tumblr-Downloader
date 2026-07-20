@@ -29,6 +29,7 @@ import kotlinx.coroutines.launch
 private const val PREFS_NAME = "tumblr_downloader"
 private const val PREF_CLIPBOARD_AUTO_DETECT = "clipboard_auto_detect"
 private const val PREF_LAST_AUTO_URL = "last_auto_detected_url"
+private const val PREF_MAX_CONCURRENT = "max_concurrent_downloads"
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -109,6 +110,10 @@ class SettingsActivity : AppCompatActivity() {
                 .show()
         }
 
+        // ── Concurrent downloads ──
+        updateConcurrencyDisplay()
+        binding.btnConcurrentDownloads.setOnClickListener { showConcurrencyDialog() }
+
         lifecycleScope.launch {
             viewModel.downloadDirectoryLabel.collect { text ->
                 binding.tvDownloadDirectory.text = getString(R.string.download_directory_display, text)
@@ -168,6 +173,30 @@ class SettingsActivity : AppCompatActivity() {
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
         }
+    }
+
+    // ── Concurrent downloads ───────────────────────────────────────
+
+    private fun updateConcurrencyDisplay() {
+        val current = prefs.getInt(PREF_MAX_CONCURRENT, 1).coerceIn(1, 4)
+        binding.tvConcurrentDownloads.text = getString(R.string.concurrent_downloads_value, current)
+    }
+
+    private fun showConcurrencyDialog() {
+        val current = prefs.getInt(PREF_MAX_CONCURRENT, 1).coerceIn(1, 4)
+        val options = arrayOf(1, 2, 3, 4)
+        val labels = options.map { getString(R.string.concurrent_downloads_value, it) }.toTypedArray()
+        val checkedIndex = options.indexOf(current).coerceAtLeast(0)
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.concurrent_downloads_dialog_title)
+            .setSingleChoiceItems(labels, checkedIndex) { dialog, which ->
+                prefs.edit().putInt(PREF_MAX_CONCURRENT, options[which]).apply()
+                updateConcurrencyDisplay()
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun openDownloadDirectory() {
