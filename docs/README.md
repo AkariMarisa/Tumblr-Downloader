@@ -203,10 +203,10 @@ For private or restricted posts:
   - **Tumblr API v2 + OAuth**: Register app for API credentials, use `/posts/{id}` endpoint with OAuth tokens to fetch post content as JSON.
 
 - [ ] **Drawer avatar: navigate to user settings when logged in**: Currently clicking the avatar only opens the login page. When already logged in, the login page shows the dashboard (confusing). Should open user settings or profile instead.
-- [x] **Parallel downloads**: Currently sequential only (one at a time). Allow configurable parallel downloads (2-3).
+- [ ] **Parallel downloads**: Currently sequential only (one at a time). Allow configurable parallel downloads (2-3).
 - [ ] **Batch download**: Download all media from a blog, tag, or collection of posts.
 - [ ] **Video quality selection**: Let users prefer 480p / 720p / 1080p when multiple renditions exist.
-- [x] **Download speed display**: Show real-time speed (KB/s) in notifications and download list.
+- [ ] **Download speed display**: Show real-time speed (KB/s) in notifications and download list.
 - [ ] **Followed blogs & auto-scan download**: Let users follow Tumblr blogs and configure auto-scan intervals (e.g. hourly / daily). App automatically downloads latest post media. Requires AccessibilityService for persistent background execution (WorkManager as fallback). New tables `followed_blogs`, `scan_config`; `DownloadHistoryEntity` extended with `blogName`/`tags` columns
 - [ ] **Download classification & tag management**: Auto-classify downloads by blog, display original post tags. New `tags`/`download_tags` tables, UI adds blog Tab filter, tag browser, tag search. Shares `blogName` field with auto-scan feature — recommend single DB migration (v1→v2)
 - [ ] **Dark mode**: Follow system theme or allow manual toggle.
@@ -220,7 +220,7 @@ For private or restricted posts:
 - [ ] **MIME type fallback**: For URLs with unknown extensions, send a HEAD request to check `Content-Type` before falling back to `application/octet-stream`.
 - [ ] **Parse diagnostics panel**: Show why parsing returned no results (404 / rate-limited / auth required / no media found).
 - [ ] **Full-link log system**: Local log capture (no Firebase/cloud). Include download flow, parse results, cookie state, and WebView interactions. Exportable log file for user debugging.
-- [x] **Adaptive rate-limit settings**: Configurable speed limit (500 KB/s – 2 MB/s) and inter-task gap.
+- [ ] **Adaptive rate-limit settings**: Configurable speed limit (500 KB/s – 2 MB/s) and inter-task gap.
 - [ ] **Cookie test entry**: Manual cookie paste in Settings for debugging private posts without re-login.
 - [ ] **Refactor `inferExtension`**: The same logic appears in both `DownloadService.kt` and `DownloadStateManager.kt` — extract into a shared utility.
 
