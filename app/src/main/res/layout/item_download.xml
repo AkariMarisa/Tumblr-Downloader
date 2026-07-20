@@ -56,6 +56,15 @@
                 android:layout_height="wrap_content"
                 android:textSize="12sp"
                 tools:text="0%" />
+
+            <TextView
+                android:id="@+id/tvSpeed"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="12sp"
+                android:textColor="@color/gray_500"
+                android:visibility="gone"
+                tools:text="256 KB/s" />
         </LinearLayout>
 
         <LinearLayout

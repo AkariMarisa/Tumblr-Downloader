@@ -191,6 +191,75 @@
                 android:layout_height="24dp"
                 android:background="@android:color/transparent" />
 
+            <!-- ── Category: 下载 / Download ── -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_category_download"
+                style="?attr/textAppearanceTitleSmall"
+                android:textColor="?attr/colorPrimary"
+                android:paddingHorizontal="16dp"
+                android:paddingBottom="4dp" />
+
+            <!-- Card: 下载速度限制 -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="16dp"
+                android:layout_marginTop="8dp"
+                app:cardElevation="1dp"
+                app:cardCornerRadius="12dp"
+                app:strokeWidth="0dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingHorizontal="16dp"
+                    android:paddingVertical="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/pref_rate_limit"
+                            android:textSize="16sp"
+                            android:textColor="?android:attr/textColorPrimary" />
+
+                        <TextView
+                            android:id="+id/tvRateLimitValue"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textSize="13sp"
+                            android:textColor="?android:attr/textColorSecondary"
+                            android:layout_marginTop="2dp"
+                            tools:text="1 MB/s" />
+
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnRateLimit"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/choose"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Spacer between categories -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="24dp"
+                android:background="@android:color/transparent" />
+
             <!-- ── Category: 会话 / Session ── -->
             <TextView
                 android:layout_width="wrap_content"

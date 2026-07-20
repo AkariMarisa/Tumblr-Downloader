@@ -106,6 +106,14 @@ class DownloadsAdapter(
             }
             binding.tvProgress.text = progressText
 
+            // Show speed when actively downloading
+            if (item.status == DownloadStatus.DOWNLOADING && item.speedBytesPerSecond > 0) {
+                binding.tvSpeed.text = io.github.akarimarisa.tumblrdownloader.service.DownloadService.formatSpeed(item.speedBytesPerSecond)
+                binding.tvSpeed.visibility = android.view.View.VISIBLE
+            } else {
+                binding.tvSpeed.visibility = android.view.View.GONE
+            }
+
             val canPause = item.status == DownloadStatus.DOWNLOADING
             val canStart = item.status in setOf(DownloadStatus.QUEUED, DownloadStatus.PAUSED, DownloadStatus.FAILED)
             binding.btnStart.isVisible = canStart

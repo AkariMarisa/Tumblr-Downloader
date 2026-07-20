@@ -68,8 +68,27 @@ class DownloadService : Service() {
         private const val IDLE_TIMEOUT_MS = 5_000L
         private const val MIN_TASK_GAP_MS = 1_000L
         private const val MAX_TASK_GAP_MS = 1_500L
-        private const val MAX_BYTES_PER_SECOND = 1_024L * 1_024L
         private const val RETRY_DELAY_MS = 1_000L
+        /** Number of milliseconds over which the speed is averaged. */
+        private const val SPEED_WINDOW_MS = 1_000L
+
+        /**
+         * Format bytes-per-second into a human-readable speed string.
+         * e.g. 256000 -> "256 KB/s", 1572864 -> "1.5 MB/s"
+         */
+        fun formatSpeed(bytesPerSecond: Long): String {
+            if (bytesPerSecond <= 0) return ""
+            return if (bytesPerSecond < 1024 * 1024) {
+                val kb = bytesPerSecond / 1024.0
+                String.format(Locale.US, "%.1f KB/s", kb)
+            } else {
+                val mb = bytesPerSecond / (1024.0 * 1024.0)
+                String.format(Locale.US, "%.1f MB/s", mb)
+            }
+        }
+        private const val PREFS_NAME = "tumblr_downloader"
+        private const val PREF_RATE_LIMIT = "rate_limit_bytes_per_second"
+        private const val DEFAULT_RATE_LIMIT = 1_048_576L
 
         const val ACTION_START = "io.github.akarimarisa.tumblrdownloader.action.START_DOWNLOAD"
         const val ACTION_PAUSE = "io.github.akarimarisa.tumblrdownloader.action.PAUSE_DOWNLOAD"
@@ -552,7 +571,7 @@ class DownloadService : Service() {
                     mediaUrl = current.mediaUrl,
                     outputStream = output.outputStream,
                     offsetBytes = if (isResume) current.downloadedBytes else 0L
-                ) { totalDownloaded, totalFileBytes ->
+                ) { totalDownloaded, totalFileBytes, speed ->
                     bytesThisSession = totalDownloaded
                     activeDownloadedBytes = totalDownloaded
                     lastProgress = calcProgress(totalDownloaded, totalFileBytes)
@@ -563,7 +582,8 @@ class DownloadService : Service() {
                             progress = percent,
                             downloadedBytes = totalDownloaded,
                             downloadFileUri = output.uri.toString(),
-                            errorMessage = retryHint(current)
+                            errorMessage = retryHint(current),
+                            speedBytesPerSecond = speed
                         )
                     )
                 }
@@ -697,7 +717,7 @@ class DownloadService : Service() {
         mediaUrl: String,
         outputStream: OutputStream,
         offsetBytes: Long = 0L,
-        onProgress: (downloaded: Long, total: Long) -> Unit
+        onProgress: (downloaded: Long, total: Long, speedBytesPerSecond: Long) -> Unit
     ) {
         val requestBuilder = Request.Builder()
             .url(mediaUrl)
@@ -748,6 +768,9 @@ class DownloadService : Service() {
 
             var downloadedThisRequest = 0L
             val startedAt = SystemClock.elapsedRealtime()
+            // Speed calculation: sliding window of SPEED_WINDOW_MS
+            var windowStartMs = startedAt
+            var windowBytes = 0L
 
             responseBody.byteStream().use { input ->
                 outputStream.use { output ->
@@ -763,7 +786,24 @@ class DownloadService : Service() {
 
                         output.write(buffer, 0, len)
                         downloadedThisRequest += len.toLong()
-                        onProgress(offsetBytes + downloadedThisRequest, totalBytes)
+                        windowBytes += len.toLong()
+
+                        // Calculate speed over the sliding window
+                        val nowMs = SystemClock.elapsedRealtime()
+                        val windowElapsed = nowMs - windowStartMs
+                        val speed = if (windowElapsed >= SPEED_WINDOW_MS) {
+                            val bps = windowBytes * 1000L / windowElapsed
+                            // Reset window
+                            windowStartMs = nowMs
+                            windowBytes = 0L
+                            bps
+                        } else {
+                            // Not enough time elapsed yet; use total time for initial estimate
+                            val totalElapsed = nowMs - startedAt
+                            if (totalElapsed > 0) downloadedThisRequest * 1000L / totalElapsed else 0L
+                        }
+
+                        onProgress(offsetBytes + downloadedThisRequest, totalBytes, speed)
                         enforceRateLimit(downloadedThisRequest, startedAt)
                     }
                 }
@@ -772,16 +812,28 @@ class DownloadService : Service() {
     }
 
     private suspend fun enforceRateLimit(downloadedBytesThisSession: Long, startTimeMs: Long) {
+        val maxBytesPerSecond = getMaxBytesPerSecond()
+        if (maxBytesPerSecond <= 0L) return // unlimited
+
         val elapsedMs = SystemClock.elapsedRealtime() - startTimeMs
         if (elapsedMs <= 0) return
 
-        val maxAllowedBytes = MAX_BYTES_PER_SECOND * elapsedMs / 1000L
+        val maxAllowedBytes = maxBytesPerSecond * elapsedMs / 1000L
         if (downloadedBytesThisSession > maxAllowedBytes) {
             val extraBytes = downloadedBytesThisSession - maxAllowedBytes
-            val sleepMs = (extraBytes * 1000L) / MAX_BYTES_PER_SECOND
+            val sleepMs = (extraBytes * 1000L) / maxBytesPerSecond
             if (sleepMs > 0) {
                 delay(sleepMs)
             }
+        }
+    }
+
+    private fun getMaxBytesPerSecond(): Long {
+        return try {
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getLong(PREF_RATE_LIMIT, DEFAULT_RATE_LIMIT)
+        } catch (_: Exception) {
+            DEFAULT_RATE_LIMIT
         }
     }
 
@@ -942,9 +994,17 @@ class DownloadService : Service() {
 
     private fun emitProgress(item: DownloadItem) {
         progressListener?.onDownloadUpdate(item)
+        val speedText = if (item.status == DownloadStatus.DOWNLOADING && item.speedBytesPerSecond > 0) {
+            formatSpeed(item.speedBytesPerSecond)
+        } else null
+        val contentText = if (speedText != null && item.progress >= 0) {
+            getString(R.string.download_speed_notification, item.progress, speedText)
+        } else {
+            statusText(item)
+        }
         notificationManager.notify(
             NOTIFICATION_ID,
-            buildNotification(item.title, statusText(item), item.progress, item.errorMessage)
+            buildNotification(item.title, contentText, item.progress, item.errorMessage)
         )
     }
 

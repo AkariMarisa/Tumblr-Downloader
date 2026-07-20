@@ -29,6 +29,9 @@ import kotlinx.coroutines.launch
 private const val PREFS_NAME = "tumblr_downloader"
 private const val PREF_CLIPBOARD_AUTO_DETECT = "clipboard_auto_detect"
 private const val PREF_LAST_AUTO_URL = "last_auto_detected_url"
+private const val PREF_RATE_LIMIT = "rate_limit_bytes_per_second"
+
+private val RATE_LIMIT_OPTIONS = longArrayOf(0L, 262_144L, 524_288L, 1_048_576L, 2_097_152L, 4_194_304L)
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -109,6 +112,10 @@ class SettingsActivity : AppCompatActivity() {
                 .show()
         }
 
+        // ── Rate limit ──
+        updateRateLimitDisplay()
+        binding.btnRateLimit.setOnClickListener { showRateLimitDialog() }
+
         lifecycleScope.launch {
             viewModel.downloadDirectoryLabel.collect { text ->
                 binding.tvDownloadDirectory.text = getString(R.string.download_directory_display, text)
@@ -168,6 +175,40 @@ class SettingsActivity : AppCompatActivity() {
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
         }
+    }
+
+    // ── Rate limit ───────────────────────────────────────────────
+
+    private fun formatRateLimitLabel(bytesPerSecond: Long): String {
+        if (bytesPerSecond <= 0L) return getString(R.string.rate_limit_unlimited)
+        return when {
+            bytesPerSecond >= 1_048_576L && bytesPerSecond % 1_048_576L == 0L ->
+                "${bytesPerSecond / 1_048_576} MB/s"
+            bytesPerSecond >= 1_024L && bytesPerSecond % 1_024L == 0L ->
+                "${bytesPerSecond / 1_024} KB/s"
+            else -> "${bytesPerSecond} B/s"
+        }
+    }
+
+    private fun updateRateLimitDisplay() {
+        val current = prefs.getLong(PREF_RATE_LIMIT, 1_048_576L)
+        binding.tvRateLimitValue.text = formatRateLimitLabel(current)
+    }
+
+    private fun showRateLimitDialog() {
+        val current = prefs.getLong(PREF_RATE_LIMIT, 1_048_576L)
+        val labels = RATE_LIMIT_OPTIONS.map { formatRateLimitLabel(it) }.toTypedArray()
+        val checkedIndex = RATE_LIMIT_OPTIONS.indexOf(current).coerceAtLeast(0)
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.pref_rate_limit)
+            .setSingleChoiceItems(labels, checkedIndex) { dialog, which ->
+                prefs.edit().putLong(PREF_RATE_LIMIT, RATE_LIMIT_OPTIONS[which]).apply()
+                updateRateLimitDisplay()
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun openDownloadDirectory() {
