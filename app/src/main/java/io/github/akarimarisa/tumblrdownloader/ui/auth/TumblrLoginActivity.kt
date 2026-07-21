@@ -253,6 +253,8 @@ class TumblrLoginActivity : AppCompatActivity() {
             // Sentry error tracking (flagged by EasyPrivacy)
             "sentry-cdn.com",
             "browser.sentry-cdn.com",
+            "sentry.io",
+            "getsentry.com",
             // Tumblr first-party tracking (flagged by EasyPrivacy)
             "px.srvcs.tumblr.com",
         )
