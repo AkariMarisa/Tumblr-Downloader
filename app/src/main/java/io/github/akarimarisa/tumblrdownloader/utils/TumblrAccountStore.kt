@@ -1,6 +1,7 @@
 package io.github.akarimarisa.tumblrdownloader.utils
 
 import android.content.Context
+import io.github.akarimarisa.tumblrdownloader.R
 import okhttp3.Request
 import org.json.JSONObject
 
@@ -112,7 +113,7 @@ object TumblrAccountStore {
         val account = TumblrAccount(
             username = name,
             avatarUrl = avatarUrl ?: "https://api.tumblr.com/v2/blog/${name}/avatar/512",
-            status = "Online",
+            status = context.getString(R.string.status_online),
             isLoggedIn = true
         )
         save(context, account)
@@ -141,7 +142,7 @@ object TumblrAccountStore {
         val account = TumblrAccount(
             username = name,
             avatarUrl = "https://api.tumblr.com/v2/blog/${name}/avatar/512",
-            status = "Online",
+            status = context.getString(R.string.status_online),
             isLoggedIn = true
         )
         save(context, account)

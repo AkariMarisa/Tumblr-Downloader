@@ -7,7 +7,8 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.webkit.CookieManager
-import android.webkit.JavascriptInterface
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
@@ -19,6 +20,7 @@ import io.github.akarimarisa.tumblrdownloader.utils.TumblrAccountStore
 import io.github.akarimarisa.tumblrdownloader.utils.TumblrCookieStore
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.util.Locale
 
 private const val TAG = "TumblrLoginActivity"
@@ -48,11 +50,46 @@ class TumblrLoginActivity : AppCompatActivity() {
         val cookies = CookieManager.getInstance()
         cookies.setAcceptCookie(true)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-            CookieManager.getInstance().setAcceptThirdPartyCookies(binding.webView, true)
+            CookieManager.getInstance().setAcceptThirdPartyCookies(binding.webView, false)
         }
 
         binding.webView.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: WebResourceRequest
+            ): WebResourceResponse? {
+                if (!request.isForMainFrame) {
+                    val url = request.url.toString().lowercase(Locale.ROOT)
+                    val host = request.url.host?.lowercase(Locale.ROOT) ?: return null
+                    
+                    // Block by domain
+                    if (BLOCKED_TRACKER_DOMAINS.any { host == it || host.endsWith(".$it") }) {
+                        Log.d(TAG, "Blocked tracker domain: ${request.url}")
+                        return WebResourceResponse(
+                            "text/plain", "UTF-8",
+                            ByteArrayInputStream(ByteArray(0))
+                        )
+                    }
+                    
+                    // Block Tumblr first-party tracking paths
+                    if (host.endsWith(".tumblr.com") || host == "www.tumblr.com") {
+                        if (BLOCKED_Tumblr_PATHS.any { url.contains(it) }) {
+                            Log.d(TAG, "Blocked tracker path: ${request.url}")
+                            return WebResourceResponse(
+                                "text/plain", "UTF-8",
+                                ByteArrayInputStream(ByteArray(0))
+                            )
+                        }
+                    }
+                }
+                return super.shouldInterceptRequest(view, request)
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
+                // Inject JS to remove any tracker elements that loaded before
+                // shouldInterceptRequest could catch them (e.g. inline scripts).
+                view?.evaluateJavascript(TRACKER_CLEANUP_JS, null)
+
                 if (isLikelyLoggedIn(url)) {
                     Log.i(TAG, "Detected Tumblr logged-in state from URL: $url")
                     view?.evaluateJavascript(
@@ -188,6 +225,81 @@ class TumblrLoginActivity : AppCompatActivity() {
         private const val EXTRA_LOGIN_URL = "extra_login_url"
         const val EXTRA_USERNAME = "extra_username"
         private const val DEFAULT_LOGIN_URL = "https://www.tumblr.com/login"
+
+        /**
+         * Known third-party and first-party tracking domains to block in WebView.
+         * Sourced from Ghostery report and EasyPrivacy filter list.
+         */
+        internal val BLOCKED_TRACKER_DOMAINS: Set<String> = setOf(
+            // Third-party analytics / tracking
+            "www.google-analytics.com",
+            "www.googletagmanager.com",
+            "www.googletagservices.com",
+            "pagead2.googlesyndication.com",
+            "adservice.google.com",
+            "connect.facebook.net",
+            "www.facebook.com",
+            "bat.bing.com",
+            "snap.licdn.com",
+            "analytics.twitter.com",
+            "static.ads-twitter.com",
+            "scorecardresearch.com",
+            "sb.scorecardresearch.com",
+            "doubleclick.net",
+            "www.doubleclick.net",
+            "static.chartbeat.com",
+            "cdn.chartbeat.com",
+            "tags.tiqcdn.com",
+            // Sentry error tracking (flagged by EasyPrivacy)
+            "sentry-cdn.com",
+            "browser.sentry-cdn.com",
+            "sentry.io",
+            "getsentry.com",
+            // Tumblr first-party tracking (flagged by EasyPrivacy)
+            "px.srvcs.tumblr.com",
+        )
+
+        /**
+         * Tumblr first-party tracking paths to block.
+         * These are on tumblr.com domains but serve tracking purposes.
+         */
+        internal val BLOCKED_Tumblr_PATHS = setOf(
+            "/pop/js/modern/sentry-",  // Sentry error tracking
+            "/services/bblog",          // Blog tracking
+            "/impixu",                  // Tracking pixel
+        )
+
+        /**
+         * JavaScript injected after page load to remove tracker DOM elements
+         * that may have been injected by inline scripts before
+         * [shouldInterceptRequest] could intercept them.
+         */
+        internal val TRACKER_CLEANUP_JS = """
+            (function() {
+                try {
+                    var selectors = [
+                        'img[src*="srvcs.tumblr.com"]',
+                        'img[src*="pixel"]',
+                        'img[src*="sentry"]',
+                        'iframe[src*="doubleclick"]',
+                        'iframe[src*="facebook"]',
+                        'iframe[src*="sentry"]',
+                        'script[src*="google-analytics"]',
+                        'script[src*="googletagmanager"]',
+                        'script[src*="scorecardresearch"]',
+                        'script[src*="bat.bing"]',
+                        'script[src*="tiqcdn"]',
+                        'script[src*="sentry-cdn"]',
+                        'script[src*="/services/bblog"]'
+                    ];
+                    selectors.forEach(function(sel) {
+                        document.querySelectorAll(sel).forEach(function(el) {
+                            el.parentNode && el.parentNode.removeChild(el);
+                        });
+                    });
+                } catch(e) {}
+            })();
+        """.trimIndent()
 
         fun newIntent(context: Context, shareUrl: String): Intent {
             return Intent(context, TumblrLoginActivity::class.java).apply {

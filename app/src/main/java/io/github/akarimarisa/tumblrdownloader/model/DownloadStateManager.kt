@@ -1,6 +1,7 @@
 package io.github.akarimarisa.tumblrdownloader.model
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -35,7 +36,15 @@ import kotlinx.coroutines.withContext
 class DownloadStateManager(private val app: Application) {
 
     companion object {
-        private const val MAX_CONCURRENT_DOWNLOADS = 1
+        private const val PREFS_NAME = "tumblr_downloader"
+        private const val PREF_MAX_CONCURRENT = "max_concurrent_downloads"
+    }
+
+    private fun getMaxConcurrentDownloads(): Int {
+        return try {
+            app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getInt(PREF_MAX_CONCURRENT, 1).coerceIn(1, 4)
+        } catch (_: Exception) { 1 }
     }
 
     // ── state ──────────────────────────────────────────────────────────
@@ -308,7 +317,7 @@ class DownloadStateManager(private val app: Application) {
         if (item.status == DownloadStatus.DOWNLOADING || item.status == DownloadStatus.COMPLETED) return
 
         val runningCount = _items.value.count { it.status == DownloadStatus.DOWNLOADING }
-        val canStartNow = runningCount < MAX_CONCURRENT_DOWNLOADS
+        val canStartNow = runningCount < getMaxConcurrentDownloads()
 
         val toStart = item.copy(
             status = if (canStartNow) DownloadStatus.DOWNLOADING else DownloadStatus.QUEUED,
@@ -457,7 +466,7 @@ class DownloadStateManager(private val app: Application) {
 
     private fun startNextIfSlotAvailable() {
         val running = _items.value.count { it.status == DownloadStatus.DOWNLOADING }
-        if (running >= MAX_CONCURRENT_DOWNLOADS) return
+        if (running >= getMaxConcurrentDownloads()) return
 
         // ponytail: FIFO 顺序 — 按 createdAt 升序（最早添加的先下载），
         // 而不是按降序。降序会导致新任务插队，旧任务的剩余图片被延后，
