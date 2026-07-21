@@ -3,7 +3,6 @@ package io.github.akarimarisa.tumblrdownloader.service
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.net.ConnectivityManager
 import androidx.test.core.app.ApplicationProvider
 import io.github.akarimarisa.tumblrdownloader.model.DownloadItem
 import io.github.akarimarisa.tumblrdownloader.model.DownloadStatus
@@ -15,17 +14,18 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.Shadows
 import org.robolectric.annotation.Config
-import org.robolectric.shadows.ShadowConnectivityManager
 
 
 /**
- * Tests for [DownloadService] heartbeat-based network connectivity guard.
+ * Tests for [DownloadService] network connectivity guard.
  *
- * Instead of relying on system network callbacks, the service uses a periodic
- * HEAD-request heartbeat to www.tumblr.com.  Tests manipulate the connectivity
- * flag directly via [DownloadService.setNetworkAvailableForTest].
+ * The service now uses a two-layer connectivity check:
+ * 1. [android.net.ConnectivityManager] as primary (fast, no traffic)
+ * 2. Periodic heartbeat to www.tumblr.com as fallback (VPN edge cases)
+ *
+ * Tests use [DownloadService.setConnectivityManagerConnectedForTest] and
+ * [DownloadService.setNetworkAvailableForTest] to control both layers.
  *
  * Run with: `./gradlew testDebugUnitTest --tests "*DownloadServiceNetworkTest*"`
  */
@@ -35,7 +35,6 @@ class DownloadServiceNetworkTest {
 
     private lateinit var context: Context
     private lateinit var service: DownloadService
-    private lateinit var shadowConnectivityManager: ShadowConnectivityManager
     private val capturedItems = mutableListOf<DownloadItem>()
 
     @Before
@@ -44,9 +43,10 @@ class DownloadServiceNetworkTest {
         capturedItems.clear()
 
         service = Robolectric.buildService(DownloadService::class.java).create().get()
-        shadowConnectivityManager = Shadows.shadowOf(
-            context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        )
+
+        // Default: CM reports connected so heartbeat flag controls the result.
+        // Individual tests override as needed.
+        service.setConnectivityManagerConnectedForTest(true)
 
         // Capture all progress updates in a list so we can assert them.
         DownloadService.progressListener = object : DownloadService.ProgressListener {
@@ -176,6 +176,7 @@ class DownloadServiceNetworkTest {
     @Test
     fun isNetworkConnected_defaultsToTrue() {
         // isNetworkAvailable starts as true; heartbeat hasn't run yet.
+        // CM is set to connected in @Before, so isNetworkConnected() → true.
         val intent = createStartIntent("default-test")
         service.onStartCommand(intent, 0, 1)
 
@@ -185,6 +186,22 @@ class DownloadServiceNetworkTest {
             "cycle doesn't block legitimate downloads",
             paused
         )
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  ConnectivityManager integration
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test
+    fun isNetworkConnected_falseWhenCmDisconnected_evenIfHeartbeatTrue() {
+        service.setConnectivityManagerConnectedForTest(false)
+        service.setNetworkAvailableForTest(true)
+
+        val intent = createStartIntent("cm-off")
+        service.onStartCommand(intent, 0, 1)
+
+        val paused = capturedItems.find { it.id == "cm-off" && it.status == DownloadStatus.PAUSED }
+        assertNotNull("should pause when CM reports no network", paused)
     }
 
     // ═══════════════════════════════════════════════════════════════════

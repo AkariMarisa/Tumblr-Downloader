@@ -7,6 +7,8 @@ import android.app.Service
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -71,6 +73,7 @@ class DownloadService : Service() {
         private const val MAX_TASK_GAP_MS = 1_500L
         private const val MAX_BYTES_PER_SECOND = 1_024L * 1_024L
         private const val RETRY_DELAY_MS = 1_000L
+        private const val HEARTBEAT_INTERVAL_MS = 60_000L
         private const val PREFS_NAME = "tumblr_downloader"
         private const val PREF_MAX_CONCURRENT = "max_concurrent_downloads"
         /** Number of milliseconds over which the speed is averaged. */
@@ -151,11 +154,12 @@ class DownloadService : Service() {
     private var workerJob: Job? = null
     private var lastTaskCompletedAtMs = 0L
 
-    // ── heartbeat connectivity check ─────────────────────────────────
-    // Periodically pings www.tumblr.com to detect actual network reachability.
-    // This is more reliable than ConnectivityManager callbacks, which can
-    // report availability as connected even through VPN when the actual
-    // network path to Tumblr's CDN is broken.
+    // ── network connectivity check ───────────────────────────────────
+    // Primary: ConnectivityManager (standard Android API, no extra traffic).
+    // Fallback: periodic HEAD-request heartbeat to www.tumblr.com (only when
+    // there are active downloads).  This catches edge cases where
+    // ConnectivityManager reports connected but the actual path to Tumblr
+    // is broken (e.g. through VPN).
     private val heartbeatClient by lazy {
         okhttp3.OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
@@ -166,24 +170,35 @@ class DownloadService : Service() {
 
     @Volatile
     private var isNetworkAvailable = true
+    @Volatile
+    private var testConnectivityManagerConnected: Boolean? = null
     private var heartbeatJob: Job? = null
 
     private fun startHeartbeat() {
         heartbeatJob?.cancel()
         heartbeatJob = serviceScope.launch {
             while (isActive) {
-                isNetworkAvailable = try {
-                    val req = okhttp3.Request.Builder()
-                        .url("https://www.tumblr.com/")
-                        .head()
-                        .build()
-                    heartbeatClient.newCall(req).execute().use { response ->
-                        response.isSuccessful
-                    }
-                } catch (_: Exception) {
-                    false
+                // Always check ConnectivityManager (cheap, no network traffic).
+                // Only ping Tumblr when there are active downloads — no need
+                // to maintain a heartbeat when the service is idle.
+                if (activeJobs.isNotEmpty()) {
+                    isNetworkAvailable = isConnectivityManagerConnected() ||
+                        try {
+                            val req = okhttp3.Request.Builder()
+                                .url("https://www.tumblr.com/")
+                                .head()
+                                .build()
+                            heartbeatClient.newCall(req).execute().use { response ->
+                                response.isSuccessful
+                            }
+                        } catch (_: Exception) {
+                            false
+                        }
                 }
-                delay(15_000L)
+                // When idle, don't overwrite isNetworkAvailable — let it
+                // retain its last value.  The CM check in isNetworkConnected()
+                // handles the airplane-mode case immediately.
+                delay(HEARTBEAT_INTERVAL_MS)
             }
         }
     }
@@ -191,6 +206,42 @@ class DownloadService : Service() {
     private fun stopHeartbeat() {
         heartbeatJob?.cancel()
         heartbeatJob = null
+    }
+
+    /**
+     * Check connectivity via [ConnectivityManager].
+     * Returns `true` if the device has a network with internet capability.
+     * In tests, returns the value set by [setConnectivityManagerConnectedForTest].
+     */
+    private fun isConnectivityManagerConnected(): Boolean {
+        testConnectivityManagerConnected?.let { return it }
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return true
+        val network = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(network) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    /**
+     * Immediate connectivity probe — checks CM and, if connected, pings
+     * Tumblr once to update [isNetworkAvailable].  Called from the download
+     * retry path so that a network failure is detected within seconds
+     * instead of waiting for the next heartbeat cycle.
+     */
+    private fun probeNetworkNow() {
+        if (!isConnectivityManagerConnected()) {
+            isNetworkAvailable = false
+            return
+        }
+        isNetworkAvailable = try {
+            val req = okhttp3.Request.Builder()
+                .url("https://www.tumblr.com/")
+                .head()
+                .build()
+            heartbeatClient.newCall(req).execute().use { it.isSuccessful }
+        } catch (_: Exception) {
+            false
+        }
     }
 
     override fun attachBaseContext(base: Context) {
@@ -648,6 +699,28 @@ class DownloadService : Service() {
                         return
                     }
                     continue
+                }
+
+                // Immediate network check: probe CM + Tumblr now instead
+                // of waiting for the next heartbeat cycle.
+                probeNetworkNow()
+                if (!isNetworkConnected()) {
+                    val uri = downloadTargetMap[current.id]?.toString() ?: current.downloadFileUri
+                    val savedBytes = bytesThisSession.coerceAtLeast(current.downloadedBytes)
+                    if (uri != null && savedBytes > 0L) {
+                        pauseStateMap[current.id] = PauseState(
+                            fileUri = uri,
+                            downloadedBytes = savedBytes
+                        )
+                    }
+                    emitProgress(current.copy(
+                        status = DownloadStatus.PAUSED,
+                        progress = lastProgress,
+                        downloadedBytes = savedBytes,
+                        downloadFileUri = uri,
+                        errorMessage = getNetworkWaitingString()
+                    ))
+                    return
                 }
 
                 if (current.retryCount >= current.maxRetries) {
@@ -1125,15 +1198,25 @@ class DownloadService : Service() {
     }
 
     /**
-     * Check connectivity based on the heartbeat probe result.
-     * Falls back to [isNetworkAvailable] (initialised to `true` so that
-     * the first heartbeat cycle doesn't prevent legitimate downloads).
+     * Check connectivity: if [ConnectivityManager] says no network at all,
+     * return false immediately.  Otherwise trust the heartbeat flag which
+     * detects actual reachability to Tumblr (critical for VPN edge cases
+     * where CM reports connected but the real path is broken).
      */
-    private fun isNetworkConnected(): Boolean = isNetworkAvailable
+    private fun isNetworkConnected(): Boolean {
+        if (!isConnectivityManagerConnected()) return false
+        return isNetworkAvailable
+    }
 
-    /** Test-only hook to simulate connectivity loss/gain. */
+    /** Test-only hook to simulate connectivity loss/gain via heartbeat. */
     @VisibleForTesting
     internal fun setNetworkAvailableForTest(available: Boolean) {
         isNetworkAvailable = available
+    }
+
+    /** Test-only hook to simulate ConnectivityManager state. */
+    @VisibleForTesting
+    internal fun setConnectivityManagerConnectedForTest(connected: Boolean) {
+        testConnectivityManagerConnected = connected
     }
 }
