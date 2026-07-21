@@ -59,13 +59,27 @@ class TumblrLoginActivity : AppCompatActivity() {
                 request: WebResourceRequest
             ): WebResourceResponse? {
                 if (!request.isForMainFrame) {
+                    val url = request.url.toString().lowercase(Locale.ROOT)
                     val host = request.url.host?.lowercase(Locale.ROOT) ?: return null
+                    
+                    // Block by domain
                     if (BLOCKED_TRACKER_DOMAINS.any { host == it || host.endsWith(".$it") }) {
-                        Log.d(TAG, "Blocked tracker: ${request.url}")
+                        Log.d(TAG, "Blocked tracker domain: ${request.url}")
                         return WebResourceResponse(
                             "text/plain", "UTF-8",
                             ByteArrayInputStream(ByteArray(0))
                         )
+                    }
+                    
+                    // Block Tumblr first-party tracking paths
+                    if (host.endsWith(".tumblr.com") || host == "www.tumblr.com") {
+                        if (BLOCKED_Tumblr_PATHS.any { url.contains(it) }) {
+                            Log.d(TAG, "Blocked tracker path: ${request.url}")
+                            return WebResourceResponse(
+                                "text/plain", "UTF-8",
+                                ByteArrayInputStream(ByteArray(0))
+                            )
+                        }
                     }
                 }
                 return super.shouldInterceptRequest(view, request)
@@ -236,8 +250,21 @@ class TumblrLoginActivity : AppCompatActivity() {
             "static.chartbeat.com",
             "cdn.chartbeat.com",
             "tags.tiqcdn.com",
+            // Sentry error tracking (flagged by EasyPrivacy)
+            "sentry-cdn.com",
+            "browser.sentry-cdn.com",
             // Tumblr first-party tracking (flagged by EasyPrivacy)
             "px.srvcs.tumblr.com",
+        )
+
+        /**
+         * Tumblr first-party tracking paths to block.
+         * These are on tumblr.com domains but serve tracking purposes.
+         */
+        internal val BLOCKED_Tumblr_PATHS = setOf(
+            "/pop/js/modern/sentry-",  // Sentry error tracking
+            "/services/bblog",          // Blog tracking
+            "/impixu",                  // Tracking pixel
         )
 
         /**
@@ -251,13 +278,17 @@ class TumblrLoginActivity : AppCompatActivity() {
                     var selectors = [
                         'img[src*="srvcs.tumblr.com"]',
                         'img[src*="pixel"]',
+                        'img[src*="sentry"]',
                         'iframe[src*="doubleclick"]',
                         'iframe[src*="facebook"]',
+                        'iframe[src*="sentry"]',
                         'script[src*="google-analytics"]',
                         'script[src*="googletagmanager"]',
                         'script[src*="scorecardresearch"]',
                         'script[src*="bat.bing"]',
-                        'script[src*="tiqcdn"]'
+                        'script[src*="tiqcdn"]',
+                        'script[src*="sentry-cdn"]',
+                        'script[src*="/services/bblog"]'
                     ];
                     selectors.forEach(function(sel) {
                         document.querySelectorAll(sel).forEach(function(el) {
