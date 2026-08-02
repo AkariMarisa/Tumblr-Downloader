@@ -3,6 +3,8 @@ package io.github.akarimarisa.tumblrdownloader.utils
 import android.net.Uri
 import android.util.Log
 import android.webkit.CookieManager
+import io.github.akarimarisa.tumblrdownloader.model.MediaQualitySelector
+import io.github.akarimarisa.tumblrdownloader.model.MediaQualitySettings
 import io.github.akarimarisa.tumblrdownloader.model.MediaType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -116,7 +118,10 @@ object TumblrParser {
     /**
      * Parse a Tumblr share URL and try to extract concrete media links.
      */
-    suspend fun parseShareUrl(rawUrl: String): TumblrShareParseResult = withContext(Dispatchers.IO) {
+    suspend fun parseShareUrl(
+        rawUrl: String,
+        quality: MediaQualitySettings = MediaQualitySettings()
+    ): TumblrShareParseResult = withContext(Dispatchers.IO) {
         val normalizedUrl = normalizeShareUrl(rawUrl)
         if (!isTumblrShareUrl(normalizedUrl)) {
             return@withContext TumblrShareParseResult.Error("Not a valid Tumblr share link")
@@ -130,7 +135,7 @@ object TumblrParser {
             )
         }
 
-        when (val oembedParsed = parseWithOEmbed(normalizedUrl)) {
+        when (val oembedParsed = parseWithOEmbed(normalizedUrl, quality)) {
             is TumblrShareParseResult.Success -> {
                 if (oembedParsed.media.isNotEmpty()) return@withContext oembedParsed
             }
@@ -146,7 +151,7 @@ object TumblrParser {
             else -> Unit
         }
 
-        return@withContext when (val htmlParsed = parseWithPageHtml(normalizedUrl)) {
+        return@withContext when (val htmlParsed = parseWithPageHtml(normalizedUrl, quality)) {
             is TumblrShareParseResult.Success -> {
                 if (htmlParsed.media.isNotEmpty()) htmlParsed else {
                     TumblrShareParseResult.Empty("No downloadable media found")
@@ -159,7 +164,10 @@ object TumblrParser {
         }
     }
 
-    private suspend fun parseWithOEmbed(postUrl: String): TumblrShareParseResult {
+    private suspend fun parseWithOEmbed(
+        postUrl: String,
+        quality: MediaQualitySettings
+    ): TumblrShareParseResult {
         val endpoint = "https://www.tumblr.com/oembed/1.0?url=${Uri.encode(postUrl)}&omit_script=1"
         return runCatching {
             val response = httpGet(endpoint)
@@ -180,7 +188,7 @@ object TumblrParser {
                             message = "oEmbed returned HTML or empty response — login may be required."
                         )
                     } else {
-                        parseOEmbedBody(response.body, postUrl)
+                        parseOEmbedBody(response.body, postUrl, quality)
                     }
                 }
                 in 300..399 -> TumblrShareParseResult.Error("oEmbed redirect error (${response.code})")
@@ -192,7 +200,11 @@ object TumblrParser {
         }
     }
 
-    private suspend fun parseOEmbedBody(body: String, postUrl: String): TumblrShareParseResult {
+    private suspend fun parseOEmbedBody(
+        body: String,
+        postUrl: String,
+        quality: MediaQualitySettings
+    ): TumblrShareParseResult {
         return runCatching {
             val json = JSONObject(body)
             val type = json.optString("type").lowercase(Locale.ROOT)
@@ -200,13 +212,13 @@ object TumblrParser {
             val html = json.optString("html")
 
             val urls = when (type) {
-                "photo", "image" -> extractFromHtml(html)
-                "video" -> extractFromHtml(html, preferVideo = true)
+                "photo", "image" -> extractFromHtml(html, quality = quality)
+                "video" -> extractFromHtml(html, preferVideo = true, quality = quality)
                 "rich" -> {
-                    val embedded = parseEmbedPost(html)
-                    if (embedded.isNotEmpty()) embedded else extractFromHtml(html)
+                    val embedded = parseEmbedPost(html, quality)
+                    if (embedded.isNotEmpty()) embedded else extractFromHtml(html, quality = quality)
                 }
-                else -> extractFromHtml(html)
+                else -> extractFromHtml(html, quality = quality)
             }
 
             if (urls.isEmpty()) {
@@ -229,13 +241,13 @@ object TumblrParser {
         }
     }
 
-    private suspend fun parseEmbedPost(html: String): List<String> {
+    private suspend fun parseEmbedPost(html: String, quality: MediaQualitySettings): List<String> {
         val embedUrl = extractEmbedUrl(html).takeIf { it.isNotBlank() } ?: return emptyList()
         val response = httpGet(embedUrl)
         if (response.code !in 200..299) return emptyList()
 
-        return extractFromHtml(response.body, structuredOnly = true).ifEmpty {
-            extractFromHtml(response.body)
+        return extractFromHtml(response.body, structuredOnly = true, quality = quality).ifEmpty {
+            extractFromHtml(response.body, quality = quality)
         }
     }
 
@@ -247,7 +259,10 @@ object TumblrParser {
             .orEmpty()
     }
 
-    private suspend fun parseWithPageHtml(postUrl: String): TumblrShareParseResult {
+    private suspend fun parseWithPageHtml(
+        postUrl: String,
+        quality: MediaQualitySettings
+    ): TumblrShareParseResult {
         return runCatching {
             val response = httpGet(postUrl)
             if (response.code in 200..299) {
@@ -261,11 +276,11 @@ object TumblrParser {
                 val html = response.body
                 val source = normalizeShareUrl(postUrl)
                 val candidates = run {
-                    val structured = extractFromHtml(html, structuredOnly = true)
+                    val structured = extractFromHtml(html, structuredOnly = true, quality = quality)
                     if (structured.isNotEmpty()) {
                         structured
                     } else {
-                        extractFromHtml(html)
+                        extractFromHtml(html, quality = quality)
                     }
                 }
 
@@ -282,7 +297,7 @@ object TumblrParser {
                     // confirmation.
                     val relaxedCandidates = extractFromJsonRelaxed(html)
                         .filter { isLikelyPostMedia(it) }
-                        .let { dedupeAndNormalize(it) }
+                        .let { dedupeAndNormalize(it, quality) }
                     if (relaxedCandidates.isNotEmpty()) {
                         val media = relaxedCandidates.mapIndexed { index, mediaUrl ->
                             ParsedTumblrMedia(
@@ -330,7 +345,12 @@ object TumblrParser {
         }
     }
 
-    private fun extractFromHtml(html: String, preferVideo: Boolean = false, structuredOnly: Boolean = false): List<String> {
+    private fun extractFromHtml(
+        html: String,
+        preferVideo: Boolean = false,
+        structuredOnly: Boolean = false,
+        quality: MediaQualitySettings = MediaQualitySettings()
+    ): List<String> {
         val candidates = buildList {
             addAll(extractFromInitialState(html))
             addAll(extractFromJsonScripts(html))
@@ -353,7 +373,8 @@ object TumblrParser {
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
                 .filter { isLikelyPostMedia(it) }
-                .distinct()
+                .distinct(),
+            quality
         )
     }
 
@@ -650,24 +671,59 @@ object TumblrParser {
         }
     }
 
-    private fun dedupeAndNormalize(urls: List<String>): List<String> {
-        val keepLatestByIdentity = LinkedHashMap<String, String>()
-        val keepScores = HashMap<String, Int>()
-
+    private fun dedupeAndNormalize(
+        urls: List<String>,
+        quality: MediaQualitySettings = MediaQualitySettings()
+    ): List<String> {
+        // Group candidates by identity — renditions of the same media (e.g.
+        // s500x500 vs s1280x1920 of one photo) share a normalized identity,
+        // so we can pick the best file for the configured quality tier.
+        val groupedByIdentity = LinkedHashMap<String, MutableList<String>>()
         urls.forEach { url ->
             val identity = DownloadUtils.normalizeMediaIdentity(url)
-            val score = mediaPreferenceScore(url)
-            val existingScore = keepScores[identity]
+            groupedByIdentity.getOrPut(identity) { mutableListOf() }.add(url)
+        }
 
-            if (existingScore == null || score > existingScore) {
-                keepLatestByIdentity[identity] = url
-                keepScores[identity] = score
+        return groupedByIdentity.values.map { candidates ->
+            if (candidates.size <= 1) {
+                candidates.first()
+            } else {
+                selectBestForQuality(candidates, quality)
+            }
+        }
+    }
+
+    /**
+     * Pick the rendition that best matches the configured quality tier.
+     *
+     * For the "unlimited" tiers (original / best) this preserves the
+     * historical behavior of keeping the highest-scoring URL.  For bounded
+     * tiers it delegates to [MediaQualitySelector.selectBestUrl] which picks
+     * the best file within the tier's resolution range, falling back to the
+     * closest available rendition when the post has nothing in range.
+     */
+    private fun selectBestForQuality(
+        candidates: List<String>,
+        quality: MediaQualitySettings
+    ): String {
+        val type = guessType(candidates.first())
+        val (lo, hi, unlimited) = when (type) {
+            MediaType.VIDEO -> {
+                val tier = quality.videoTier
+                Triple(tier.minHeight, tier.maxHeight, tier.isUnlimited)
+            }
+            else -> {
+                val tier = quality.imageTier
+                Triple(tier.minEdge, tier.maxEdge, tier.isUnlimited)
             }
         }
 
-        val list = keepLatestByIdentity.values.toList()
+        if (unlimited) {
+            return candidates.maxByOrNull { mediaPreferenceScore(it) } ?: candidates.first()
+        }
 
-        return list
+        return MediaQualitySelector.selectBestUrl(candidates, type, lo, hi)
+            ?: candidates.maxByOrNull { mediaPreferenceScore(it) } ?: candidates.first()
     }
 
     private fun mediaPreferenceScore(url: String): Int {
