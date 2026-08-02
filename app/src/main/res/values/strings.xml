@@ -88,6 +88,7 @@
     <string name="download_completed_notification">Download completed</string>
     <string name="download_timed_out">Download timed out after 10 minutes, please try again</string>
     <string name="download_waiting_network">Waiting for network…</string>
+    <string name="download_speed_notification">%1$d%% — %2$s</string>
 
     <!-- Parser / state messages -->
     <string name="parse_error_generic">Parse failed: %1$s</string>
@@ -111,7 +112,24 @@
     <!-- Settings categories -->
     <string name="settings_category_system">System</string>
     <string name="settings_category_session">Session</string>
+    <string name="settings_category_download">Download</string>
     <string name="download_directory_title">Download directory</string>
+    <string name="pref_max_concurrent_downloads">Max concurrent downloads</string>
+    <string name="concurrent_downloads_value">%1$d tasks</string>
+    <string name="concurrent_downloads_dialog_title">Max concurrent downloads</string>
+    <string name="pref_image_quality">Image quality</string>
+    <string name="image_quality_dialog_title">Image quality</string>
+    <string name="image_quality_original">Original (best)</string>
+    <string name="image_quality_high">High (≥1280 px)</string>
+    <string name="image_quality_standard">Standard (500–1280 px)</string>
+    <string name="image_quality_low">Low (&lt;500 px)</string>
+    <string name="pref_video_quality">Video quality</string>
+    <string name="video_quality_dialog_title">Video quality</string>
+    <string name="video_quality_best">Best available</string>
+    <string name="video_quality_1080p">1080p</string>
+    <string name="video_quality_720p">720p</string>
+    <string name="video_quality_480p">480p</string>
+    <string name="quality_tier_note">The actual resolution depends on what the post offers — if the post only has a lower-resolution file, the closest available version will be downloaded.</string>
 
     <!-- Language / settings -->
     <string name="settings_language">Language</string>
