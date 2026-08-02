@@ -111,8 +111,8 @@
 
     <!-- Settings categories -->
     <string name="settings_category_system">系统</string>
-    <string name="settings_category_session">会话</string>
     <string name="settings_category_download">下载</string>
+    <string name="settings_category_session">会话</string>
     <string name="download_directory_title">下载目录</string>
     <string name="pref_max_concurrent_downloads">最大并行下载数</string>
     <string name="concurrent_downloads_value">%1$d 个任务</string>
@@ -146,4 +146,9 @@
     <string name="pref_clear_cache">清空自动检测缓存</string>
     <string name="pref_clear_cache_dialog">这将清除所有已自动检测过的 URL 记录，同一链接可以重新被检测。</string>
     <string name="cache_cleared_toast">自动检测缓存已清空</string>
+
+    <!-- Rate limit -->
+    <string name="pref_rate_limit">下载速度限制</string>
+    <string name="rate_limit_unlimited">不限速</string>
+    <string name="rate_limit_value">%1$s</string>
 </resources>

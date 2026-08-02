@@ -71,11 +71,12 @@ class DownloadService : Service() {
         private const val IDLE_TIMEOUT_MS = 5_000L
         private const val MIN_TASK_GAP_MS = 1_000L
         private const val MAX_TASK_GAP_MS = 1_500L
-        private const val MAX_BYTES_PER_SECOND = 1_024L * 1_024L
         private const val RETRY_DELAY_MS = 1_000L
         private const val HEARTBEAT_INTERVAL_MS = 60_000L
         private const val PREFS_NAME = "tumblr_downloader"
         private const val PREF_MAX_CONCURRENT = "max_concurrent_downloads"
+        private const val PREF_RATE_LIMIT = "rate_limit_bytes_per_second"
+        private const val DEFAULT_RATE_LIMIT = 1_048_576L
         /** Number of milliseconds over which the speed is averaged. */
         private const val SPEED_WINDOW_MS = 1_000L
 
@@ -879,16 +880,28 @@ class DownloadService : Service() {
     }
 
     private suspend fun enforceRateLimit(downloadedBytesThisSession: Long, startTimeMs: Long) {
+        val maxBytesPerSecond = getMaxBytesPerSecond()
+        if (maxBytesPerSecond <= 0L) return // unlimited
+
         val elapsedMs = SystemClock.elapsedRealtime() - startTimeMs
         if (elapsedMs <= 0) return
 
-        val maxAllowedBytes = MAX_BYTES_PER_SECOND * elapsedMs / 1000L
+        val maxAllowedBytes = maxBytesPerSecond * elapsedMs / 1000L
         if (downloadedBytesThisSession > maxAllowedBytes) {
             val extraBytes = downloadedBytesThisSession - maxAllowedBytes
-            val sleepMs = (extraBytes * 1000L) / MAX_BYTES_PER_SECOND
+            val sleepMs = (extraBytes * 1000L) / maxBytesPerSecond
             if (sleepMs > 0) {
                 delay(sleepMs)
             }
+        }
+    }
+
+    private fun getMaxBytesPerSecond(): Long {
+        return try {
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getLong(PREF_RATE_LIMIT, DEFAULT_RATE_LIMIT)
+        } catch (_: Exception) {
+            DEFAULT_RATE_LIMIT
         }
     }
 
