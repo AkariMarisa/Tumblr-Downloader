@@ -206,7 +206,7 @@ For private or restricted posts:
 - [x] **Parallel downloads**: Currently sequential only (one at a time). Allow configurable parallel downloads (2-3).
 - [ ] **Batch download**: Download all media from a blog, tag, or collection of posts.
 - [x] **Video quality selection**: Let users prefer 480p / 720p / 1080p when multiple renditions exist.
-- [ ] **Download speed display**: Show real-time speed (KB/s) in notifications and download list.
+- [x] **Download speed display**: Show real-time speed (KB/s) in notifications and download list.
 - [ ] **Followed blogs & auto-scan download**: Let users follow Tumblr blogs and configure auto-scan intervals (e.g. hourly / daily). App automatically downloads latest post media. Requires AccessibilityService for persistent background execution (WorkManager as fallback). New tables `followed_blogs`, `scan_config`; `DownloadHistoryEntity` extended with `blogName`/`tags` columns
 - [ ] **Download classification & tag management**: Auto-classify downloads by blog, display original post tags. New `tags`/`download_tags` tables, UI adds blog Tab filter, tag browser, tag search. Shares `blogName` field with auto-scan feature — recommend single DB migration (v1→v2)
 - [ ] **Dark mode**: Follow system theme or allow manual toggle.
