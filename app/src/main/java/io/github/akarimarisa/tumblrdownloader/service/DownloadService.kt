@@ -3,6 +3,7 @@ package io.github.akarimarisa.tumblrdownloader.service
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.ContentValues
 import android.content.Context
@@ -288,7 +289,7 @@ class DownloadService : Service() {
                 }
 
                 try {
-                    startForeground(NOTIFICATION_ID, buildNotification(resumedItem.title, getString(R.string.status_queued), 0, null))
+                    startForeground(NOTIFICATION_ID, buildNotification(resumedItem, resumedItem.title, getString(R.string.status_queued), 0, null))
                 } catch (e: Exception) {
                     android.util.Log.w("DownloadSvc", "startForeground failed: ${e.message}")
                     // On some ROMs (MIUI, ColorOS, etc.) startForeground may be
@@ -1072,7 +1073,7 @@ class DownloadService : Service() {
         }
         notificationManager.notify(
             NOTIFICATION_ID,
-            buildNotification(item.title, contentText, item.progress, item.errorMessage)
+            buildNotification(item, item.title, contentText, item.progress, item.errorMessage)
         )
     }
 
@@ -1108,20 +1109,86 @@ class DownloadService : Service() {
         }
     }
 
-    private fun buildNotification(
+    internal fun buildNotification(
+        item: DownloadItem?,
         title: String,
         content: String,
         progress: Int,
         errorMessage: String?
     ): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(if (errorMessage == null) content else "$content - $errorMessage")
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setProgress(100, progress.coerceIn(0, 100), progress < 0)
             .setAutoCancel(false)
             .setOngoing(true)
-            .build()
+
+        // ponytail: 通知栏操作按钮（暂停/恢复/取消）。
+        // 仅对未完成的任务显示；完成/失败后通知会消失，无需按钮。
+        if (item != null && item.status != DownloadStatus.COMPLETED) {
+            when (item.status) {
+                DownloadStatus.PAUSED -> {
+                    builder.addAction(0, resolveString(R.string.action_resume), resumePendingIntent(item))
+                    builder.addAction(0, resolveString(R.string.action_cancel), removePendingIntent(item))
+                }
+                else -> {
+                    // DOWNLOADING / QUEUED / FAILED
+                    builder.addAction(0, resolveString(R.string.action_pause), pausePendingIntent(item))
+                    builder.addAction(0, resolveString(R.string.action_cancel), removePendingIntent(item))
+                }
+            }
+        }
+
+        return builder.build()
+    }
+
+    private fun pausePendingIntent(item: DownloadItem): PendingIntent {
+        val intent = Intent(this, DownloadService::class.java).apply {
+            action = ACTION_PAUSE
+            putExtra(EXTRA_ITEM_ID, item.id)
+        }
+        return wrapPendingIntent(intent, item.id.hashCode())
+    }
+
+    private fun removePendingIntent(item: DownloadItem): PendingIntent {
+        val intent = Intent(this, DownloadService::class.java).apply {
+            action = ACTION_REMOVE
+            putExtra(EXTRA_ITEM_ID, item.id)
+        }
+        return wrapPendingIntent(intent, item.id.hashCode() xor 0x1f)
+    }
+
+    private fun resumePendingIntent(item: DownloadItem): PendingIntent {
+        // 恢复 = 重新发送 ACTION_START（与 DownloadStateManager 的
+        // sendStartIntent 一致，service 会从 pauseStateMap 恢复断点）。
+        val intent = Intent(this, DownloadService::class.java).apply {
+            action = ACTION_START
+            putExtra(EXTRA_ITEM_ID, item.id)
+            putExtra(EXTRA_SOURCE_URL, item.sourceUrl)
+            putExtra(EXTRA_MEDIA_URL, item.mediaUrl)
+            putExtra(EXTRA_TYPE, item.type.name)
+            putExtra(EXTRA_TITLE, item.title)
+            putExtra(EXTRA_RETRY_COUNT, item.retryCount)
+            putExtra(EXTRA_MAX_RETRIES, item.maxRetries)
+            if (item.downloadedBytes > 0L) {
+                putExtra(EXTRA_DOWNLOADED_BYTES, item.downloadedBytes)
+            }
+            if (!item.downloadFileUri.isNullOrBlank()) {
+                putExtra(EXTRA_FILE_URI, item.downloadFileUri)
+            }
+        }
+        return wrapPendingIntent(intent, item.id.hashCode() xor 0x3e)
+    }
+
+    private fun wrapPendingIntent(intent: Intent, requestCode: Int): PendingIntent {
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            PendingIntent.getForegroundService(this, requestCode, intent, flags)
+        } else {
+            PendingIntent.getService(this, requestCode, intent, flags)
+        }
     }
 
     private fun parseIntent(intent: Intent?): DownloadItem? {

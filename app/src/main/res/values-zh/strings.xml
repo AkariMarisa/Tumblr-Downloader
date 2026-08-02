@@ -53,6 +53,9 @@
     <string name="clear_all_downloads">清空已完成下载</string>
     <string name="pause_all">全部暂停</string>
     <string name="resume_all">全部开始</string>
+    <string name="action_pause">暂停</string>
+    <string name="action_resume">继续</string>
+    <string name="action_cancel">取消</string>
 
     <string name="clear_all_confirm_message">已完成的项目将被清出列表，暂停、失败和排队中的项目会保留不动。</string>
     <string name="remove_confirm_message">从列表中移除该项？已经下载好的文件不会被删除，放心～</string>
