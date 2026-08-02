@@ -20,6 +20,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import io.github.akarimarisa.tumblrdownloader.R
 import io.github.akarimarisa.tumblrdownloader.databinding.ActivitySettingsBinding
+import io.github.akarimarisa.tumblrdownloader.model.ImageQualityTier
+import io.github.akarimarisa.tumblrdownloader.model.MediaQualityPrefs
+import io.github.akarimarisa.tumblrdownloader.model.VideoQualityTier
 import io.github.akarimarisa.tumblrdownloader.ui.MainActivity
 import io.github.akarimarisa.tumblrdownloader.ui.MainViewModel
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadUtils
@@ -29,6 +32,7 @@ import kotlinx.coroutines.launch
 private const val PREFS_NAME = "tumblr_downloader"
 private const val PREF_CLIPBOARD_AUTO_DETECT = "clipboard_auto_detect"
 private const val PREF_LAST_AUTO_URL = "last_auto_detected_url"
+private const val PREF_MAX_CONCURRENT = "max_concurrent_downloads"
 private const val PREF_RATE_LIMIT = "rate_limit_bytes_per_second"
 
 private val RATE_LIMIT_OPTIONS = longArrayOf(0L, 262_144L, 524_288L, 1_048_576L, 2_097_152L, 4_194_304L)
@@ -115,6 +119,16 @@ class SettingsActivity : AppCompatActivity() {
         // ── Rate limit ──
         updateRateLimitDisplay()
         binding.btnRateLimit.setOnClickListener { showRateLimitDialog() }
+
+        // ── Concurrent downloads ──
+        updateConcurrencyDisplay()
+        binding.btnConcurrentDownloads.setOnClickListener { showConcurrencyDialog() }
+
+        // ── Media quality tiers ──
+        updateImageQualityDisplay()
+        updateVideoQualityDisplay()
+        binding.btnImageQuality.setOnClickListener { showImageQualityDialog() }
+        binding.btnVideoQuality.setOnClickListener { showVideoQualityDialog() }
 
         lifecycleScope.launch {
             viewModel.downloadDirectoryLabel.collect { text ->
@@ -205,6 +219,76 @@ class SettingsActivity : AppCompatActivity() {
             .setSingleChoiceItems(labels, checkedIndex) { dialog, which ->
                 prefs.edit().putLong(PREF_RATE_LIMIT, RATE_LIMIT_OPTIONS[which]).apply()
                 updateRateLimitDisplay()
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    // ── Concurrent downloads ───────────────────────────────────────
+
+    private fun updateConcurrencyDisplay() {
+        val current = prefs.getInt(PREF_MAX_CONCURRENT, 1).coerceIn(1, 4)
+        binding.tvConcurrentDownloads.text = getString(R.string.concurrent_downloads_value, current)
+    }
+
+    private fun showConcurrencyDialog() {
+        val current = prefs.getInt(PREF_MAX_CONCURRENT, 1).coerceIn(1, 4)
+        val options = arrayOf(1, 2, 3, 4)
+        val labels = options.map { getString(R.string.concurrent_downloads_value, it) }.toTypedArray()
+        val checkedIndex = options.indexOf(current).coerceAtLeast(0)
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.concurrent_downloads_dialog_title)
+            .setSingleChoiceItems(labels, checkedIndex) { dialog, which ->
+                prefs.edit().putInt(PREF_MAX_CONCURRENT, options[which]).apply()
+                updateConcurrencyDisplay()
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    // ── Media quality tiers ────────────────────────────────────────
+
+    private fun updateImageQualityDisplay() {
+        val tier = MediaQualityPrefs.read(this).imageTier
+        binding.tvImageQuality.text = getString(tier.labelRes)
+    }
+
+    private fun updateVideoQualityDisplay() {
+        val tier = MediaQualityPrefs.read(this).videoTier
+        binding.tvVideoQuality.text = getString(tier.labelRes)
+    }
+
+    private fun showImageQualityDialog() {
+        val current = MediaQualityPrefs.read(this).imageTier
+        val options = ImageQualityTier.entries.toTypedArray()
+        val labels = options.map { getString(it.labelRes) }.toTypedArray()
+        val checkedIndex = options.indexOf(current).coerceAtLeast(0)
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.image_quality_dialog_title)
+            .setSingleChoiceItems(labels, checkedIndex) { dialog, which ->
+                MediaQualityPrefs.setImageTier(this, options[which])
+                updateImageQualityDisplay()
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun showVideoQualityDialog() {
+        val current = MediaQualityPrefs.read(this).videoTier
+        val options = VideoQualityTier.entries.toTypedArray()
+        val labels = options.map { getString(it.labelRes) }.toTypedArray()
+        val checkedIndex = options.indexOf(current).coerceAtLeast(0)
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.video_quality_dialog_title)
+            .setSingleChoiceItems(labels, checkedIndex) { dialog, which ->
+                MediaQualityPrefs.setVideoTier(this, options[which])
+                updateVideoQualityDisplay()
                 dialog.dismiss()
             }
             .setNegativeButton(android.R.string.cancel, null)

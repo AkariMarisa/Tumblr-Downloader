@@ -169,7 +169,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val account = TumblrAccount(
             username = username,
             avatarUrl = "https://api.tumblr.com/v2/blog/${username}/avatar/512",
-            status = "Online",
+            status = appContext.getString(R.string.status_online),
             isLoggedIn = true
         )
         TumblrAccountStore.save(appContext, account)

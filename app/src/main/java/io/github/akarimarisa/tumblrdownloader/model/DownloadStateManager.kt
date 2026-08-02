@@ -1,11 +1,13 @@
 package io.github.akarimarisa.tumblrdownloader.model
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import io.github.akarimarisa.tumblrdownloader.R
 import io.github.akarimarisa.tumblrdownloader.service.DownloadService
+import io.github.akarimarisa.tumblrdownloader.model.MediaQualityPrefs
 import io.github.akarimarisa.tumblrdownloader.utils.CompletedMediaStore
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadHistoryStore
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadUtils
@@ -35,7 +37,15 @@ import kotlinx.coroutines.withContext
 class DownloadStateManager(private val app: Application) {
 
     companion object {
-        private const val MAX_CONCURRENT_DOWNLOADS = 1
+        private const val PREFS_NAME = "tumblr_downloader"
+        private const val PREF_MAX_CONCURRENT = "max_concurrent_downloads"
+    }
+
+    private fun getMaxConcurrentDownloads(): Int {
+        return try {
+            app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getInt(PREF_MAX_CONCURRENT, 1).coerceIn(1, 4)
+        } catch (_: Exception) { 1 }
     }
 
     // ── state ──────────────────────────────────────────────────────────
@@ -116,7 +126,7 @@ class DownloadStateManager(private val app: Application) {
         isParsing = true
         scope.launch(Dispatchers.IO) {
             try {
-                val result = TumblrParser.parseShareUrl(url)
+                val result = TumblrParser.parseShareUrl(url, MediaQualityPrefs.read(app))
                 withContext(Dispatchers.Main) {
                     when (result) {
                         is TumblrShareParseResult.Success -> {
@@ -308,7 +318,7 @@ class DownloadStateManager(private val app: Application) {
         if (item.status == DownloadStatus.DOWNLOADING || item.status == DownloadStatus.COMPLETED) return
 
         val runningCount = _items.value.count { it.status == DownloadStatus.DOWNLOADING }
-        val canStartNow = runningCount < MAX_CONCURRENT_DOWNLOADS
+        val canStartNow = runningCount < getMaxConcurrentDownloads()
 
         val toStart = item.copy(
             status = if (canStartNow) DownloadStatus.DOWNLOADING else DownloadStatus.QUEUED,
@@ -377,37 +387,25 @@ class DownloadStateManager(private val app: Application) {
 
     private fun processResumeAll() {
         val items = _items.value
-        val hasActive = items.any { it.status == DownloadStatus.DOWNLOADING }
-        var startedOne = false
+        var hasActive = items.any { it.status == DownloadStatus.DOWNLOADING }
 
-        for (item in items) {
-            if (item.status != DownloadStatus.PAUSED && item.status != DownloadStatus.FAILED) continue
-
-            val idx = items.indexOfFirst { it.id == item.id }
-            if (idx < 0) continue
-
-            if (!startedOne && !hasActive) {
-                startedOne = true
-                val toStart = item.copy(
-                    status = DownloadStatus.DOWNLOADING,
-                    progress = 0,
-                    errorMessage = null,
-                    retryCount = if (item.status == DownloadStatus.FAILED) 0 else item.retryCount
-                )
-                replaceItem(idx, toStart)
-                sendStartIntent(toStart)
-            } else {
-                // Already have a running download or just started one;
-                // put the rest in QUEUED so they auto-start when the
-                // slot opens.
-                replaceItem(idx, item.copy(
+        // 先把所有 PAUSED/FAILED 置为 QUEUED，再统一用 startNextIfSlotAvailable
+        // 循环启动直到达到并发上限 —— 避免 "resumeAll 后实际串行"（旧的
+        // startedOne 逻辑每次只启动一个，其余排队等前一个完成）。
+        var changed = false
+        _items.value = _items.value.map { item ->
+            if (item.status == DownloadStatus.PAUSED || item.status == DownloadStatus.FAILED) {
+                changed = true
+                item.copy(
                     status = DownloadStatus.QUEUED,
                     progress = 0,
                     errorMessage = null,
                     retryCount = if (item.status == DownloadStatus.FAILED) 0 else item.retryCount
-                ))
-            }
+                )
+            } else item
         }
+        if (changed) dirty = true
+        startNextIfSlotAvailable()
     }
 
     // ── Progress callback (from service) ────────────────────────────────
@@ -456,20 +454,26 @@ class DownloadStateManager(private val app: Application) {
     }
 
     private fun startNextIfSlotAvailable() {
-        val running = _items.value.count { it.status == DownloadStatus.DOWNLOADING }
-        if (running >= MAX_CONCURRENT_DOWNLOADS) return
+        // ponytail: 循环启动排队任务直到达到并发上限，而不是每次只启动一个。
+        // 之前的实现只在批量添加时启动一个任务，其余排队任务要等前一个
+        // 完成后才被启动（终态回调），导致实际永远串行 —— maxConcurrent
+        // 设置形同虚设。
+        while (true) {
+            val running = _items.value.count { it.status == DownloadStatus.DOWNLOADING }
+            if (running >= getMaxConcurrentDownloads()) return
 
-        // ponytail: FIFO 顺序 — 按 createdAt 升序（最早添加的先下载），
-        // 而不是按降序。降序会导致新任务插队，旧任务的剩余图片被延后，
-        // 当新旧任务包含相同媒体时产生重复下载。
-        val next = _items.value
-            .filter { it.status == DownloadStatus.QUEUED }
-            .minByOrNull { it.createdAt } ?: return
+            // FIFO 顺序 — 按 createdAt 升序（最早添加的先下载），
+            // 而不是按降序。降序会导致新任务插队，旧任务的剩余图片被延后，
+            // 当新旧任务包含相同媒体时产生重复下载。
+            val next = _items.value
+                .filter { it.status == DownloadStatus.QUEUED }
+                .minByOrNull { it.createdAt } ?: return
 
-        val idx = _items.value.indexOfFirst { it.id == next.id }
-        val started = next.copy(status = DownloadStatus.DOWNLOADING, progress = 0)
-        replaceItem(idx, started)
-        sendStartIntent(started)
+            val idx = _items.value.indexOfFirst { it.id == next.id }
+            val started = next.copy(status = DownloadStatus.DOWNLOADING, progress = 0)
+            replaceItem(idx, started)
+            sendStartIntent(started)
+        }
     }
 
     // ── Intent helpers ──────────────────────────────────────────────────

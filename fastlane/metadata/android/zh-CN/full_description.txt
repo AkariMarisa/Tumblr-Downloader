@@ -19,6 +19,7 @@ Tumblr Downloader 是一款 Android 应用，支持从 Tumblr 帖子中下载图
 • 登录凭证使用 Android Keystore 本地加密存储
 • 无数据收集或追踪
 • 无广告
+• WebView 登录时屏蔽已知第三方追踪域名
 • 基于 MIT 协议完全开源
 
 支持：

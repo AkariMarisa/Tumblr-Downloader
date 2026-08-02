@@ -19,6 +19,7 @@ Privacy:
 • Login credentials are stored locally using Android Keystore
 • No analytics or tracking
 • No ads
+• WebView blocks known third-party tracking domains during login
 • Fully open source under MIT license
 
 Support:
