@@ -141,7 +141,7 @@ Key design decisions:
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-> **Note:** There is no Gradle wrapper (`gradlew`) in the repo — use the system `gradle` command or the bundled `scripts/build_local.sh` which sets the required `JAVA_HOME` and `ANDROID_HOME`.
+> **Note:** The repo ships the Gradle wrapper (`gradlew`). The bundled `scripts/build_local.sh` sets the required `JAVA_HOME` and `ANDROID_HOME` if you prefer to build with the system `gradle` command.
 
 ---
 
@@ -226,10 +226,10 @@ For private or restricted posts:
 
 ### Open Source & Project Health
 
-- [ ] **LICENSE file**: Create the actual MIT `LICENSE` file in the repo root (README references it but the file doesn't exist).
-- [ ] **Gradle wrapper**: Add `gradlew` so builds don't require a system Gradle installation.
-- [ ] **CI/CD**: GitHub Actions for automated build, lint, and test on every PR.
-- [ ] **Package name**: 包名已改为 `io.github.akarimarisa.tumblrdownloader`.
+- [x] **LICENSE file**: Create the actual MIT `LICENSE` file in the repo root (README references it but the file doesn't exist).
+- [x] **Gradle wrapper**: Add `gradlew` so builds don't require a system Gradle installation.
+- [x] **CI/CD**: GitHub Actions for automated build, lint, and test on every PR.
+- [x] **Package name**: 包名已改为 `io.github.akarimarisa.tumblrdownloader`.
 - [x] **Room DAO + migration tests**: 19 unit tests for `DownloadHistoryDao`, `CookieDao`, and migration from SharedPreferences (Robolectric + Room in-memory).
 - [ ] **More tests**: Add unit tests for `TumblrParser`, `DownloadStateManager`, and instrumentation tests for the full download flow.
 - [ ] **Contributing guide**: Create `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.

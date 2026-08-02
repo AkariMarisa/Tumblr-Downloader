@@ -144,7 +144,7 @@ TumblrParser      DownloadService
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-> **注意：** 仓库中没有 Gradle wrapper（`gradlew`），请使用系统 `gradle` 命令或项目自带的 `scripts/build_local.sh`（会自动设置 `JAVA_HOME` 和 `ANDROID_HOME`）。
+> **注意：** 仓库自带 Gradle wrapper（`gradlew`）。如使用系统 `gradle` 命令构建，项目自带的 `scripts/build_local.sh` 会自动设置 `JAVA_HOME` 和 `ANDROID_HOME`。
 
 ---
 
@@ -230,10 +230,10 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ### 开源与项目健康
 
-- [ ] **LICENSE 文件**：在仓库根目录创建实际的 MIT `LICENSE` 文件（README 已引用但文件不存在）
-- [ ] **Gradle wrapper**：添加 `gradlew` 以便无需系统安装 Gradle 即可构建
+- [x] **LICENSE 文件**：在仓库根目录创建实际的 MIT `LICENSE` 文件（README 已引用但文件不存在）
+- [x] **Gradle wrapper**：添加 `gradlew` 以便无需系统安装 Gradle 即可构建
 - [x] **CI/CD**：配置了 GitHub Actions，每次 push master 自动构建 APK 并发布 Release
-- [ ] **包名重命名**：已改为 `io.github.akarimarisa.tumblrdownloader`
+- [x] **包名重命名**：已改为 `io.github.akarimarisa.tumblrdownloader`
 - [x] **Room DAO + 迁移测试**：19 个单元测试覆盖 `DownloadHistoryDao`、`CookieDao` 及 SharedPreferences 迁移（Robolectric + Room in-memory）
 - [ ] **更多测试**：补充 `TumblrParser`、`DownloadStateManager` 的单元测试，以及下载流程的 instrumentation 测试
 - [ ] **贡献指南**：创建 `CONTRIBUTING.md` 和 `CODE_OF_CONDUCT.md`
