@@ -678,10 +678,14 @@ object TumblrParser {
         // Group candidates by identity — renditions of the same media (e.g.
         // s500x500 vs s1280x1920 of one photo) share a normalized identity,
         // so we can pick the best file for the configured quality tier.
+        Log.d(TAG, "dedupeAndNormalize raw candidates (${urls.size}): ${urls.joinToString(" | ") { it.take(140) }}")
         val groupedByIdentity = LinkedHashMap<String, MutableList<String>>()
         urls.forEach { url ->
             val identity = DownloadUtils.normalizeMediaIdentity(url)
             groupedByIdentity.getOrPut(identity) { mutableListOf() }.add(url)
+        }
+        groupedByIdentity.forEach { (identity, group) ->
+            Log.d(TAG, "  identity=$identity -> ${group.size} candidates: ${group.joinToString(" | ") { it.take(140) }}")
         }
 
         return groupedByIdentity.values.map { candidates ->
@@ -717,6 +721,8 @@ object TumblrParser {
                 Triple(tier.minEdge, tier.maxEdge, tier.isUnlimited)
             }
         }
+        Log.d(TAG, "selectBestForQuality type=$type lo=$lo hi=$hi unlimited=$unlimited candidates(${candidates.size}): ${candidates.joinToString(" | ") { it.take(140) }}")
+        Log.d(TAG, "  parsed sizes: ${candidates.joinToString(" | ") { "$it -> ${MediaQualitySelector.parseSize(it, type)}" }}")
 
         if (unlimited) {
             return candidates.maxByOrNull { mediaPreferenceScore(it) } ?: candidates.first()
