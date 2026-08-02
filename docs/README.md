@@ -220,7 +220,7 @@ For private or restricted posts:
 - [ ] **MIME type fallback**: For URLs with unknown extensions, send a HEAD request to check `Content-Type` before falling back to `application/octet-stream`.
 - [ ] **Parse diagnostics panel**: Show why parsing returned no results (404 / rate-limited / auth required / no media found).
 - [ ] **Full-link log system**: Local log capture (no Firebase/cloud). Include download flow, parse results, cookie state, and WebView interactions. Exportable log file for user debugging.
-- [ ] **Adaptive rate-limit settings**: Configurable speed limit (500 KB/s – 2 MB/s) and inter-task gap.
+- [x] **Adaptive rate-limit settings**: Configurable speed limit (500 KB/s – 2 MB/s) and inter-task gap.
 - [ ] **Cookie test entry**: Manual cookie paste in Settings for debugging private posts without re-login.
 - [ ] **Refactor `inferExtension`**: The same logic appears in both `DownloadService.kt` and `DownloadStateManager.kt` — extract into a shared utility.
 
