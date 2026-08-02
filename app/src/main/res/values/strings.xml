@@ -117,6 +117,19 @@
     <string name="pref_max_concurrent_downloads">Max concurrent downloads</string>
     <string name="concurrent_downloads_value">%1$d tasks</string>
     <string name="concurrent_downloads_dialog_title">Max concurrent downloads</string>
+    <string name="pref_image_quality">Image quality</string>
+    <string name="image_quality_dialog_title">Image quality</string>
+    <string name="image_quality_original">Original (best)</string>
+    <string name="image_quality_high">High (≥1280 px)</string>
+    <string name="image_quality_standard">Standard (500–1280 px)</string>
+    <string name="image_quality_low">Low (&lt;500 px)</string>
+    <string name="pref_video_quality">Video quality</string>
+    <string name="video_quality_dialog_title">Video quality</string>
+    <string name="video_quality_best">Best available</string>
+    <string name="video_quality_1080p">1080p</string>
+    <string name="video_quality_720p">720p</string>
+    <string name="video_quality_480p">480p</string>
+    <string name="quality_tier_note">The actual resolution depends on what the post offers — if the post only has a lower-resolution file, the closest available version will be downloaded.</string>
 
     <!-- Language / settings -->
     <string name="settings_language">Language</string>

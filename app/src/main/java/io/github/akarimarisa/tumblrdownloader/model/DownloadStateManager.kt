@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import io.github.akarimarisa.tumblrdownloader.R
 import io.github.akarimarisa.tumblrdownloader.service.DownloadService
+import io.github.akarimarisa.tumblrdownloader.model.MediaQualityPrefs
 import io.github.akarimarisa.tumblrdownloader.utils.CompletedMediaStore
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadHistoryStore
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadUtils
@@ -125,7 +126,7 @@ class DownloadStateManager(private val app: Application) {
         isParsing = true
         scope.launch(Dispatchers.IO) {
             try {
-                val result = TumblrParser.parseShareUrl(url)
+                val result = TumblrParser.parseShareUrl(url, MediaQualityPrefs.read(app))
                 withContext(Dispatchers.Main) {
                     when (result) {
                         is TumblrShareParseResult.Success -> {

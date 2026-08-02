@@ -117,6 +117,19 @@
     <string name="pref_max_concurrent_downloads">最大并行下载数</string>
     <string name="concurrent_downloads_value">%1$d 个任务</string>
     <string name="concurrent_downloads_dialog_title">最大并行下载数</string>
+    <string name="pref_image_quality">图片清晰度</string>
+    <string name="image_quality_dialog_title">图片清晰度</string>
+    <string name="image_quality_original">原图（最佳）</string>
+    <string name="image_quality_high">高清（≥1280px）</string>
+    <string name="image_quality_standard">标清（500–1280px）</string>
+    <string name="image_quality_low">低清（&lt;500px）</string>
+    <string name="pref_video_quality">视频清晰度</string>
+    <string name="video_quality_dialog_title">视频清晰度</string>
+    <string name="video_quality_best">最高可用</string>
+    <string name="video_quality_1080p">1080p</string>
+    <string name="video_quality_720p">720p</string>
+    <string name="video_quality_480p">480p</string>
+    <string name="quality_tier_note">实际清晰度取决于帖子提供的版本——若帖子只有更低分辨率的文件，则会下载最接近所选档位的版本。</string>
 
     <!-- Language / settings -->
     <string name="settings_language">语言</string>
