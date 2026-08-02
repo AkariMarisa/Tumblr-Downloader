@@ -250,6 +250,98 @@ class DownloadStateManagerTest {
         )
     }
 
+    // ── parallel start (max concurrent) ──────────────────────────────────
+
+    @Test
+    fun completion_fillsConcurrentSlots() = runTest(testDispatcher) {
+        // max=3：一个任务完成后，应自动启动排队任务直到并发槽位满。
+        // 这是修复 "批量添加后实际串行" 的关键行为。
+        val prefs = app.getSharedPreferences("tumblr_downloader", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putInt("max_concurrent_downloads", 3).commit()
+
+        // 4 个排队任务 + 1 个正在下载的任务
+        val queued = listOf(
+            item("q1"), item("q2"), item("q3"), item("q4")
+        )
+        val running = item("r0", status = DownloadStatus.DOWNLOADING)
+        stateManager.restore(listOf(running) + queued)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        // 模拟正在下载的任务完成
+        stateManager.serviceProgressListener.onDownloadUpdate(
+            running.copy(status = DownloadStatus.COMPLETED, progress = 100)
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val statuses = stateManager.items.value.map { it.id to it.status }
+        val downloading = statuses.count { it.second == DownloadStatus.DOWNLOADING }
+        assertEquals(
+            "completion should fill up to max=3 concurrent slots",
+            3,
+            downloading
+        )
+        // 剩余的应保持 QUEUED
+        assertEquals(1, statuses.count { it.second == DownloadStatus.QUEUED })
+    }
+
+    @Test
+    fun completion_respectsMaxConcurrentBound() = runTest(testDispatcher) {
+        // max=2：已有 2 个下载中，完成其中一个后只能再启动 1 个。
+        val prefs = app.getSharedPreferences("tumblr_downloader", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putInt("max_concurrent_downloads", 2).commit()
+
+        val queued = listOf(
+            item("a1"), item("a2"), item("a3"), item("a4")
+        )
+        val running1 = item("b1", status = DownloadStatus.DOWNLOADING)
+        val running2 = item("b2", status = DownloadStatus.DOWNLOADING)
+        stateManager.restore(listOf(running1, running2) + queued)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        // b1 完成 → 槽位空出 1 个 → 应启动 1 个排队任务
+        stateManager.serviceProgressListener.onDownloadUpdate(
+            running1.copy(status = DownloadStatus.COMPLETED, progress = 100)
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val statuses = stateManager.items.value.map { it.id to it.status }
+        assertEquals(
+            "running must never exceed max=2",
+            2,
+            statuses.count { it.second == DownloadStatus.DOWNLOADING }
+        )
+        assertEquals(3, statuses.count { it.second == DownloadStatus.QUEUED })
+    }
+
+    @Test
+    fun resumeAll_startsMultipleUpToMaxConcurrent() = runTest(testDispatcher) {
+        // max=3：resumeAll 应循环启动排队任务直到并发槽位满，
+        // 而不是只启动一个（旧实现的实际串行行为）。
+        val prefs = app.getSharedPreferences("tumblr_downloader", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putInt("max_concurrent_downloads", 3).commit()
+
+        val paused = listOf(
+            item("p1", status = DownloadStatus.PAUSED),
+            item("p2", status = DownloadStatus.PAUSED),
+            item("p3", status = DownloadStatus.PAUSED),
+            item("p4", status = DownloadStatus.PAUSED),
+            item("p5", status = DownloadStatus.PAUSED)
+        )
+        stateManager.restore(paused)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.resumeAll()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val statuses = stateManager.items.value.map { it.id to it.status }
+        assertEquals(
+            "resumeAll should fill up to max=3 concurrent slots",
+            3,
+            statuses.count { it.second == DownloadStatus.DOWNLOADING }
+        )
+        assertEquals(2, statuses.count { it.second == DownloadStatus.QUEUED })
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────
 
     private fun item(
