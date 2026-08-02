@@ -211,7 +211,7 @@ For private or restricted posts:
 - [ ] **Download classification & tag management**: Auto-classify downloads by blog, display original post tags. New `tags`/`download_tags` tables, UI adds blog Tab filter, tag browser, tag search. Shares `blogName` field with auto-scan feature — recommend single DB migration (v1→v2)
 - [ ] **Dark mode**: Follow system theme or allow manual toggle.
 - [ ] **Search & filter**: Search by URL, filter by status (downloading / completed / failed) in the download list.
-- [ ] **Notification actions**: Pause / cancel download directly from the notification.
+- [x] **Notification actions**: Pause / cancel download directly from the notification.
 - [ ] **Export / import history**: Backup and restore download history across devices.
 - [ ] **Save to gallery**: Option to save completed downloads to the device gallery.
 

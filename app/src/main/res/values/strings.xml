@@ -53,6 +53,9 @@
     <string name="clear_all_downloads">Clear completed downloads</string>
     <string name="pause_all">Pause All</string>
     <string name="resume_all">Resume All</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_resume">Resume</string>
+    <string name="action_cancel">Cancel</string>
 
     <string name="clear_all_confirm_message">All finished downloads will be removed from the list. Paused, failed, and queued items will stay right where they are.</string>
     <string name="remove_confirm_message">Remove this item from the download list? Downloads already completed will not be deleted.</string>
