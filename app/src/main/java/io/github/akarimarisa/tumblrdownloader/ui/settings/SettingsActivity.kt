@@ -22,6 +22,8 @@ import io.github.akarimarisa.tumblrdownloader.R
 import io.github.akarimarisa.tumblrdownloader.databinding.ActivitySettingsBinding
 import io.github.akarimarisa.tumblrdownloader.model.ImageQualityTier
 import io.github.akarimarisa.tumblrdownloader.model.MediaQualityPrefs
+import io.github.akarimarisa.tumblrdownloader.model.ThemeMode
+import io.github.akarimarisa.tumblrdownloader.model.ThemeModePrefs
 import io.github.akarimarisa.tumblrdownloader.model.VideoQualityTier
 import io.github.akarimarisa.tumblrdownloader.ui.MainActivity
 import io.github.akarimarisa.tumblrdownloader.ui.MainViewModel
@@ -76,6 +78,8 @@ class SettingsActivity : AppCompatActivity() {
         supportActionBar?.title = getString(R.string.menu_settings)
 
         setupLanguageSelector()
+
+        setupThemeSelector()
 
         binding.btnChooseDownloadDir.setOnClickListener {
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
@@ -185,6 +189,33 @@ class SettingsActivity : AppCompatActivity() {
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                     }.let { startActivity(it) }
                     finishAffinity()
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
+    }
+
+    // ── Theme ────────────────────────────────────────────────────────
+
+    private fun updateThemeDisplay() {
+        binding.tvCurrentTheme.text = getString(ThemeModePrefs.read(this).labelRes)
+    }
+
+    private fun setupThemeSelector() {
+        updateThemeDisplay()
+
+        binding.btnTheme.setOnClickListener {
+            val current = ThemeModePrefs.read(this)
+            val items = ThemeMode.entries.map { getString(it.labelRes) }.toTypedArray()
+            val checked = ThemeMode.entries.indexOf(current).coerceAtLeast(0)
+            android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.settings_theme)
+                .setSingleChoiceItems(items, checked) { dialog, which ->
+                    val mode = ThemeMode.entries[which]
+                    ThemeModePrefs.set(this, mode)
+                    dialog.dismiss()
+                    // Recreate so DayNight applies the new mode immediately.
+                    recreate()
                 }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()

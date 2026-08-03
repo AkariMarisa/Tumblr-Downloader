@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark-mode overrides for colors referenced directly from layouts / code.
+         gray_300: card stroke + thumbnail placeholder background
+         gray_500: secondary text (speed, hints) -->
+    <color name="gray_300">#FF3A3A3A</color>
+    <color name="gray_500">#FFB3B3B3</color>
+</resources>

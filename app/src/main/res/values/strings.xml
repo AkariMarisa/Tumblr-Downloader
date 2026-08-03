@@ -141,6 +141,12 @@
     <string name="language_zh">中文</string>
     <string name="language_en">English</string>
 
+    <!-- Theme -->
+    <string name="settings_theme">Theme</string>
+    <string name="theme_system">Follow system</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+
     <!-- Clipboard -->
     <string name="pref_clipboard_auto_detect">Auto-detect clipboard</string>
     <string name="pref_clipboard_auto_detect_summary">Automatically parse Tumblr links when switching back to the app</string>
