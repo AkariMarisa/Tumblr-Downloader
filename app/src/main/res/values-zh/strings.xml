@@ -141,6 +141,12 @@
     <string name="language_zh">中文</string>
     <string name="language_en">English</string>
 
+    <!-- Theme -->
+    <string name="settings_theme">主题</string>
+    <string name="theme_system">跟随系统</string>
+    <string name="theme_light">浅色</string>
+    <string name="theme_dark">深色</string>
+
     <!-- Clipboard -->
     <string name="pref_clipboard_auto_detect">自动检测剪切板</string>
     <string name="pref_clipboard_auto_detect_summary">切换回本 app 时自动解析剪贴板中的 Tumblr 链接</string>
