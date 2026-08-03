@@ -50,26 +50,41 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
+                    android:orientation="vertical"
                     android:paddingHorizontal="16dp"
                     android:paddingVertical="16dp">
 
                     <TextView
-                        android:id="@+id/tvCurrentLanguage"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:textSize="16sp"
-                        android:textColor="?android:attr/textColorPrimary"
-                        tools:text="System default" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnLanguage"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="@string/choose"
-                        style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+                        android:text="@string/settings_language"
+                        android:textSize="16sp"
+                        android:textColor="?android:attr/textColorPrimary" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="4dp">
+
+                        <TextView
+                            android:id="@+id/tvCurrentLanguage"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:textSize="14sp"
+                            android:textColor="?android:attr/textColorSecondary"
+                            tools:text="System default" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnLanguage"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/choose"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+
+                    </LinearLayout>
 
                 </LinearLayout>
 
@@ -88,26 +103,41 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
+                    android:orientation="vertical"
                     android:paddingHorizontal="16dp"
                     android:paddingVertical="16dp">
 
                     <TextView
-                        android:id="@+id/tvCurrentTheme"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:textSize="16sp"
-                        android:textColor="?android:attr/textColorPrimary"
-                        tools:text="Follow system" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnTheme"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="@string/choose"
-                        style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+                        android:text="@string/settings_theme"
+                        android:textSize="16sp"
+                        android:textColor="?android:attr/textColorPrimary" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="4dp">
+
+                        <TextView
+                            android:id="@+id/tvCurrentTheme"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:textSize="14sp"
+                            android:textColor="?android:attr/textColorSecondary"
+                            tools:text="Follow system" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnTheme"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/choose"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+
+                    </LinearLayout>
 
                 </LinearLayout>
 

@@ -213,9 +213,18 @@ class SettingsActivity : AppCompatActivity() {
                 .setSingleChoiceItems(items, checked) { dialog, which ->
                     val mode = ThemeMode.entries[which]
                     ThemeModePrefs.set(this, mode)
+                    // Apply immediately. Application.onCreate won't re-run while
+                    // the process stays alive, so tell the delegate directly;
+                    // the restarted task then inflates with the new mode.
+                    androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(mode.nightMode)
                     dialog.dismiss()
-                    // Recreate so DayNight applies the new mode immediately.
-                    recreate()
+                    // Restart the entire task so DayNight applies the new mode
+                    // everywhere immediately (recreate() alone is unreliable
+                    // for AppCompatDelegate.setDefaultNightMode).
+                    Intent(this, MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                    }.let { startActivity(it) }
+                    finishAffinity()
                 }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
