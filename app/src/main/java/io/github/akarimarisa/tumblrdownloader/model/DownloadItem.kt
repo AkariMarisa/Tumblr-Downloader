@@ -34,4 +34,11 @@ data class DownloadItem(
     val downloadFileUri: String? = null,
     /** Current download speed in bytes per second (transient, not persisted). */
     val speedBytesPerSecond: Long = 0L
-)
+) {
+    /** Preserve the byte offset and target needed for an HTTP Range retry. */
+    internal fun withPartialDownload(fileUri: String, downloadedBytes: Long): DownloadItem =
+        copy(
+            downloadedBytes = downloadedBytes.coerceAtLeast(0L),
+            downloadFileUri = fileUri
+        )
+}

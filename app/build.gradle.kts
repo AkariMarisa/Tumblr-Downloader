@@ -4,6 +4,12 @@ plugins {
     id("kotlin-kapt")
 }
 
+val releaseKeystorePath = System.getenv("KEYSTORE_PATH")
+    ?.takeIf { it.isNotBlank() }
+    ?: "release.jks"
+val releaseKeystoreFile = file(releaseKeystorePath)
+val hasReleaseKeystore = releaseKeystoreFile.isFile
+
 android {
     namespace = "io.github.akarimarisa.tumblrdownloader"
     compileSdk = 34
@@ -17,13 +23,13 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            // Local: uses app/release.jks (gitignored)
-            // CI: uses env vars KEYSTORE_PATH / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD
-            storeFile = file(System.getenv("KEYSTORE_PATH") ?: "release.jks")
-            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "tumblr@release"
-            keyAlias = System.getenv("KEY_ALIAS") ?: "tumblr-downloader"
-            keyPassword = System.getenv("KEY_PASSWORD") ?: "tumblr@release"
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = releaseKeystoreFile
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "tumblr@release"
+                keyAlias = System.getenv("KEY_ALIAS") ?: "tumblr-downloader"
+                keyPassword = System.getenv("KEY_PASSWORD") ?: "tumblr@release"
+            }
         }
     }
 
@@ -37,7 +43,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
+            if (hasReleaseKeystore) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

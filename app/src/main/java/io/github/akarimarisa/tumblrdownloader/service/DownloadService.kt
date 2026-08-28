@@ -665,24 +665,20 @@ class DownloadService : Service() {
                 }
                 return
             } catch (e: Exception) {
-                // ponytail: for cached URIs (retry), don't delete the file —
-                // truncate (create fresh) on the same URI instead.  Only
-                // delete uncached (first-attempt) files.
-                if (downloadTargetMap.containsKey(current.id)) {
-                    // cached: just close, keep file on disk for reuse
-                    output.onFailure()
-                } else {
-                    output.onFailure()
-                    runCatching { contentResolver.delete(output.uri, null, null) }
-                }
-                // Remove from cache so next retry creates a fresh target
-                downloadTargetMap.remove(current.id)
+                val requestedOffset = if (isResume) current.downloadedBytes else 0L
+                val retainedBytes = bytesThisSession.coerceAtLeast(requestedOffset)
+                // Retain the target and its true offset so transient CDN/socket
+                // failures resume with HTTP Range instead of restarting at zero.
+                current = current.withPartialDownload(output.uri.toString(), retainedBytes)
+                isResume = current.downloadedBytes > 0L
+                downloadTargetMap[current.id] = output.uri
+                output.onFailure()
 
-                // ponytail: server doesn't support Range — fall back to a full download.
-                // Delete the partial file regardless of downloadTargetMap status;
-                // otherwise the old partial + new full download = two copies on disk.
-                if (isResume && (e.message?.contains("Range") == true || e.message?.contains("416") == true)) {
+                // The server rejected an existing Range request. Discard the
+                // partial file and retry once from byte zero on the same item.
+                if (requestedOffset > 0L && (e.message?.contains("Range") == true || e.message?.contains("416") == true)) {
                     runCatching { contentResolver.delete(output.uri, null, null) }
+                    downloadTargetMap.remove(current.id)
                     isResume = false
                     current = current.copy(downloadedBytes = 0L, downloadFileUri = null)
                     emitProgress(current.copy(
@@ -726,6 +722,10 @@ class DownloadService : Service() {
                 }
 
                 if (current.retryCount >= current.maxRetries) {
+                    // No automatic retry remains, so remove the incomplete
+                    // MediaStore/SAF entry instead of leaving an orphaned file.
+                    runCatching { contentResolver.delete(output.uri, null, null) }
+                    downloadTargetMap.remove(current.id)
                     emitProgress(
                         current.copy(
                             status = DownloadStatus.FAILED,
@@ -964,7 +964,8 @@ class DownloadService : Service() {
                 // File is already visible in a custom dir; nothing extra to do
             },
             onFailure = {
-                runCatching { contentResolver.delete(file.uri, null, null) }
+                // Keep incomplete data while processWithRetry decides whether
+                // to resume, restart, or explicitly discard this target.
             }
         )
     }
@@ -1007,7 +1008,8 @@ class DownloadService : Service() {
                 }
             },
             onFailure = {
-                runCatching { contentResolver.delete(uri, null, null) }
+                // Keep incomplete data while processWithRetry decides whether
+                // to resume, restart, or explicitly discard this target.
             }
         )
     }
