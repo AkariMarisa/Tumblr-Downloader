@@ -89,7 +89,8 @@ jobs:
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > app/release.jks
           else
-            echo "::warning::KEYSTORE_BASE64 secret not set — APK will not be signed"
+            echo "::error::KEYSTORE_BASE64 secret is required for a signed release"
+            exit 1
           fi
 
       - name: Build release APK
