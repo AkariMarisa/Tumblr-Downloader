@@ -1,6 +1,7 @@
 # Tumblr Downloader
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![F-Droid](https://img.shields.io/f-droid/v/io.github.akarimarisa.tumblrdownloader?label=F-Droid&logo=fdroid&logoColor=white)](https://f-droid.org/packages/io.github.akarimarisa.tumblrdownloader/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Android-3DDC84?logo=android)](https://developer.android.com)
 [![Min SDK](https://img.shields.io/badge/minSdk-30-brightgreen)](https://developer.android.com/studio)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9.22-7F52FF?logo=kotlin)](https://kotlinlang.org)
@@ -18,6 +19,28 @@ An Android app that downloads images and videos from Tumblr posts. Supports Andr
     <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi">
   </a>
 </p>
+
+---
+
+## Download
+
+<p align="center">
+  <a href="https://f-droid.org/packages/io.github.akarimarisa.tumblrdownloader/">
+    <img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png" alt="Get it on F-Droid" height="80">
+  </a>
+</p>
+
+**Tumblr Downloader is available on [F-Droid](https://f-droid.org/packages/io.github.akarimarisa.tumblrdownloader/)** — the free and open-source Android app store. Installing from F-Droid gives you automatic updates and requires no Google account.
+
+|  |  |
+|---|---|
+| **1. Get the F-Droid client** | If you don't have it yet, download and install [F-Droid](https://f-droid.org/F-Droid.apk) first. |
+| **2. Open the app page** | Go to [Tumblr Downloader on F-Droid](https://f-droid.org/packages/io.github.akarimarisa.tumblrdownloader/), or search for it inside the F-Droid client. |
+| **3. Install** | Tap **Install**. F-Droid handles the download and keeps the app up to date from then on. |
+
+> 💡 On the F-Droid page you can also tap **"Open in F-Droid"** to jump straight into the client.
+>
+> 🛠️ Prefer to build it yourself from source? See [Build & Install](#build--install).
 
 ---
 
@@ -234,7 +257,8 @@ For private or restricted posts:
 - [ ] **More tests**: Add unit tests for `TumblrParser`, `DownloadStateManager`, and instrumentation tests for the full download flow.
 - [ ] **Contributing guide**: Create `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
 - [x] **Screenshots**: Add app screenshots to README.
-- [ ] **Play Store / F-Droid**: Prepare release signing and store listings (publish to F-Droid).
+- [x] **F-Droid release**: Published on F-Droid — [io.github.akarimarisa.tumblrdownloader](https://f-droid.org/packages/io.github.akarimarisa.tumblrdownloader/). Release signing is automated via GitHub Actions.
+- [ ] **Play Store release**: Prepare signing and store listing materials for Google Play.
 
 ---
 
