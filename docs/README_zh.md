@@ -1,6 +1,7 @@
 # Tumblr Downloader
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![F-Droid](https://img.shields.io/f-droid/v/io.github.akarimarisa.tumblrdownloader?label=F-Droid&logo=fdroid&logoColor=white)](https://f-droid.org/zh_Hans/packages/io.github.akarimarisa.tumblrdownloader/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Android-3DDC84?logo=android)](https://developer.android.com)
 [![Min SDK](https://img.shields.io/badge/minSdk-30-brightgreen)](https://developer.android.com/studio)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9.22-7F52FF?logo=kotlin)](https://kotlinlang.org)
@@ -18,6 +19,28 @@
     <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi">
   </a>
 </p>
+
+---
+
+## 下载安装
+
+<p align="center">
+  <a href="https://f-droid.org/zh_Hans/packages/io.github.akarimarisa.tumblrdownloader/">
+    <img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png" alt="Get it on F-Droid" height="80">
+  </a>
+</p>
+
+**Tumblr Downloader 已在 [F-Droid](https://f-droid.org/zh_Hans/packages/io.github.akarimarisa.tumblrdownloader/) 上架** —— 一个自由、开源的 Android 应用商店。通过 F-Droid 安装可以自动获取更新，并且无需 Google 账号。
+
+|  |  |
+|---|---|
+| **1. 安装 F-Droid 客户端** | 如果还没有，先下载安装 [F-Droid](https://f-droid.org/F-Droid.apk)。 |
+| **2. 打开应用页面** | 前往 [F-Droid 上的 Tumblr Downloader](https://f-droid.org/zh_Hans/packages/io.github.akarimarisa.tumblrdownloader/)，或在 F-Droid 客户端内直接搜索。 |
+| **3. 安装** | 点击 **安装**。F-Droid 会负责下载，并在之后持续为你更新应用。 |
+
+> 💡 在 F-Droid 页面上还可以点击 **「在 F-Droid 中打开」** 直接跳转到客户端。
+>
+> 🛠️ 想自己从源码构建？见下方[构建与安装](#构建与安装)。
 
 ---
 
@@ -238,7 +261,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - [ ] **更多测试**：补充 `TumblrParser`、`DownloadStateManager` 的单元测试，以及下载流程的 instrumentation 测试
 - [ ] **贡献指南**：创建 `CONTRIBUTING.md` 和 `CODE_OF_CONDUCT.md`
 - [x] **截图**：在 README 中添加应用截图
-- [ ] **应用商店发布**：准备 Release 签名和商店上架材料（发布到 F-Droid）
+- [x] **F-Droid 上架**：已在 F-Droid 发布——[io.github.akarimarisa.tumblrdownloader](https://f-droid.org/zh_Hans/packages/io.github.akarimarisa.tumblrdownloader/)。Release 签名由 GitHub Actions 自动完成。
+- [ ] **Google Play 上架**：准备 Play Store 的签名与上架材料。
 
 ---
 
