@@ -257,8 +257,9 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - [x] **Gradle wrapper**：添加 `gradlew` 以便无需系统安装 Gradle 即可构建
 - [x] **CI/CD**：配置了 GitHub Actions，每次 push master 自动构建 APK 并发布 Release
 - [x] **包名重命名**：已改为 `io.github.akarimarisa.tumblrdownloader`
-- [x] **Room DAO + 迁移测试**：19 个单元测试覆盖 `DownloadHistoryDao`、`CookieDao` 及 SharedPreferences 迁移（Robolectric + Room in-memory）
-- [ ] **更多测试**：补充 `TumblrParser`、`DownloadStateManager` 的单元测试，以及下载流程的 instrumentation 测试
+- [x] **Room DAO + 迁移测试**：19 个单元测试覆盖 `DownloadHistoryDao`（7）、`CookieDao`（6）及 SharedPreferences 迁移（6）——为 101 个 JVM 单元测试的一部分（Robolectric + Room in-memory）
+- [x] **引擎/核心单元测试**：已覆盖 `DownloadStateManager`（16）、`DownloadItem`、`MediaQualitySelector`（14）、`ThemeMode`（6）、`DownloadService` 网络/通知/连接性行为（33）、`TumblrLoginTrackerBlocking`（11）
+- [ ] **其余测试缺口**：`TumblrParser` 单元测试与完整下载流程的 instrumentation 测试仍待补充
 - [x] **贡献指南**：已创建 `CONTRIBUTING.md`/`CONTRIBUTING_zh.md` 与 `CODE_OF_CONDUCT.md`/`CODE_OF_CONDUCT_zh.md`（中英双语）
 - [x] **截图**：在 README 中添加应用截图
 - [x] **F-Droid 上架**：已在 F-Droid 发布——[io.github.akarimarisa.tumblrdownloader](https://f-droid.org/zh_Hans/packages/io.github.akarimarisa.tumblrdownloader/)。Release 签名由 GitHub Actions 自动完成。

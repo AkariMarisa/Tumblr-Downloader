@@ -253,8 +253,9 @@ For private or restricted posts:
 - [x] **Gradle wrapper**: Add `gradlew` so builds don't require a system Gradle installation.
 - [x] **CI/CD**: GitHub Actions for automated build, lint, and test on every PR.
 - [x] **Package name**: 包名已改为 `io.github.akarimarisa.tumblrdownloader`.
-- [x] **Room DAO + migration tests**: 19 unit tests for `DownloadHistoryDao`, `CookieDao`, and migration from SharedPreferences (Robolectric + Room in-memory).
-- [ ] **More tests**: Add unit tests for `TumblrParser`, `DownloadStateManager`, and instrumentation tests for the full download flow.
+- [x] **Room DAO + migration tests**: 19 unit tests for `DownloadHistoryDao` (7), `CookieDao` (6), and migration from SharedPreferences (6) — part of a 101-test JVM suite (Robolectric + Room in-memory).
+- [x] **Engine/core unit tests**: `DownloadStateManager` (16), `DownloadItem`, `MediaQualitySelector` (14), `ThemeMode` (6), `DownloadService` network/notification/connectivity behavior (33), and `TumblrLoginTrackerBlocking` (11).
+- [ ] **Remaining test gaps**: `TumblrParser` unit tests and instrumentation tests for the full download flow are still missing.
 - [x] **Contributing guide**: `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` (English + 中文).
 - [x] **Screenshots**: Add app screenshots to README.
 - [x] **F-Droid release**: Published on F-Droid — [io.github.akarimarisa.tumblrdownloader](https://f-droid.org/packages/io.github.akarimarisa.tumblrdownloader/). Release signing is automated via GitHub Actions.
