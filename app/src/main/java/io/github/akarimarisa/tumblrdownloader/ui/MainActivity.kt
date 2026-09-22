@@ -120,6 +120,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Claim the singleton DownloadService progress listener so the
+        // visible screen receives download updates regardless of which
+        // ViewModel was constructed first. See
+        // MainViewModel.claimServiceProgressListener() — fixes issue #24
+        // (downloads stuck at "0%" while files complete).
+        viewModel.claimServiceProgressListener()
         viewModel.refreshTumblrAccount()
     }
 

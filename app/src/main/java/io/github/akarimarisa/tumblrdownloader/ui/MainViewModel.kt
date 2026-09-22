@@ -38,15 +38,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = appContext.getSharedPreferences("tumblr_downloader", Context.MODE_PRIVATE)
 
     // ── download state manager (sequential, race-free) ────────────────
-    val stateManager = DownloadStateManager(appContext).also { sm ->
-        // Only set the static progressListener if it isn't already set.
-        // When a transient ViewModel is created after the real ViewModel
-        // already registered its listener, we must NOT overwrite —
-        // otherwise the transient VM's onCleared() would null out the
-        // listener the real VM needs to receive progress updates.
-        if (DownloadService.progressListener == null) {
-            DownloadService.progressListener = sm.serviceProgressListener
-        }
+    // Note: the DownloadService.progressListener slot is claimed by
+    // [claimServiceProgressListener] from MainActivity.onResume(), NOT at
+    // construction time.  Construction-time claiming is order-dependent and
+    // left a live ViewModel permanently deaf when the task was restored
+    // with SettingsActivity on top (issue #24): Settings' ViewModel claimed
+    // the slot first, the recreated MainActivity skipped registration, and
+    // Settings' ViewModel cleared the slot on teardown — so the download
+    // list never received progress/completion events.
+    val stateManager = DownloadStateManager(appContext)
+
+    /**
+     * Claims the singleton [DownloadService.progressListener] slot for this
+     * state manager.
+     *
+     * Called from MainActivity.onResume() so the visible screen always
+     * receives download updates regardless of which ViewModel was
+     * constructed first.  Safe to call repeatedly (resume happens on every
+     * return to the screen); SettingsActivity's ViewModel never claims the
+     * slot, so the download list stays live even while Settings is on top.
+     */
+    fun claimServiceProgressListener() {
+        DownloadService.progressListener = stateManager.serviceProgressListener
     }
 
     val downloads: StateFlow<List<DownloadItem>> = stateManager.items
