@@ -255,7 +255,7 @@ For private or restricted posts:
 - [x] **Package name**: 包名已改为 `io.github.akarimarisa.tumblrdownloader`.
 - [x] **Room DAO + migration tests**: 19 unit tests for `DownloadHistoryDao`, `CookieDao`, and migration from SharedPreferences (Robolectric + Room in-memory).
 - [ ] **More tests**: Add unit tests for `TumblrParser`, `DownloadStateManager`, and instrumentation tests for the full download flow.
-- [ ] **Contributing guide**: Create `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
+- [x] **Contributing guide**: `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` (English + 中文).
 - [x] **Screenshots**: Add app screenshots to README.
 - [x] **F-Droid release**: Published on F-Droid — [io.github.akarimarisa.tumblrdownloader](https://f-droid.org/packages/io.github.akarimarisa.tumblrdownloader/). Release signing is automated via GitHub Actions.
 - [ ] **Play Store release**: Prepare signing and store listing materials for Google Play.
@@ -266,7 +266,7 @@ For private or restricted posts:
 
 Contributions are welcome! Feel free to open an issue or submit a pull request.
 
-Before contributing, please read our [Contributing Guidelines](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md).
+Before contributing, please read our [Contributing Guidelines](CONTRIBUTING.md) ([中文](CONTRIBUTING_zh.md)) and [Code of Conduct](CODE_OF_CONDUCT.md) ([中文](CODE_OF_CONDUCT_zh.md)).
 
 ### Development
 
