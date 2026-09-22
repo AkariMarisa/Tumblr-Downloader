@@ -259,7 +259,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - [x] **包名重命名**：已改为 `io.github.akarimarisa.tumblrdownloader`
 - [x] **Room DAO + 迁移测试**：19 个单元测试覆盖 `DownloadHistoryDao`、`CookieDao` 及 SharedPreferences 迁移（Robolectric + Room in-memory）
 - [ ] **更多测试**：补充 `TumblrParser`、`DownloadStateManager` 的单元测试，以及下载流程的 instrumentation 测试
-- [ ] **贡献指南**：创建 `CONTRIBUTING.md` 和 `CODE_OF_CONDUCT.md`
+- [x] **贡献指南**：已创建 `CONTRIBUTING.md`/`CONTRIBUTING_zh.md` 与 `CODE_OF_CONDUCT.md`/`CODE_OF_CONDUCT_zh.md`（中英双语）
 - [x] **截图**：在 README 中添加应用截图
 - [x] **F-Droid 上架**：已在 F-Droid 发布——[io.github.akarimarisa.tumblrdownloader](https://f-droid.org/zh_Hans/packages/io.github.akarimarisa.tumblrdownloader/)。Release 签名由 GitHub Actions 自动完成。
 - [ ] **Google Play 上架**：准备 Play Store 的签名与上架材料。
@@ -270,7 +270,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 欢迎贡献！请随时提出 Issue 或提交 Pull Request。
 
-在贡献之前，请阅读[贡献指南](CONTRIBUTING.md)和[行为准则](CODE_OF_CONDUCT.md)。
+在贡献之前，请阅读[贡献指南](CONTRIBUTING_zh.md)（[English](CONTRIBUTING.md)）和[行为准则](CODE_OF_CONDUCT_zh.md)（[English](CODE_OF_CONDUCT.md)）。
 
 ### 开发
 
