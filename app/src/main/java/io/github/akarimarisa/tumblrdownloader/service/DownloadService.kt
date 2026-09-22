@@ -123,6 +123,18 @@ class DownloadService : Service() {
     private val suspendedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
     private val removedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
     private val queuedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
+
+    /**
+     * Items dequeued from [queueChannel] but not yet handed to a download
+     * job — i.e. sitting in the inter-task gap delay or blocked on
+     * [concurrencySemaphore].  Pause/remove commands must know about these
+     * ids too: ACTION_PAUSE_ALL only drains the channel and cancels active
+     * jobs, so without tracking in-hand items one of them would start
+     * downloading right after its predecessor finished, even though the UI
+     * already shows it as PAUSED (DownloadStateManager updates the list
+     * state before the service command is even sent).
+     */
+    private val inHandItemIds = Collections.synchronizedSet(mutableSetOf<String>())
     private val pauseStateMap = Collections.synchronizedMap(mutableMapOf<String, PauseState>())
 
     /**
@@ -323,6 +335,7 @@ class DownloadService : Service() {
                 queuedItemIds.clear()
                 suspendedItemIds.clear()
                 removedItemIds.clear()
+                inHandItemIds.clear()
                 pauseStateMap.clear()
                 downloadTargetMap.clear()
                 activeDownloadedBytesMap.clear()
@@ -337,6 +350,11 @@ class DownloadService : Service() {
                 // Cancel all active download jobs
                 activeJobs.values.forEach { it.cancel(CancellationException("Paused by user")) }
                 activeJobs.clear()
+                // Items already dequeued (in the gap delay or blocked on the
+                // semaphore) are not in the channel, so the drain below can't
+                // stop them — mark them suspended so the runQueue
+                // post-acquire guard drops them instead of starting them.
+                suspendedItemIds.addAll(inHandItemIds)
                 // Drain the queue channel so queued items don't start
                 while (queueChannel.tryReceive().isSuccess) { }
                 return START_STICKY
@@ -399,6 +417,7 @@ class DownloadService : Service() {
                 } ?: break
 
                 queuedItemIds.remove(item.id)
+                inHandItemIds.add(item.id)
 
                 if (suspendedItemIds.contains(item.id) || removedItemIds.remove(item.id)) {
                     emitProgress(item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = resolveString(R.string.status_paused)))
@@ -427,6 +446,17 @@ class DownloadService : Service() {
 
                 // Acquire semaphore permit — blocks if max concurrency reached
                 concurrencySemaphore.acquire()
+                inHandItemIds.remove(item.id)
+                // The item may have been paused (or removed) while this
+                // coroutine was waiting for the slot — it was already
+                // dequeued, so ACTION_PAUSE / ACTION_PAUSE_ALL could not
+                // reach it through the channel.  DownloadStateManager has
+                // already updated the list state (PAUSED/removed) before
+                // sending the command, so this item must simply not start.
+                if (suspendedItemIds.contains(item.id) || removedItemIds.remove(item.id)) {
+                    concurrencySemaphore.release()
+                    continue
+                }
                 activeDownloadedBytesMap[item.id] = item.downloadedBytes
                 val job = serviceScope.launch {
                     try {
