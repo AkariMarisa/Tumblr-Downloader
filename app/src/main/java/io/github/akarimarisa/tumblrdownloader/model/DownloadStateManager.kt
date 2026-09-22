@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import androidx.annotation.VisibleForTesting
 import io.github.akarimarisa.tumblrdownloader.R
 import io.github.akarimarisa.tumblrdownloader.service.DownloadService
 import io.github.akarimarisa.tumblrdownloader.model.MediaQualityPrefs
@@ -33,12 +34,38 @@ import kotlinx.coroutines.withContext
  * Every state transition passes through a single coroutine that validates,
  * applies, and persists changes.  The ViewModel and Service delegate all
  * mutations here — no more races between user actions and progress callbacks.
+ *
+ * Production code must use [getInstance] — there must be exactly ONE
+ * instance per process (see [getInstance] for why).  [forTest] exists only
+ * to give unit tests fresh, isolated instances.
  */
-class DownloadStateManager(private val app: Application) {
+class DownloadStateManager private constructor(private val app: Application) {
 
     companion object {
         private const val PREFS_NAME = "tumblr_downloader"
         private const val PREF_MAX_CONCURRENT = "max_concurrent_downloads"
+
+        @Volatile
+        private var instance: DownloadStateManager? = null
+
+        /**
+         * Process-wide shared instance.
+         *
+         * MainViewModel is constructed once per hosting Activity — both
+         * MainActivity and SettingsActivity have their own — and a second
+         * live instance would restore and re-persist its OWN snapshot
+         * (racing the visible instance's persistence via replaceAll) and
+         * reintroduce the registration-order bugs behind issue #24
+         * (downloads stuck at "0%" while files complete in the background).
+         */
+        fun getInstance(app: Application): DownloadStateManager =
+            instance ?: synchronized(this) {
+                instance ?: DownloadStateManager(app).also { instance = it }
+            }
+
+        /** Fresh, isolated instance for unit tests only. */
+        @VisibleForTesting
+        internal fun forTest(app: Application): DownloadStateManager = DownloadStateManager(app)
     }
 
     private fun getMaxConcurrentDownloads(): Int {
@@ -379,7 +406,11 @@ class DownloadStateManager(private val app: Application) {
         _items.value = _items.value.map { item ->
             if (item.status == DownloadStatus.DOWNLOADING || item.status == DownloadStatus.QUEUED) {
                 changed = true
-                item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = null)
+                // Keep the item's progress: an in-flight download must keep
+                // showing its real percentage after pause-all.  (The service
+                // also emits PAUSED with lastProgress, which the
+                // processProgress guard coalesces into this preserved value.)
+                item.copy(status = DownloadStatus.PAUSED, errorMessage = null)
             } else item
         }
         if (changed) dirty = true

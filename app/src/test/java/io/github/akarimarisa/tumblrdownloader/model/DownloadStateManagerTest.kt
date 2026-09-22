@@ -34,7 +34,7 @@ class DownloadStateManagerTest {
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         app = ApplicationProvider.getApplicationContext()
-        stateManager = DownloadStateManager(app)
+        stateManager = DownloadStateManager.forTest(app)
     }
 
     @After
@@ -98,6 +98,40 @@ class DownloadStateManagerTest {
             DownloadStatus.PAUSED,
             stateManager.items.value.find { it.id == "c" }?.status
         )
+    }
+
+    // ── pause all ──────────────────────────────────────────────────────
+
+    @Test
+    fun pauseAll_preservesInFlightProgress() = runTest(testDispatcher) {
+        // An in-flight download at 60% must keep showing 60% after
+        // pause-all — zeroing it would lie to the user (issue #24 audit).
+        val running = item("p", status = DownloadStatus.DOWNLOADING).copy(progress = 60)
+        val queued = item("q", status = DownloadStatus.QUEUED)
+        stateManager.restore(listOf(running, queued))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.pauseAll()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val paused = stateManager.items.value.find { it.id == "p" }
+        assertEquals(DownloadStatus.PAUSED, paused?.status)
+        assertEquals(
+            "in-flight progress must be preserved across pause-all",
+            60,
+            paused?.progress
+        )
+    }
+
+    // ── singleton (issue #24 audit) ────────────────────────────────────
+
+    @Test
+    fun getInstance_returnsTheSameInstance() = runTest(testDispatcher) {
+        // Exactly one state owner per process — a second instance would
+        // restore + re-persist its own snapshot and split the state.
+        val first = DownloadStateManager.getInstance(app)
+        val second = DownloadStateManager.getInstance(app)
+        assertSame("process must have a single DownloadStateManager", first, second)
     }
 
     // ── start / resume ───────────────────────────────────────────────────

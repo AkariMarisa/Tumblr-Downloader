@@ -38,15 +38,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = appContext.getSharedPreferences("tumblr_downloader", Context.MODE_PRIVATE)
 
     // ── download state manager (sequential, race-free) ────────────────
-    // Note: the DownloadService.progressListener slot is claimed by
-    // [claimServiceProgressListener] from MainActivity.onResume(), NOT at
-    // construction time.  Construction-time claiming is order-dependent and
-    // left a live ViewModel permanently deaf when the task was restored
-    // with SettingsActivity on top (issue #24): Settings' ViewModel claimed
-    // the slot first, the recreated MainActivity skipped registration, and
-    // Settings' ViewModel cleared the slot on teardown — so the download
-    // list never received progress/completion events.
-    val stateManager = DownloadStateManager(appContext)
+    // Process-wide singleton — there must be exactly ONE state owner per
+    // process.  MainViewModel is constructed once per hosting Activity
+    // (MainActivity AND SettingsActivity each have their own instance), so
+    // a per-instance DownloadStateManager would restore and re-persist its
+    // own snapshot on every Settings visit (racing the live one) and
+    // reintroduce the registration-order bugs behind issue #24.
+    val stateManager = DownloadStateManager.getInstance(appContext)
 
     /**
      * Claims the singleton [DownloadService.progressListener] slot for this

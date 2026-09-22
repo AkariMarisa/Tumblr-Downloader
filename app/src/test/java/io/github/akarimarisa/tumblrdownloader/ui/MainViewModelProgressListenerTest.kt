@@ -34,6 +34,11 @@ import org.robolectric.annotation.Config
  * depends on construction order.  SettingsActivity's ViewModel never
  * claims, so the download list stays live even while Settings is on top.
  *
+ * Additionally, all MainViewModel instances now share one process-wide
+ * [io.github.akarimarisa.tumblrdownloader.model.DownloadStateManager]
+ * (see [DownloadStateManager.getInstance]) so the single state owner is
+ * structural, not accidental.
+ *
  * These tests exercise the claim/release semantics directly (an activity
  * launch is not used because Robolectric cannot inflate this project's
  * view-binding layouts).
@@ -95,20 +100,14 @@ class MainViewModelProgressListenerTest {
     }
 
     @Test
-    fun `clearing a non-owner view model does not release the slot`() {
+    fun `all main view model instances share one state manager`() {
+        // Both MainActivity and SettingsActivity construct their own
+        // MainViewModel — they must back onto the SAME process-wide
+        // DownloadStateManager, otherwise the second instance would
+        // restore + re-persist its own snapshot alongside the live one.
         val mainVm = createMainViewModel()
-        mainVm.claimServiceProgressListener()
-        val mainListener = DownloadService.progressListener
+        val settingsVm = createMainViewModel()
 
-        // A second view model is cleared (e.g. SettingsActivity finishing
-        // while MainActivity holds the slot) — it must not null the slot.
-        val app = ApplicationProvider.getApplicationContext<Application>()
-        val settingsStore = ViewModelStore()
-        ViewModelProvider(
-            settingsStore, ViewModelProvider.AndroidViewModelFactory(app)
-        )[MainViewModel::class.java]
-        settingsStore.clear()
-
-        assertSame(mainListener, DownloadService.progressListener)
+        assertSame(mainVm.stateManager, settingsVm.stateManager)
     }
 }
