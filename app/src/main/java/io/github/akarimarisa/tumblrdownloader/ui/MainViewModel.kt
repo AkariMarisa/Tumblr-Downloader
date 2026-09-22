@@ -55,6 +55,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * constructed first.  Safe to call repeatedly (resume happens on every
      * return to the screen); SettingsActivity's ViewModel never claims the
      * slot, so the download list stays live even while Settings is on top.
+     *
+     * The slot is intentionally NEVER released by a ViewModel: the state
+     * manager is process-wide and persists even when every hosting Activity
+     * is destroyed or evicted while the app is backgrounded.  Releasing it
+     * on onCleared() would leave the manager deaf (and stop it persisting)
+     * while the foreground service keeps downloading — the exact issue #24
+     * "stuck progress" symptom class.
      */
     fun claimServiceProgressListener() {
         DownloadService.progressListener = stateManager.serviceProgressListener
@@ -99,13 +106,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         refreshDownloadDirectoryLabel()
         refreshTumblrAccount()
-    }
-
-    override fun onCleared() {
-        if (DownloadService.progressListener === stateManager.serviceProgressListener) {
-            DownloadService.progressListener = null
-        }
-        super.onCleared()
     }
 
     // ── delegated to stateManager (sequential, race-free) ─────────────

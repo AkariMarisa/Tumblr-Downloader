@@ -9,7 +9,6 @@ import io.github.akarimarisa.tumblrdownloader.service.DownloadService
 import org.junit.After
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Before
 import org.junit.Test
@@ -39,7 +38,7 @@ import org.robolectric.annotation.Config
  * (see [DownloadStateManager.getInstance]) so the single state owner is
  * structural, not accidental.
  *
- * These tests exercise the claim/release semantics directly (an activity
+ * These tests exercise the claim semantics directly (an activity
  * launch is not used because Robolectric cannot inflate this project's
  * view-binding layouts).
  *
@@ -85,7 +84,13 @@ class MainViewModelProgressListenerTest {
     }
 
     @Test
-    fun `clearing the owner view model releases the slot`() {
+    fun `clearing a view model does not release the slot`() {
+        // The slot is owned by the process-wide state manager.  Clearing the
+        // hosting ViewModel (activity finished or evicted by the system while
+        // backgrounded) must NOT detach progress delivery — otherwise the
+        // singleton manager goes deaf (and stops persisting) while the
+        // foreground service keeps downloading, recreating the issue #24
+        // "stuck progress" symptom.
         val app = ApplicationProvider.getApplicationContext<Application>()
         val store = ViewModelStore()
         val mainVm = ViewModelProvider(
@@ -94,9 +99,13 @@ class MainViewModelProgressListenerTest {
         mainVm.claimServiceProgressListener()
         assertNotNull(DownloadService.progressListener)
 
-        store.clear() // triggers MainViewModel.onCleared()
+        store.clear() // previously triggered MainViewModel.onCleared()
 
-        assertNull(DownloadService.progressListener)
+        assertSame(
+            "the singleton manager must keep receiving updates after the view model dies",
+            mainVm.stateManager.serviceProgressListener,
+            DownloadService.progressListener
+        )
     }
 
     @Test
