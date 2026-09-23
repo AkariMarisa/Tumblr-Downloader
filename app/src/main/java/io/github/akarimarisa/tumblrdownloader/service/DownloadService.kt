@@ -563,30 +563,51 @@ class DownloadService : Service() {
                     // Update the item so downloadWithRateLimit uses the correct Range header
                     current = current.copy(downloadedBytes = actualBytes)
                     // "wa" = write + append
-                    val os = contentResolver.openOutputStream(uri, "wa")
-                        ?: throw IOException("Cannot open file in append mode: $uri")
-                    DownloadTarget(
-                        uri = uri,
-                        outputStream = os,
-                        onSuccess = {
-                            // ponytail: file fully written.  IS_PENDING update
-                            // is cosmetic (hides from gallery); ignore failures.
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                runCatching {
-                                    val done = ContentValues().apply {
-                                        put(MediaStore.Downloads.IS_PENDING, 0)
+                    val os = try {
+                        contentResolver.openOutputStream(uri, "wa")
+                    } catch (e: Exception) {
+                        // The persisted target is gone (e.g. the partial file was
+                        // deleted when a service/process died mid-download).  Resume
+                        // is impossible — degrade to a fresh full download instead
+                        // of hard-failing with a stale-URI error.
+                        android.util.Log.w(
+                            "DownloadSvc",
+                            "resume target gone (${e.message}), restarting from zero for ${current.id.take(8)}"
+                        )
+                        runCatching { contentResolver.delete(uri, null, null) }
+                        downloadTargetMap.remove(current.id)
+                        current = current.copy(downloadedBytes = 0L, downloadFileUri = null)
+                        isResume = false
+                        null
+                    }
+                    if (os != null) {
+                        DownloadTarget(
+                            uri = uri,
+                            outputStream = os,
+                            onSuccess = {
+                                // ponytail: file fully written.  IS_PENDING update
+                                // is cosmetic (hides from gallery); ignore failures.
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                    runCatching {
+                                        val done = ContentValues().apply {
+                                            put(MediaStore.Downloads.IS_PENDING, 0)
+                                        }
+                                        contentResolver.update(uri, done, null, null)
                                     }
-                                    contentResolver.update(uri, done, null, null)
+                                }
+                            },
+                            onFailure = {
+                                // Don't delete on pause; only on fatal errors or explicit remove
+                                runCatching {
+                                    // Close quietly
                                 }
                             }
-                        },
-                        onFailure = {
-                            // Don't delete on pause; only on fatal errors or explicit remove
-                            runCatching {
-                                // Close quietly
-                            }
-                        }
-                    )
+                        )
+                    } else {
+                        val fresh = createDownloadTarget(current)
+                        downloadTargetMap[current.id] = fresh.uri
+                        fresh
+                    }
                 } else {
                     // ponytail: reuse cached URI if one already exists for this
                     // item (e.g. from a previous retry attempt).  MediaStore
