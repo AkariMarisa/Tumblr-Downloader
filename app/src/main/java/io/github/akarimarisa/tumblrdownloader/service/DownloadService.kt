@@ -11,9 +11,11 @@ import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Environment
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.SystemClock
 import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationCompat
@@ -120,6 +122,64 @@ class DownloadService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
     private lateinit var notificationManager: NotificationManager
     private val queueChannel = Channel<DownloadItem>(Channel.UNLIMITED)
+
+    // ── wake locks ────────────────────────────────────────────────────
+    // PARTIAL_WAKE_LOCK keeps the CPU from dozing while a download is in
+    // flight (screen off, Doze).  The WifiLock keeps the radio from idling
+    // into power-save mode on flaky connections.  Both are held from the
+    // moment the queue worker starts until it becomes genuinely idle, and
+    // are also released defensively in onDestroy().
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+
+    private fun acquireWakeLocks() {
+        if (wakeLock == null) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            try {
+                wakeLock = pm.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "tumblr-downloader:download"
+                ).apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DownloadSvc", "wake lock unavailable: ${e.message}")
+                wakeLock = null
+            }
+        }
+        if (wifiLock == null) {
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            try {
+                wifiLock = wm.createWifiLock(
+                    WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                    "tumblr-downloader:download"
+                ).apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            } catch (e: Exception) {
+                // 某些设备/系统限制 WifiLock，降级为仅持有 WakeLock。
+                android.util.Log.w("DownloadSvc", "wifi lock unavailable: ${e.message}")
+                wifiLock = null
+            }
+        }
+    }
+
+    private fun releaseWakeLocks() {
+        try {
+            wakeLock?.let { lock -> if (lock.isHeld) lock.release() }
+        } catch (_: Exception) {
+        } finally {
+            wakeLock = null
+        }
+        try {
+            wifiLock?.let { lock -> if (lock.isHeld) lock.release() }
+        } catch (_: Exception) {
+        } finally {
+            wifiLock = null
+        }
+    }
     private val suspendedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
     private val removedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
     private val queuedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
@@ -404,6 +464,7 @@ class DownloadService : Service() {
 
     private fun startWorkerIfNeeded() {
         if (workerJob?.isActive == true) return
+        acquireWakeLocks()
         workerJob = serviceScope.launch {
             runQueue()
         }
@@ -491,6 +552,7 @@ class DownloadService : Service() {
             }
         } finally {
             workerJob = null
+            releaseWakeLocks()
             stopSelf()
         }
     }
@@ -1302,6 +1364,7 @@ class DownloadService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        releaseWakeLocks()
         stopHeartbeat()
         queueChannel.close()
         serviceScope.cancel()
