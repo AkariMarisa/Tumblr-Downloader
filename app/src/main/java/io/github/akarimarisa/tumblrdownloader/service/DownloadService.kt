@@ -414,7 +414,17 @@ class DownloadService : Service() {
             while (true) {
                 val item = withTimeoutOrNull(IDLE_TIMEOUT_MS) {
                     queueChannel.receive()
-                } ?: break
+                }
+                if (item == null) {
+                    // Only stop when the service is genuinely idle.  A long
+                    // download (slow network, rate limiting, large file) must
+                    // never be cancelled by this timeout: breaking here used
+                    // to call stopSelf() → onDestroy() → serviceScope.cancel(),
+                    // killing the in-flight job and freezing the item at its
+                    // current percentage with no terminal event.
+                    if (activeJobs.isEmpty()) break
+                    continue
+                }
 
                 queuedItemIds.remove(item.id)
                 inHandItemIds.add(item.id)
