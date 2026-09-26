@@ -11,7 +11,6 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.StrictMode
 import android.provider.DocumentsContract
-import android.widget.Toast
 import java.io.File
 import java.util.Locale
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,6 +28,7 @@ import io.github.akarimarisa.tumblrdownloader.ui.MainActivity
 import io.github.akarimarisa.tumblrdownloader.ui.MainViewModel
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadUtils
 import io.github.akarimarisa.tumblrdownloader.utils.LocaleHelper
+import io.github.akarimarisa.tumblrdownloader.utils.LocalizedToast
 import kotlinx.coroutines.launch
 
 private const val PREFS_NAME = "tumblr_downloader"
@@ -40,6 +40,8 @@ private const val PREF_RATE_LIMIT = "rate_limit_bytes_per_second"
 private val RATE_LIMIT_OPTIONS = longArrayOf(0L, 262_144L, 524_288L, 1_048_576L, 2_097_152L, 4_194_304L)
 
 class SettingsActivity : AppCompatActivity() {
+
+    private fun toastContext() = LocaleHelper.contextForAppLocale(this)
 
     private lateinit var binding: ActivitySettingsBinding
     private val viewModel: MainViewModel by viewModels()
@@ -58,7 +60,7 @@ class SettingsActivity : AppCompatActivity() {
         try {
             contentResolver.takePersistableUriPermission(uri, flags)
         } catch (_: SecurityException) {
-            Toast.makeText(this, R.string.download_dir_permission_warning, Toast.LENGTH_LONG).show()
+            LocalizedToast.show(toastContext(), R.string.download_dir_permission_warning, android.widget.Toast.LENGTH_LONG)
         }
 
         viewModel.setCustomDownloadDirectory(uri)
@@ -94,7 +96,7 @@ class SettingsActivity : AppCompatActivity() {
 
         binding.btnResetDownloadDir.setOnClickListener {
             viewModel.resetDownloadDirectory()
-            Toast.makeText(this, R.string.download_directory_reset_toast, Toast.LENGTH_SHORT).show()
+            LocalizedToast.show(toastContext(), R.string.download_directory_reset_toast, android.widget.Toast.LENGTH_SHORT)
         }
 
         binding.btnOpenDownloadDir.setOnClickListener {
@@ -114,7 +116,7 @@ class SettingsActivity : AppCompatActivity() {
                 .setMessage(R.string.pref_clear_cache_dialog)
                 .setPositiveButton(android.R.string.ok) { _, _ ->
                     prefs.edit().remove(PREF_LAST_AUTO_URL).apply()
-                    Toast.makeText(this, R.string.cache_cleared_toast, Toast.LENGTH_SHORT).show()
+                    LocalizedToast.show(toastContext(), R.string.cache_cleared_toast, android.widget.Toast.LENGTH_SHORT)
                 }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
@@ -405,7 +407,7 @@ class SettingsActivity : AppCompatActivity() {
                 putExtra(DocumentsContract.EXTRA_INITIAL_URI, treeUri)
             })
         } catch (_: Exception) {
-            Toast.makeText(this, R.string.open_download_directory_failed, Toast.LENGTH_LONG).show()
+            LocalizedToast.show(toastContext(), R.string.open_download_directory_failed, android.widget.Toast.LENGTH_LONG)
         }
     }
 }

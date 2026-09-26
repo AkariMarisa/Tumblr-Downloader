@@ -14,6 +14,7 @@ import io.github.akarimarisa.tumblrdownloader.service.DownloadService
 import io.github.akarimarisa.tumblrdownloader.model.ParseEvent
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadHistoryStore
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadUtils
+import io.github.akarimarisa.tumblrdownloader.utils.LocaleHelper
 import io.github.akarimarisa.tumblrdownloader.utils.TumblrAccount
 import io.github.akarimarisa.tumblrdownloader.utils.TumblrAccountStore
 import io.github.akarimarisa.tumblrdownloader.R
@@ -87,7 +88,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     DownloadStatus.DOWNLOADING -> item.copy(
                         status = DownloadStatus.FAILED,
                         progress = 0,
-                        errorMessage = appContext.getString(R.string.restored_state_invalid)
+                        errorMessage = LocaleHelper.contextForAppLocale(appContext).getString(R.string.restored_state_invalid)
                     )
                     else -> item
                 }
@@ -148,7 +149,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Log.w(TAG, "retryPendingLoginUrl: cookie sync timeout, URL preserved for manual retry")
                 stateManager.emitParseEvent(
                     ParseEvent.CookieSecurityNotice(
-                        getApplication<Application>().getString(R.string.cookie_sync_timeout)
+                        LocaleHelper.contextForAppLocale(appContext).getString(R.string.cookie_sync_timeout)
                     )
                 )
             }

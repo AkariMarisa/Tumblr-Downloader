@@ -18,15 +18,16 @@ object DownloadUtils {
             .trim()
             .replace("https://", "")
             .replace("http://", "")
-            // 保留 Unicode 字母（中文/日文/韩文等）、数字、. _ -，其余替换为 _
+            // Keep Unicode letters (Chinese/Japanese/Korean, etc.), digits, . _ -; replace the rest with _
             .replace(Regex("[^\\p{L}\\p{N}._-]"), "_")
-            .replace(Regex("_+"), "_")   // 合并连续下划线
+            .replace(Regex("_+"), "_")   // collapse consecutive underscores
             .ifBlank { fallback }
     }
 
     /**
-     * 默认下载目录名：固定为英文，避免中文字符/空格被 sanitize 后变成乱码。
-     * 使用固定名称也确保切换语言后目录不会变来变去。
+     * Default download folder name: fixed to English so that Chinese
+     * characters/spaces are not garbled after sanitization. The fixed name
+     * also keeps the folder stable across app language changes.
      */
     fun getDefaultDownloadFolderName(context: Context): String {
         return "TumblrDownloader"
@@ -86,9 +87,9 @@ object DownloadUtils {
     }
 
     /**
-     * 对媒体 URL 做解析去重归一化：
-     * - 移除常见分辨率片段
-     * - 保留 host+path，忽略查询参数顺序差异
+     * Normalizes a media URL for parsing/dedup purposes:
+     * - strips common resolution fragments
+     * - keeps host+path, ignoring differences in query parameter order
      */
     fun normalizeMediaIdentity(mediaUrl: String): String {
         val uri = runCatching { Uri.parse(mediaUrl) }.getOrNull() ?: return mediaUrl.lowercase(Locale.getDefault())
@@ -104,6 +105,11 @@ object DownloadUtils {
             .replace(Regex("/s\\d+x\\d+(?:_[^/]+)?/"), "/")
             .replace(Regex("_c\\d+,\\d+,\\d+,\\d+(?=\\.[a-z0-9]+$)"), "")
             .replace(Regex("_(\\d{2,4}x\\d{2,4})(?=\\.[a-z0-9]+$)"), "")
+            // Square crop variants: "tumblr_x_250sq.jpg" (250x250 square
+            // thumbnail) are the same media as "tumblr_x_250.jpg" — strip the
+            // "sq" suffix so they don't become separate download items (issue
+            // #24: one post, one image, but three files downloaded).
+            .replace(Regex("_(\\d{2,4})sq(?=\\.[a-z0-9]+$)"), "")
             .replace(Regex("_(\\d{3,4})(?=\\.[a-z0-9]+$)"), "")
 
         if (hostKey.endsWith("media.tumblr.com")) {

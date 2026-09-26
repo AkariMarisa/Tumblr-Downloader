@@ -6,7 +6,6 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
@@ -18,6 +17,8 @@ import io.github.akarimarisa.tumblrdownloader.ui.MainActivity
 import io.github.akarimarisa.tumblrdownloader.ui.MainViewModel
 import io.github.akarimarisa.tumblrdownloader.model.ParseEvent
 import io.github.akarimarisa.tumblrdownloader.ui.auth.TumblrLoginActivity
+import io.github.akarimarisa.tumblrdownloader.utils.LocaleHelper
+import io.github.akarimarisa.tumblrdownloader.utils.LocalizedToast
 import kotlinx.coroutines.launch
 
 class DownloadFragment : Fragment() {
@@ -31,6 +32,8 @@ class DownloadFragment : Fragment() {
     private val viewModel: MainViewModel by activityViewModels()
 
     private var loginLaunchPending = false
+
+    private fun toastContext() = LocaleHelper.contextForAppLocale(requireContext())
 
     private val loginLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -58,7 +61,7 @@ class DownloadFragment : Fragment() {
             val url = binding.etUrl.text?.toString().orEmpty().trim()
             val ok = viewModel.enqueueFromUrl(url)
             if (!ok) {
-                Toast.makeText(requireContext(), R.string.invalid_url, Toast.LENGTH_SHORT).show()
+                LocalizedToast.show(toastContext(), R.string.invalid_url, android.widget.Toast.LENGTH_SHORT)
             } else {
                 showLoading(true)
             }
@@ -82,7 +85,7 @@ class DownloadFragment : Fragment() {
                     is ParseEvent.Message -> {
                         showLoading(false)
                         if (event.text.isNotBlank()) {
-                            Toast.makeText(requireContext(), event.text, Toast.LENGTH_LONG).show()
+                            LocalizedToast.show(toastContext(), event.text, android.widget.Toast.LENGTH_LONG)
                         }
                     }
 
@@ -93,13 +96,13 @@ class DownloadFragment : Fragment() {
                             return@collect
                         }
                         loginLaunchPending = true
-                        Toast.makeText(requireContext(), event.message, Toast.LENGTH_LONG).show()
+                        LocalizedToast.show(toastContext(), event.message, android.widget.Toast.LENGTH_LONG)
                         loginLauncher.launch(TumblrLoginActivity.newIntent(requireContext(), event.url))
                     }
 
                     is ParseEvent.Queued -> {
                         binding.etUrl.text?.clear()
-                        Toast.makeText(requireContext(), getString(R.string.queued_message, event.count), Toast.LENGTH_SHORT).show()
+                        LocalizedToast.show(toastContext(), toastContext().getString(R.string.queued_message, event.count), android.widget.Toast.LENGTH_SHORT)
                         (requireActivity() as? MainActivity)?.showDownloadsTab()
                         binding.loadingOverlay.post {
                             showLoading(false)
@@ -108,7 +111,7 @@ class DownloadFragment : Fragment() {
 
                     is ParseEvent.CookieSecurityNotice -> {
                         showLoading(false)
-                        Toast.makeText(requireContext(), event.text, Toast.LENGTH_LONG).show()
+                        LocalizedToast.show(toastContext(), event.text, android.widget.Toast.LENGTH_LONG)
                     }
                 }
             }

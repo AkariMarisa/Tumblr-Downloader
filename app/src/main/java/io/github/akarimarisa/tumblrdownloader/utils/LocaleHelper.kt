@@ -3,6 +3,7 @@ package io.github.akarimarisa.tumblrdownloader.utils
 import android.content.Context
 import android.content.res.Configuration
 import android.os.Build
+import android.os.LocaleList
 import java.util.Locale
 
 object LocaleHelper {
@@ -22,6 +23,17 @@ object LocaleHelper {
             .edit()
             .putString(KEY_LANG, locale?.toLanguageTag())
             .apply()
+
+        syncPlatformLocale(context)
+    }
+
+    /** Keep Android 13+'s package-level locale in sync with the app setting. */
+    fun syncPlatformLocale(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+
+        val locale = getPersistedLocale(context)
+        context.getSystemService(android.app.LocaleManager::class.java)
+            ?.applicationLocales = LocaleList.forLanguageTags(locale?.toLanguageTag().orEmpty())
     }
 
     /** Wrap a context with the given locale as the configuration locale. */
@@ -42,4 +54,12 @@ object LocaleHelper {
         val locale = getPersistedLocale(context)
         return if (locale != null) wrapContext(context, locale) else context
     }
+
+    /**
+     * Returns resources using the language selected inside the app. This is
+     * used by background-owned strings such as parser events and service
+     * notifications, which otherwise may read from the system-locale
+     * Application context.
+     */
+    fun contextForAppLocale(context: Context): Context = applyToContext(context)
 }

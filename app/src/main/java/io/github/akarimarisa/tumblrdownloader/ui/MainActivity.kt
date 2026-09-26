@@ -27,13 +27,13 @@ import io.github.akarimarisa.tumblrdownloader.ui.auth.TumblrLoginActivity
 import io.github.akarimarisa.tumblrdownloader.ui.about.AboutActivity
 import io.github.akarimarisa.tumblrdownloader.ui.settings.SettingsActivity
 import io.github.akarimarisa.tumblrdownloader.utils.LocaleHelper
+import io.github.akarimarisa.tumblrdownloader.utils.LocalizedToast
 import io.github.akarimarisa.tumblrdownloader.utils.TumblrParser
 import com.google.android.material.tabs.TabLayoutMediator
 import io.github.akarimarisa.tumblrdownloader.ui.download.DownloadFragment
 import io.github.akarimarisa.tumblrdownloader.ui.download.DownloadsFragment
 import kotlinx.coroutines.launch
 import androidx.viewpager2.widget.ViewPager2
-import android.widget.Toast
 import android.util.Log
 
 private const val TAG = "MainActivity"
@@ -185,7 +185,7 @@ class MainActivity : AppCompatActivity() {
             R.id.menu_settings -> startActivity(Intent(this, SettingsActivity::class.java))
             R.id.menu_logout -> {
                 viewModel.clearSavedCookies()
-                Toast.makeText(this, R.string.cookies_cleared_toast, Toast.LENGTH_SHORT).show()
+                LocalizedToast.show(LocaleHelper.contextForAppLocale(this), R.string.cookies_cleared_toast, android.widget.Toast.LENGTH_SHORT)
             }
             R.id.menu_about -> startActivity(Intent(this, AboutActivity::class.java))
         }

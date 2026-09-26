@@ -19,6 +19,10 @@ class TumblrDownloaderApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // SystemUI resolves the app label used by Android 13+ toasts from the
+        // platform per-app locale, while older Android versions use the
+        // wrapped context supplied from attachBaseContext.
+        LocaleHelper.syncPlatformLocale(this)
         // Apply persisted theme mode (follow-system / light / dark) before any
         // Activity is created so DayNight picks the right resources.
         AppCompatDelegate.setDefaultNightMode(ThemeModePrefs.read(this).nightMode)

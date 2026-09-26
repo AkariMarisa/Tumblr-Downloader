@@ -31,6 +31,31 @@ class MediaQualitySelectorTest {
     }
 
     @Test
+    fun parseSize_image_suffixNumSq() {
+        // Issue #24: "tumblr_x_250sq.jpg" is a 250x250 square crop of the same
+        // image as "tumblr_x_250.jpg" — parse as its edge length (250 / 75).
+        assertEquals(250, MediaQualitySelector.parseSize("https://64.media.tumblr.com/h1/h2/tumblr_x_250sq.jpg", MediaType.IMAGE))
+        assertEquals(75, MediaQualitySelector.parseSize("https://64.media.tumblr.com/h1/h2/tumblr_x_75sq.jpg", MediaType.IMAGE))
+    }
+
+    @Test
+    fun select_sqVariantRanksWithSameResolution() {
+        // The full rbrvp post variant set: the square crops must participate in
+        // tier selection, and the highest resolution (_1280) wins the unlimited
+        // tier instead of the sq crops becoming separate items.
+        val urls = listOf(
+            "https://64.media.tumblr.com/h/h/tumblr_pxmdpfJRos1y7xzt4o1_250sq.jpg",
+            "https://64.media.tumblr.com/h/h/tumblr_pxmdpfJRos1y7xzt4o1_75sq.jpg",
+            "https://64.media.tumblr.com/h/h/tumblr_pxmdpfJRos1y7xzt4o1_1280.jpg",
+            "https://64.media.tumblr.com/h/h/tumblr_pxmdpfJRos1y7xzt4o1_500.jpg"
+        )
+        assertEquals(
+            urls[2],
+            MediaQualitySelector.selectBestUrl(urls, MediaType.IMAGE, null, null)
+        )
+    }
+
+    @Test
     fun parseSize_video_pathSegment_usesHeight() {
         assertEquals(1080, MediaQualitySelector.parseSize("https://va.media.tumblr.com/h1/h2/s1920x1080/xyz.mp4", MediaType.VIDEO))
         assertEquals(720, MediaQualitySelector.parseSize("https://va.media.tumblr.com/h1/h2/s1280x720/xyz.mp4", MediaType.VIDEO))
