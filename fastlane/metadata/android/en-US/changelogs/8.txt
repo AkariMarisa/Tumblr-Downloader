@@ -1,0 +1,5 @@
+• Improve pause and resume checkpoint handling
+• Keep active, queued, and paused task states synchronized
+• Fix download and summary notification transitions
+• Improve Tumblr media deduplication and quality selection
+• Apply the selected app language to background messages and Toasts
