@@ -5,15 +5,18 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Environment
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.SystemClock
 import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationCompat
@@ -32,8 +35,10 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.yield
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Semaphore
@@ -50,6 +55,11 @@ import kotlin.random.Random
 
 class DownloadService : Service() {
 
+    private enum class NotificationMode {
+        ACTIVE,
+        SUMMARY
+    }
+
     private data class PauseState(
         val fileUri: String,
         val downloadedBytes: Long
@@ -64,11 +74,21 @@ class DownloadService : Service() {
 
     interface ProgressListener {
         fun onDownloadUpdate(item: DownloadItem)
+
+        /** Called before ACTION_PAUSE_ALL emits individual PAUSED updates. */
+        fun onAllDownloadsPaused() {}
+
+        /** Includes items waiting in the state manager, not just the service channel. */
+        fun hasPendingDownloads(exceptId: String? = null): Boolean = false
+
+        /** Next pending item, including items not yet handed to the service. */
+        fun nextPendingDownload(exceptId: String? = null): DownloadItem? = null
     }
 
     companion object {
         private const val CHANNEL_ID = "tumblr_download_channel"
         private const val NOTIFICATION_ID = 10001
+        private const val SUMMARY_NOTIFICATION_ID = 10002
         private const val IDLE_TIMEOUT_MS = 5_000L
         private const val MIN_TASK_GAP_MS = 1_000L
         private const val MAX_TASK_GAP_MS = 1_500L
@@ -112,6 +132,11 @@ class DownloadService : Service() {
         const val EXTRA_MAX_RETRIES = "extra_max_retries"
         const val EXTRA_DOWNLOADED_BYTES = "extra_downloaded_bytes"
         const val EXTRA_FILE_URI = "extra_file_uri"
+        const val EXTRA_PROGRESS = "extra_progress"
+        const val EXTRA_EXPLICIT_RESUME = "extra_explicit_resume"
+
+        // Fixed request code for the notification "Stop all" button.
+        const val STOP_ALL_REQUEST_CODE = 0x5A11
 
         @Volatile
         var progressListener: ProgressListener? = null
@@ -120,9 +145,89 @@ class DownloadService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
     private lateinit var notificationManager: NotificationManager
     private val queueChannel = Channel<DownloadItem>(Channel.UNLIMITED)
+
+    // ── wake locks ────────────────────────────────────────────────────
+    // PARTIAL_WAKE_LOCK keeps the CPU from dozing while a download is in
+    // flight (screen off, Doze).  The WifiLock keeps the radio from idling
+    // into power-save mode on flaky connections.  Both are held from the
+    // moment the queue worker starts until it becomes genuinely idle, and
+    // are also released defensively in onDestroy().
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+
+    private fun acquireWakeLocks() {
+        if (wakeLock == null) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            try {
+                wakeLock = pm.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "tumblr-downloader:download"
+                ).apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DownloadSvc", "wake lock unavailable: ${e.message}")
+                wakeLock = null
+            }
+        }
+        if (wifiLock == null) {
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            try {
+                wifiLock = wm.createWifiLock(
+                    WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                    "tumblr-downloader:download"
+                ).apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            } catch (e: Exception) {
+                // Some devices/systems restrict WifiLock; fall back to holding only the WakeLock.
+                android.util.Log.w("DownloadSvc", "wifi lock unavailable: ${e.message}")
+                wifiLock = null
+            }
+        }
+    }
+
+    private fun releaseWakeLocks() {
+        try {
+            wakeLock?.let { lock -> if (lock.isHeld) lock.release() }
+        } catch (_: Exception) {
+        } finally {
+            wakeLock = null
+        }
+        try {
+            wifiLock?.let { lock -> if (lock.isHeld) lock.release() }
+        } catch (_: Exception) {
+        } finally {
+            wifiLock = null
+        }
+    }
     private val suspendedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
     private val removedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
     private val queuedItemIds = Collections.synchronizedSet(mutableSetOf<String>())
+    @Volatile
+    private var globalPauseRequested = false
+    /**
+     * Notification state is deliberately independent from individual item
+     * callbacks. Once pause-all has switched to SUMMARY, late callbacks from
+     * cancelled jobs may still update the StateManager, but they must never
+     * put the old progress notification back on screen.
+     */
+    @Volatile
+    private var notificationMode = NotificationMode.ACTIVE
+
+    /**
+     * Items dequeued from [queueChannel] but not yet handed to a download
+     * job — i.e. sitting in the inter-task gap delay or blocked on
+     * [concurrencySemaphore].  Pause/remove commands must know about these
+     * ids too: ACTION_PAUSE_ALL only drains the channel and cancels active
+     * jobs, so without tracking in-hand items one of them would start
+     * downloading right after its predecessor finished, even though the UI
+     * already shows it as PAUSED (DownloadStateManager updates the list
+     * state before the service command is even sent).
+     */
+    private val inHandItemIds = Collections.synchronizedSet(mutableSetOf<String>())
     private val pauseStateMap = Collections.synchronizedMap(mutableMapOf<String, PauseState>())
 
     /**
@@ -130,6 +235,10 @@ class DownloadService : Service() {
      * same URI on retry (avoids MediaStore's "(N)" filename mutations).
      */
     private val downloadTargetMap = Collections.synchronizedMap(mutableMapOf<String, Uri>())
+    /** Latest state known for each item that belongs to the current service session. */
+    private val notificationItems = Collections.synchronizedMap(mutableMapOf<String, DownloadItem>())
+    private val sessionCompletedIds = Collections.synchronizedSet(mutableSetOf<String>())
+    private val sessionFailedIds = Collections.synchronizedSet(mutableSetOf<String>())
 
     // ── parallel download support ───────────────────────────────────
     private val concurrencySemaphore = kotlinx.coroutines.sync.Semaphore(getMaxConcurrentDownloads())
@@ -143,7 +252,7 @@ class DownloadService : Service() {
             .followRedirects(true)
             .followSslRedirects(true)
             .addNetworkInterceptor { chain ->
-                // 为每个请求设置 Referer（Tumblr CDN 有时会检查）
+                // Set a Referer on every request (the Tumblr CDN sometimes checks it)
                 val request = chain.request().newBuilder()
                     .addHeader("Referer", "https://www.tumblr.com/")
                     .addHeader("Origin", "https://www.tumblr.com")
@@ -260,6 +369,22 @@ class DownloadService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action ?: ACTION_START) {
             ACTION_START -> {
+                // Already-issued ACTION_START intents may arrive after a
+                // notification pause-all. Only an explicit UI resume may
+                // re-open the queue.
+                if (globalPauseRequested && intent?.getBooleanExtra(EXTRA_EXPLICIT_RESUME, false) != true) {
+                    return START_STICKY
+                }
+                if (intent?.getBooleanExtra(EXTRA_EXPLICIT_RESUME, false) == true) {
+                    globalPauseRequested = false
+                }
+                notificationMode = NotificationMode.ACTIVE
+                notificationManager.cancel(SUMMARY_NOTIFICATION_ID)
+                if (activeJobs.isEmpty() && queuedItemIds.isEmpty() && inHandItemIds.isEmpty()) {
+                    sessionCompletedIds.clear()
+                    sessionFailedIds.clear()
+                    notificationItems.clear()
+                }
                 val item = parseIntent(intent) ?: return START_STICKY
                 val saved = pauseStateMap.remove(item.id)
                 val resumedItem = if (saved != null) {
@@ -287,9 +412,10 @@ class DownloadService : Service() {
                 if (!queuedItemIds.add(resumedItem.id)) {
                     return START_STICKY
                 }
+                notificationItems[resumedItem.id] = resumedItem
 
                 try {
-                    startForeground(NOTIFICATION_ID, buildNotification(resumedItem, resumedItem.title, getString(R.string.status_queued), 0, null))
+                    startForeground(NOTIFICATION_ID, buildNotification(resumedItem, resumedItem.title, resolveString(R.string.status_queued), resumedItem.progress, null))
                 } catch (e: Exception) {
                     android.util.Log.w("DownloadSvc", "startForeground failed: ${e.message}")
                     // On some ROMs (MIUI, ColorOS, etc.) startForeground may be
@@ -311,6 +437,10 @@ class DownloadService : Service() {
             }
 
             ACTION_CLEAR_ALL -> {
+                globalPauseRequested = false
+                notificationMode = NotificationMode.ACTIVE
+                sessionCompletedIds.clear()
+                sessionFailedIds.clear()
                 // Cancel all active downloads
                 activeJobs.values.forEach { it.cancel(CancellationException("Cleared by user")) }
                 activeJobs.clear()
@@ -323,26 +453,67 @@ class DownloadService : Service() {
                 queuedItemIds.clear()
                 suspendedItemIds.clear()
                 removedItemIds.clear()
+                inHandItemIds.clear()
+                notificationItems.clear()
                 pauseStateMap.clear()
                 downloadTargetMap.clear()
                 activeDownloadedBytesMap.clear()
 
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 notificationManager.cancel(NOTIFICATION_ID)
+                notificationManager.cancel(SUMMARY_NOTIFICATION_ID)
                 stopSelf()
                 return START_NOT_STICKY
             }
 
             ACTION_PAUSE_ALL -> {
+                globalPauseRequested = true
+                notificationMode = NotificationMode.SUMMARY
+                // Switch the visible notification before cancellation work
+                // starts, so the tap is reflected immediately.
+                publishSummaryNotification()
+                // Notify the state manager before individual PAUSED events are
+                // emitted. Otherwise each PAUSED event can look terminal and
+                // cause it to start the next queued item.
+                progressListener?.onAllDownloadsPaused()
                 // Cancel all active download jobs
                 activeJobs.values.forEach { it.cancel(CancellationException("Paused by user")) }
                 activeJobs.clear()
-                // Drain the queue channel so queued items don't start
-                while (queueChannel.tryReceive().isSuccess) { }
+                // Items already dequeued (in the gap delay or blocked on the
+                // semaphore) are not in the channel, so the drain below can't
+                // stop them — mark them suspended so the runQueue
+                // post-acquire guard drops them instead of starting them.
+                suspendedItemIds.addAll(inHandItemIds)
+                // Drain the queue channel so queued items don't start.  Each
+                // dropped item gets a PAUSED progress event so the UI
+                // (StateManager) stays in sync even when this action comes
+                // straight from the notification "Stop all" button, which has
+                // no in-app counterpart that flips statuses first (the in-app
+                // pause-all marks items PAUSED locally beforehand; these
+                // events are coalesced harmlessly by processProgress).
+                while (true) {
+                    val queued = queueChannel.tryReceive().getOrNull() ?: break
+                    queuedItemIds.remove(queued.id)
+                    emitProgress(queued.copy(
+                        status = DownloadStatus.PAUSED,
+                        progress = 0,
+                        errorMessage = resolveString(R.string.status_paused)
+                    ))
+                }
+                // Remove the foreground progress notification only after all
+                // cancellation and queue-draining work is complete. Summary
+                // uses a separate id so Android cannot retain old foreground
+                // content under the same notification id.
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                notificationManager.cancel(NOTIFICATION_ID)
+                publishSummaryNotification()
                 return START_STICKY
             }
 
             ACTION_RESUME_ALL -> {
+                globalPauseRequested = false
+                notificationMode = NotificationMode.ACTIVE
+                notificationManager.cancel(SUMMARY_NOTIFICATION_ID)
                 // All the work is done by DownloadStateManager (updates
                 // statuses and sends individual ACTION_START intents).
                 // The service has nothing extra to do here.
@@ -361,6 +532,10 @@ class DownloadService : Service() {
 
         suspendedItemIds.add(id)
         queuedItemIds.remove(id)
+        notificationItems[id]?.let { item ->
+            notificationItems[id] = item.copy(status = DownloadStatus.PAUSED)
+        }
+        refreshDownloadNotification()
         // Cancel the active job if this item is currently downloading
         val job = activeJobs.remove(id)
         if (job != null) {
@@ -377,6 +552,7 @@ class DownloadService : Service() {
         queuedItemIds.remove(id)
         pauseStateMap.remove(id)
         downloadTargetMap.remove(id)
+        notificationItems.remove(id)
         // Cancel the active job if this item is currently downloading
         val job = activeJobs.remove(id)
         if (job != null) {
@@ -386,6 +562,7 @@ class DownloadService : Service() {
 
     private fun startWorkerIfNeeded() {
         if (workerJob?.isActive == true) return
+        acquireWakeLocks()
         workerJob = serviceScope.launch {
             runQueue()
         }
@@ -396,11 +573,25 @@ class DownloadService : Service() {
             while (true) {
                 val item = withTimeoutOrNull(IDLE_TIMEOUT_MS) {
                     queueChannel.receive()
-                } ?: break
+                }
+                if (item == null) {
+                    // Only stop when the service is genuinely idle.  A long
+                    // download (slow network, rate limiting, large file) must
+                    // never be cancelled by this timeout: breaking here used
+                    // to call stopSelf() → onDestroy() → serviceScope.cancel(),
+                    // killing the in-flight job and freezing the item at its
+                    // current percentage with no terminal event.
+                    if (globalPauseRequested ||
+                        (activeJobs.isEmpty() && progressListener?.hasPendingDownloads() != true)
+                    ) break
+                    continue
+                }
 
                 queuedItemIds.remove(item.id)
+                inHandItemIds.add(item.id)
 
                 if (suspendedItemIds.contains(item.id) || removedItemIds.remove(item.id)) {
+                    inHandItemIds.remove(item.id)
                     emitProgress(item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = resolveString(R.string.status_paused)))
                     continue
                 }
@@ -411,11 +602,13 @@ class DownloadService : Service() {
                     delay(gap)
 
                     if (suspendedItemIds.contains(item.id) || removedItemIds.remove(item.id)) {
+                        inHandItemIds.remove(item.id)
                         emitProgress(item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = resolveString(R.string.status_paused)))
                         continue
                     }
 
                     if (!isNetworkConnected()) {
+                        inHandItemIds.remove(item.id)
                         emitProgress(item.copy(
                             status = DownloadStatus.PAUSED,
                             progress = 0,
@@ -427,6 +620,17 @@ class DownloadService : Service() {
 
                 // Acquire semaphore permit — blocks if max concurrency reached
                 concurrencySemaphore.acquire()
+                inHandItemIds.remove(item.id)
+                // The item may have been paused (or removed) while this
+                // coroutine was waiting for the slot — it was already
+                // dequeued, so ACTION_PAUSE / ACTION_PAUSE_ALL could not
+                // reach it through the channel.  DownloadStateManager has
+                // already updated the list state (PAUSED/removed) before
+                // sending the command, so this item must simply not start.
+                if (suspendedItemIds.contains(item.id) || removedItemIds.remove(item.id)) {
+                    concurrencySemaphore.release()
+                    continue
+                }
                 activeDownloadedBytesMap[item.id] = item.downloadedBytes
                 val job = serviceScope.launch {
                     try {
@@ -438,10 +642,13 @@ class DownloadService : Service() {
                         emitProgress(item.copy(
                             status = DownloadStatus.FAILED,
                             progress = 0,
-                            errorMessage = getString(R.string.download_timed_out)
+                            errorMessage = resolveString(R.string.download_timed_out)
                         ))
                     } finally {
-                        activeJobs.remove(item.id)
+                        val finishedJob = currentCoroutineContext().job
+                        synchronized(activeJobs) {
+                            if (activeJobs[item.id] === finishedJob) activeJobs.remove(item.id)
+                        }
                         activeDownloadedBytesMap.remove(item.id)
                         concurrencySemaphore.release()
                         lastTaskCompletedAtMs = SystemClock.elapsedRealtime()
@@ -451,7 +658,17 @@ class DownloadService : Service() {
             }
         } finally {
             workerJob = null
-            stopSelf()
+            releaseWakeLocks()
+            val hasPendingWork = activeJobs.isNotEmpty() ||
+                queuedItemIds.isNotEmpty() ||
+                inHandItemIds.isNotEmpty() ||
+                progressListener?.hasPendingDownloads() == true
+            if (!globalPauseRequested && !hasPendingWork) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                notificationManager.cancel(NOTIFICATION_ID)
+                publishSummaryNotification()
+                stopSelf()
+            }
         }
     }
 
@@ -467,9 +684,10 @@ class DownloadService : Service() {
         android.util.Log.d("DownloadSvc", "processWithRetry: id=${item.id.take(8)}... url=${item.mediaUrl.take(60)}")
         var current = item
 
-        // ponytail: pre-download check — 如果这个 media URL 已经被标记为已完成，
-        // 直接跳过后面的下载流程。这是 `processAppend` 去重之外的第二道防线，
-        // 防止同一媒体 URL 因时序/重启等原因被再次下载。
+        // ponytail: pre-download check — if this media URL is already marked as
+        // completed, skip the download flow entirely. This is a second line of
+        // defense beyond the `processAppend` dedup, preventing the same media
+        // URL from being downloaded again due to ordering/restarts.
         if (CompletedMediaStore.isCompleted(this@DownloadService, current.mediaUrl)) {
             emitProgress(current.copy(status = DownloadStatus.COMPLETED, progress = 100, errorMessage = null))
             return
@@ -478,6 +696,7 @@ class DownloadService : Service() {
         var isResume = current.downloadedBytes > 0L && !current.downloadFileUri.isNullOrBlank()
         var bytesThisSession = 0L
         var lastProgress = 0
+        var preserveProgressForFreshRetry = false
 
         while (true) {
             // Network guard: if connectivity is gone during a retry loop,
@@ -505,48 +724,118 @@ class DownloadService : Service() {
                 return
             }
 
-            emitProgress(current.copy(status = DownloadStatus.DOWNLOADING, progress = 0, errorMessage = retryHint(current)))
+            emitProgress(current.copy(
+                status = DownloadStatus.DOWNLOADING,
+                // Keep the last known checkpoint until the first absolute
+                // progress callback arrives for a resumed request.
+                progress = if (isResume || preserveProgressForFreshRetry) current.progress else 0,
+                errorMessage = retryHint(current)
+            ))
+            preserveProgressForFreshRetry = false
 
             // ── create or reuse the output target ──────────────────────────
             val output = runCatching {
                 if (isResume && current.downloadedBytes > 0L) {
-                    val uri = Uri.parse(current.downloadFileUri)
+                    val persistedUri = Uri.parse(current.downloadFileUri)
                     // Use actual file size on disk, not the stored value — the
                     // stored offset may be stale (e.g. COMPLETED → PAUSED race).
-                    val actualBytes = try {
-                        contentResolver.openFileDescriptor(uri, "r")?.use { fd ->
+                    var resumeUri = persistedUri
+                    var resumeBytes = try {
+                        contentResolver.openFileDescriptor(resumeUri, "r")?.use { fd ->
                             fd.statSize
                         } ?: current.downloadedBytes
                     } catch (_: Exception) {
                         current.downloadedBytes
                     }
                     // Update the item so downloadWithRateLimit uses the correct Range header
-                    current = current.copy(downloadedBytes = actualBytes)
+                    current = current.copy(downloadedBytes = resumeBytes)
                     // "wa" = write + append
-                    val os = contentResolver.openOutputStream(uri, "wa")
-                        ?: throw IOException("Cannot open file in append mode: $uri")
-                    DownloadTarget(
-                        uri = uri,
-                        outputStream = os,
-                        onSuccess = {
-                            // ponytail: file fully written.  IS_PENDING update
-                            // is cosmetic (hides from gallery); ignore failures.
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                runCatching {
-                                    val done = ContentValues().apply {
-                                        put(MediaStore.Downloads.IS_PENDING, 0)
-                                    }
-                                    contentResolver.update(uri, done, null, null)
-                                }
-                            }
-                        },
-                        onFailure = {
-                            // Don't delete on pause; only on fatal errors or explicit remove
-                            runCatching {
-                                // Close quietly
+                    var os = try {
+                        contentResolver.openOutputStream(resumeUri, "wa")
+                    } catch (e: Exception) {
+                        android.util.Log.w(
+                            "DownloadSvc",
+                            "resume target gone (${e.message}) for ${current.id.take(8)}"
+                        )
+                        // The persisted target is gone (e.g. the row id went
+                        // stale after a service/process restart mid-download).
+                        // Try to recover the real partial file before deciding
+                        // what to do — silently restarting from zero would
+                        // throw away the bytes already fetched.
+                        null
+                    }
+
+                    if (os == null) {
+                        val recovered = recoverResumeTarget(current)
+                        if (recovered != null) {
+                            resumeUri = recovered.first
+                            resumeBytes = recovered.second
+                            current = current.copy(
+                                downloadedBytes = recovered.second,
+                                downloadFileUri = recovered.first.toString()
+                            )
+                            downloadTargetMap[current.id] = recovered.first
+                            android.util.Log.w(
+                                "DownloadSvc",
+                                "recovered resume target ${recovered.first} ($resumeBytes bytes) for ${current.id.take(8)}"
+                            )
+                            os = try {
+                                contentResolver.openOutputStream(resumeUri, "wa")
+                            } catch (e2: Exception) {
+                                android.util.Log.w(
+                                    "DownloadSvc",
+                                    "recovered resume target unopenable (${e2.message}) for ${current.id.take(8)}"
+                                )
+                                null
                             }
                         }
-                    )
+                    }
+
+                    if (os != null) {
+                        val finalUri = resumeUri
+                        DownloadTarget(
+                            uri = finalUri,
+                            outputStream = os,
+                            onSuccess = {
+                                // ponytail: file fully written.  IS_PENDING update
+                                // is cosmetic (hides from gallery); ignore failures.
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                    runCatching {
+                                        val done = ContentValues().apply {
+                                            put(MediaStore.Downloads.IS_PENDING, 0)
+                                        }
+                                        contentResolver.update(finalUri, done, null, null)
+                                    }
+                                }
+                            },
+                            onFailure = {
+                                // Don't delete on pause; only on fatal errors or explicit remove
+                                runCatching {
+                                    // Close quietly
+                                }
+                            }
+                        )
+                    } else {
+                        // Resume target is truly unrecoverable (no partial file
+                        // anywhere), but a fresh full download can still succeed.
+                        // Restart silently from zero — no FAILED banner, no
+                        // "retry from the beginning" prompt — so the user isn't
+                        // forced to babysit a re-download that just works.  Any
+                        // genuinely fatal problem (no storage, no fresh target,
+                        // ...) is still surfaced by the outer getOrElse via
+                        // download_target_creation_failed.
+                        android.util.Log.w(
+                            "DownloadSvc",
+                            "resume target unrecoverable for ${current.id.take(8)}; starting a fresh download"
+                        )
+                        runCatching { contentResolver.delete(persistedUri, null, null) }
+                        downloadTargetMap.remove(current.id)
+                        current = current.copy(downloadedBytes = 0L, downloadFileUri = null)
+                        isResume = false
+                        val fresh = createDownloadTarget(current)
+                        downloadTargetMap[current.id] = fresh.uri
+                        fresh
+                    }
                 } else {
                     // ponytail: reuse cached URI if one already exists for this
                     // item (e.g. from a previous retry attempt).  MediaStore
@@ -607,7 +896,7 @@ class DownloadService : Service() {
                 emitProgress(
                     current.copy(
                         status = DownloadStatus.FAILED,
-                        errorMessage = getString(R.string.download_target_creation_failed, e.message ?: getString(R.string.download_unknown_error))
+                        errorMessage = getStringSafely(R.string.download_target_creation_failed, e.message ?: resolveString(R.string.download_unknown_error))
                     )
                 )
                 return
@@ -659,9 +948,21 @@ class DownloadService : Service() {
                         errorMessage = null
                     ))
                 } else {
-                    // Removed — delete the partial file
+                    // Removed — delete the partial file, then tell the StateManager
+                    // so the list entry doesn't stay DOWNLOADING forever with no
+                    // live job (stuck "downloading" after a swipe-away +
+                    // notification cancel).  Mirrors the PAUSED event the
+                    // queued-item removal path emits, so "resume all" can
+                    // re-queue this item.
                     output.onFailure()
                     runCatching { contentResolver.delete(output.uri, null, null) }
+                    emitProgress(current.copy(
+                        status = DownloadStatus.PAUSED,
+                        progress = 0,
+                        downloadedBytes = 0,
+                        downloadFileUri = null,
+                        errorMessage = null
+                    ))
                 }
                 return
             } catch (e: Exception) {
@@ -677,14 +978,23 @@ class DownloadService : Service() {
                 // The server rejected an existing Range request. Discard the
                 // partial file and retry once from byte zero on the same item.
                 if (requestedOffset > 0L && (e.message?.contains("Range") == true || e.message?.contains("416") == true)) {
+                    val previousProgress = current.progress
                     runCatching { contentResolver.delete(output.uri, null, null) }
                     downloadTargetMap.remove(current.id)
                     isResume = false
-                    current = current.copy(downloadedBytes = 0L, downloadFileUri = null)
+                    current = current.copy(
+                        progress = previousProgress,
+                        downloadedBytes = 0L,
+                        downloadFileUri = null
+                    )
+                    preserveProgressForFreshRetry = true
+                    // Keep the last visible checkpoint while the replacement
+                    // request is opened. The actual byte stream starts at zero,
+                    // but emitting a synthetic 0% here followed by another
+                    // initialization event made resume visibly flicker.
                     emitProgress(current.copy(
                         status = DownloadStatus.DOWNLOADING,
-                        progress = 0,
-                        errorMessage = getString(R.string.download_server_no_resume)
+                        errorMessage = resolveString(R.string.download_server_no_resume)
                     ))
                     try {
                         delay(RETRY_DELAY_MS)
@@ -729,7 +1039,7 @@ class DownloadService : Service() {
                     emitProgress(
                         current.copy(
                             status = DownloadStatus.FAILED,
-                            errorMessage = getString(R.string.download_failed_with_retries, e.message ?: getString(R.string.download_unknown_error), current.retryCount, current.maxRetries)
+                            errorMessage = getStringSafely(R.string.download_failed_with_retries, e.message ?: resolveString(R.string.download_unknown_error), current.retryCount, current.maxRetries)
                         )
                     )
                     return
@@ -740,7 +1050,7 @@ class DownloadService : Service() {
                     current.copy(
                         status = DownloadStatus.DOWNLOADING,
                         progress = 0,
-                        errorMessage = getString(R.string.download_retrying, current.retryCount, current.maxRetries)
+                        errorMessage = getStringSafely(R.string.download_retrying, current.retryCount, current.maxRetries)
                     )
                 )
                 // CRITICAL: delay() is a suspension point.  If the job was
@@ -771,7 +1081,7 @@ class DownloadService : Service() {
         return if (item.retryCount == 0) {
             null
         } else {
-            getString(R.string.download_retry_hint, item.retryCount, item.maxRetries)
+            getStringSafely(R.string.download_retry_hint, item.retryCount, item.maxRetries)
         }
     }
 
@@ -916,14 +1226,86 @@ class DownloadService : Service() {
     // ── file / output helpers ─────────────────────────────────────────────
 
     private fun createDownloadTarget(item: DownloadItem): DownloadTarget {
-        val ext = inferExtension(item.mediaUrl)
-        val mimeType = inferMimeType(ext)
-        val fileName = "${DownloadUtils.sanitizeFileName("${authorFromSource(item.sourceUrl)}-${mediaIdFromUrl(item.mediaUrl)}")}.${ext}"
+        val fileName = targetFileName(item)
+        val mimeType = inferMimeType(inferExtension(item.mediaUrl))
 
         val custom = createCustomDirTarget(fileName, mimeType)
         if (custom != null) return custom
 
         return createMediaStoreTarget(fileName, mimeType)
+    }
+
+    /** Derives the output file name (with extension) for [item]. Shared by
+     * [createDownloadTarget] and [recoverResumeTarget] so both look for the
+     * exact same display name. */
+    private fun targetFileName(item: DownloadItem): String {
+        val ext = inferExtension(item.mediaUrl)
+        return "${DownloadUtils.sanitizeFileName("${authorFromSource(item.sourceUrl)}-${mediaIdFromUrl(item.mediaUrl)}")}.${ext}"
+    }
+
+    /**
+     * Tries to locate a live partial file for [item] when the persisted
+     * [DownloadItem.downloadFileUri] can no longer be opened for append (e.g.
+     * the service process died mid-download and the MediaStore row id went
+     * stale, or a stale URI was persisted).  Checks, in order:
+     *  1. the in-memory [downloadTargetMap] URI for this item;
+     *  2. a MediaStore Downloads query matching the item's expected file name.
+     * Returns the recovered content URI and its real size on disk, or null.
+     */
+    private fun recoverResumeTarget(item: DownloadItem): Pair<Uri, Long>? {
+        // 1) In-memory cached URI — most likely to still be live.
+        downloadTargetMap[item.id]?.let { cached ->
+            val size = statSizeOf(cached)
+            if (size > 0L) return cached to size
+        }
+
+        // 2) MediaStore re-query by the exact display name.  Prefer pending
+        //    rows (the app's own in-flight files are IS_PENDING=1 on Q+) so we
+        //    don't append to a previously completed same-named row.  Only pick
+        //    rows that still have bytes on disk (trust a stat query over the
+        //    metadata SIZE column, which can be stale/0 for pending rows).
+        val fileName = targetFileName(item)
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        } else {
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        }
+        val projection = arrayOf(MediaStore.Downloads._ID)
+        val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.IS_PENDING} = 1"
+        } else {
+            "${MediaStore.Downloads.DISPLAY_NAME} = ?"
+        }
+        runCatching {
+            contentResolver.query(collection, projection, selection, arrayOf(fileName), null)?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID))
+                    val uri = ContentUris.withAppendedId(collection, id)
+                    val size = statSizeOf(uri)
+                    if (size > 0L) return@use uri to size
+                }
+                null
+            }
+        }.getOrNull()?.takeIf { it.second > 0L }?.let { return it }
+
+        // Also probe the custom directory (a SAF tree) for the same file name.
+        runCatching {
+            val rootUri = DownloadUtils.getCustomDownloadDirectory(this) ?: return@runCatching null
+            val rootDir = DocumentFile.fromTreeUri(this, rootUri) ?: return@runCatching null
+            if (!rootDir.isDirectory || !rootDir.canWrite()) return@runCatching null
+            rootDir.findFile(fileName)?.let { file ->
+                val size = statSizeOf(file.uri)
+                if (size > 0L) file.uri to size else null
+            }
+        }.getOrNull()?.takeIf { it.second > 0L }?.let { return it }
+
+        return null
+    }
+
+    private fun statSizeOf(uri: Uri): Long = try {
+        contentResolver.openFileDescriptor(uri, "r")?.use { fd -> fd.statSize } ?: 0L
+    } catch (_: Exception) {
+        0L
     }
 
     private fun authorFromSource(sourceUrl: String): String {
@@ -1064,19 +1446,92 @@ class DownloadService : Service() {
     }
 
     private fun emitProgress(item: DownloadItem) {
-        progressListener?.onDownloadUpdate(item)
-        val speedText = if (item.status == DownloadStatus.DOWNLOADING && item.speedBytesPerSecond > 0) {
-            formatSpeed(item.speedBytesPerSecond)
-        } else null
-        val contentText = if (speedText != null && item.progress >= 0) {
-            getString(R.string.download_speed_notification, item.progress, speedText)
-        } else {
-            statusText(item)
+        when (item.status) {
+            DownloadStatus.COMPLETED -> sessionCompletedIds.add(item.id)
+            DownloadStatus.FAILED -> sessionFailedIds.add(item.id)
+            else -> Unit
         }
+        // Cancellation is asynchronous. A last DOWNLOADING callback from the
+        // paused job must not make that item the displayed notification again.
+        if (item.status != DownloadStatus.DOWNLOADING || !suspendedItemIds.contains(item.id)) {
+            notificationItems[item.id] = item
+        }
+        progressListener?.onDownloadUpdate(item)
+        refreshDownloadNotification(item)
+    }
+
+    /**
+     * Keep exactly one notification for the service session. A PAUSED event
+     * must never create a second per-item notification: if another item is
+     * active, show that item; otherwise show the session summary.
+     */
+    private fun refreshDownloadNotification(preferred: DownloadItem? = null) {
+        if (globalPauseRequested || notificationMode == NotificationMode.SUMMARY) {
+            publishSummaryNotification()
+            return
+        }
+
+        val candidate = synchronized(notificationItems) {
+            val preferredActive = preferred?.takeIf {
+                !suspendedItemIds.contains(it.id) &&
+                    (it.status == DownloadStatus.DOWNLOADING || it.status == DownloadStatus.QUEUED)
+            }
+            preferredActive ?: notificationItems.values.firstOrNull {
+                !suspendedItemIds.contains(it.id) &&
+                    (it.status == DownloadStatus.DOWNLOADING || it.status == DownloadStatus.QUEUED)
+            }
+        } ?: progressListener?.nextPendingDownload(preferred?.id)
+            ?.takeUnless { suspendedItemIds.contains(it.id) }
+        if (candidate == null) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            notificationManager.cancel(NOTIFICATION_ID)
+            publishSummaryNotification()
+            return
+        }
+
+        val speedText = if (candidate.status == DownloadStatus.DOWNLOADING && candidate.speedBytesPerSecond > 0) {
+            formatSpeed(candidate.speedBytesPerSecond)
+        } else null
+        val contentText = if (speedText != null && candidate.progress >= 0) {
+            getStringSafely(R.string.download_speed_notification, candidate.progress, speedText)
+        } else {
+            statusText(candidate)
+        }
+        notificationManager.cancel(SUMMARY_NOTIFICATION_ID)
         notificationManager.notify(
             NOTIFICATION_ID,
-            buildNotification(item, item.title, contentText, item.progress, item.errorMessage)
+            buildNotification(
+                candidate, candidate.title, contentText, candidate.progress, candidate.errorMessage,
+                showStopAll = true
+            )
         )
+    }
+
+    private fun publishSummaryNotification() {
+        notificationMode = NotificationMode.SUMMARY
+        val content = try {
+            LocaleHelper.contextForAppLocale(this).getString(R.string.download_summary_notification, sessionCompletedIds.size, sessionFailedIds.size)
+        } catch (_: android.content.res.Resources.NotFoundException) {
+            "Completed: ${sessionCompletedIds.size}, failed: ${sessionFailedIds.size}"
+        }
+        val notification = buildSummaryNotification(content)
+        // Summary and active-download notifications intentionally use separate
+        // ids. Foreground notifications are special on Android and updating
+        // the same id can leave the old progress presentation visible.
+        notificationManager.notify(SUMMARY_NOTIFICATION_ID, notification)
+    }
+
+    private fun buildSummaryNotification(content: String): Notification {
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            // Use the localized application label as the summary title so the
+            // notification is identifiable even when the task-specific title
+            // is no longer shown.
+            .setContentTitle(resolveString(R.string.app_name))
+            .setContentText(content)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setAutoCancel(true)
+            .setOngoing(false)
+            .build()
     }
 
     private fun statusText(item: DownloadItem): String {
@@ -1096,10 +1551,10 @@ class DownloadService : Service() {
      */
     private fun resolveString(@androidx.annotation.StringRes resId: Int): String {
         return try {
-            getString(resId)
+            LocaleHelper.contextForAppLocale(this).getString(resId)
         } catch (_: Exception) {
             try {
-                applicationContext.getString(resId)
+                LocaleHelper.contextForAppLocale(applicationContext).getString(resId)
             } catch (_: Exception) {
                 // If all else fails, return the resource name as a placeholder.
                 try {
@@ -1116,7 +1571,8 @@ class DownloadService : Service() {
         title: String,
         content: String,
         progress: Int,
-        errorMessage: String?
+        errorMessage: String?,
+        showStopAll: Boolean = item != null && item.status != DownloadStatus.COMPLETED
     ): Notification {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
@@ -1126,61 +1582,34 @@ class DownloadService : Service() {
             .setAutoCancel(false)
             .setOngoing(true)
 
-        // ponytail: 通知栏操作按钮（暂停/恢复/取消）。
-        // 仅对未完成的任务显示；完成/失败后通知会消失，无需按钮。
-        if (item != null && item.status != DownloadStatus.COMPLETED) {
-            when (item.status) {
-                DownloadStatus.PAUSED -> {
-                    builder.addAction(0, resolveString(R.string.action_resume), resumePendingIntent(item))
-                    builder.addAction(0, resolveString(R.string.action_cancel), removePendingIntent(item))
-                }
-                else -> {
-                    // DOWNLOADING / QUEUED / FAILED
-                    builder.addAction(0, resolveString(R.string.action_pause), pausePendingIntent(item))
-                    builder.addAction(0, resolveString(R.string.action_cancel), removePendingIntent(item))
-                }
-            }
+        // ponytail: notification action buttons.  Exactly ONE action per
+        // notification: "Stop all" (ACTION_PAUSE_ALL) which pauses every
+        // queued/in-flight download at once (works even when the app is in
+        // the background, since it targets this foreground service directly).
+        // Per-item pause/resume/retry buttons and any remove/cancel button are
+        // deliberately gone — all per-item state transitions are driven from
+        // the app UI (DownloadStateManager).  There is also no remove action:
+        // removal stays in-app (DownloadStateManager.processRemove).
+        // The item argument is also used when the notification is first
+        // created, before the service's queue sets have been populated. Once
+        // the final item completes, emitProgress uses COMPLETED and the
+        // summary notification replaces this action notification.
+        if (!globalPauseRequested && showStopAll) {
+            builder.addAction(
+                android.R.drawable.ic_media_pause,
+                resolveString(R.string.action_stop_all),
+                stopAllPendingIntent()
+            )
         }
 
         return builder.build()
     }
 
-    private fun pausePendingIntent(item: DownloadItem): PendingIntent {
+    private fun stopAllPendingIntent(): PendingIntent {
         val intent = Intent(this, DownloadService::class.java).apply {
-            action = ACTION_PAUSE
-            putExtra(EXTRA_ITEM_ID, item.id)
+            action = ACTION_PAUSE_ALL
         }
-        return wrapPendingIntent(intent, item.id.hashCode())
-    }
-
-    private fun removePendingIntent(item: DownloadItem): PendingIntent {
-        val intent = Intent(this, DownloadService::class.java).apply {
-            action = ACTION_REMOVE
-            putExtra(EXTRA_ITEM_ID, item.id)
-        }
-        return wrapPendingIntent(intent, item.id.hashCode() xor 0x1f)
-    }
-
-    private fun resumePendingIntent(item: DownloadItem): PendingIntent {
-        // 恢复 = 重新发送 ACTION_START（与 DownloadStateManager 的
-        // sendStartIntent 一致，service 会从 pauseStateMap 恢复断点）。
-        val intent = Intent(this, DownloadService::class.java).apply {
-            action = ACTION_START
-            putExtra(EXTRA_ITEM_ID, item.id)
-            putExtra(EXTRA_SOURCE_URL, item.sourceUrl)
-            putExtra(EXTRA_MEDIA_URL, item.mediaUrl)
-            putExtra(EXTRA_TYPE, item.type.name)
-            putExtra(EXTRA_TITLE, item.title)
-            putExtra(EXTRA_RETRY_COUNT, item.retryCount)
-            putExtra(EXTRA_MAX_RETRIES, item.maxRetries)
-            if (item.downloadedBytes > 0L) {
-                putExtra(EXTRA_DOWNLOADED_BYTES, item.downloadedBytes)
-            }
-            if (!item.downloadFileUri.isNullOrBlank()) {
-                putExtra(EXTRA_FILE_URI, item.downloadFileUri)
-            }
-        }
-        return wrapPendingIntent(intent, item.id.hashCode() xor 0x3e)
+        return wrapPendingIntent(intent, STOP_ALL_REQUEST_CODE)
     }
 
     private fun wrapPendingIntent(intent: Intent, requestCode: Int): PendingIntent {
@@ -1209,6 +1638,7 @@ class DownloadService : Service() {
 
         val downloadedBytes = safeIntent.getLongExtra(EXTRA_DOWNLOADED_BYTES, 0L)
         val downloadFileUri = safeIntent.getStringExtra(EXTRA_FILE_URI)
+        val progress = safeIntent.getIntExtra(EXTRA_PROGRESS, 0).coerceIn(0, 100)
 
         return DownloadItem(
             id = id,
@@ -1217,7 +1647,7 @@ class DownloadService : Service() {
             title = title.orEmpty().ifBlank { "Tumblr Media" },
             type = type,
             status = DownloadStatus.QUEUED,
-            progress = 0,
+            progress = progress,
             errorMessage = null,
             retryCount = retryCount,
             maxRetries = maxRetries,
@@ -1230,10 +1660,10 @@ class DownloadService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Tumblr Download",
+                resolveString(R.string.download_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Download status updates"
+                description = resolveString(R.string.download_channel_desc)
             }
             notificationManager.createNotificationChannel(channel)
         }
@@ -1241,6 +1671,7 @@ class DownloadService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        releaseWakeLocks()
         stopHeartbeat()
         queueChannel.close()
         serviceScope.cancel()
@@ -1262,10 +1693,10 @@ class DownloadService : Service() {
     /** Resolve a format-string resource with fallback. */
     private fun getStringSafely(@androidx.annotation.StringRes resId: Int, vararg formatArgs: Any): String {
         return try {
-            getString(resId, *formatArgs)
+            LocaleHelper.contextForAppLocale(this).getString(resId, *formatArgs)
         } catch (_: Exception) {
             try {
-                applicationContext.getString(resId, *formatArgs)
+                LocaleHelper.contextForAppLocale(applicationContext).getString(resId, *formatArgs)
             } catch (_: Exception) {
                 resolveString(resId)
             }

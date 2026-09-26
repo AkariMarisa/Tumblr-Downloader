@@ -34,7 +34,7 @@ class DownloadStateManagerTest {
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
         app = ApplicationProvider.getApplicationContext()
-        stateManager = DownloadStateManager(app)
+        stateManager = DownloadStateManager.forTest(app)
     }
 
     @After
@@ -98,6 +98,40 @@ class DownloadStateManagerTest {
             DownloadStatus.PAUSED,
             stateManager.items.value.find { it.id == "c" }?.status
         )
+    }
+
+    // ── pause all ──────────────────────────────────────────────────────
+
+    @Test
+    fun pauseAll_preservesInFlightProgress() = runTest(testDispatcher) {
+        // An in-flight download at 60% must keep showing 60% after
+        // pause-all — zeroing it would lie to the user (issue #24 audit).
+        val running = item("p", status = DownloadStatus.DOWNLOADING).copy(progress = 60)
+        val queued = item("q", status = DownloadStatus.QUEUED)
+        stateManager.restore(listOf(running, queued))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.pauseAll()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val paused = stateManager.items.value.find { it.id == "p" }
+        assertEquals(DownloadStatus.PAUSED, paused?.status)
+        assertEquals(
+            "in-flight progress must be preserved across pause-all",
+            60,
+            paused?.progress
+        )
+    }
+
+    // ── singleton (issue #24 audit) ────────────────────────────────────
+
+    @Test
+    fun getInstance_returnsTheSameInstance() = runTest(testDispatcher) {
+        // Exactly one state owner per process — a second instance would
+        // restore + re-persist its own snapshot and split the state.
+        val first = DownloadStateManager.getInstance(app)
+        val second = DownloadStateManager.getInstance(app)
+        assertSame("process must have a single DownloadStateManager", first, second)
     }
 
     // ── start / resume ───────────────────────────────────────────────────
@@ -254,12 +288,13 @@ class DownloadStateManagerTest {
 
     @Test
     fun completion_fillsConcurrentSlots() = runTest(testDispatcher) {
-        // max=3：一个任务完成后，应自动启动排队任务直到并发槽位满。
-        // 这是修复 "批量添加后实际串行" 的关键行为。
+        // max=3: when a task completes, queued tasks should be started automatically
+        // until the concurrent slots are full. This is the key behavior of the
+        // "queue stayed effectively serial after batch add" fix.
         val prefs = app.getSharedPreferences("tumblr_downloader", android.content.Context.MODE_PRIVATE)
         prefs.edit().putInt("max_concurrent_downloads", 3).commit()
 
-        // 4 个排队任务 + 1 个正在下载的任务
+        // 4 queued tasks + 1 currently downloading task
         val queued = listOf(
             item("q1"), item("q2"), item("q3"), item("q4")
         )
@@ -267,7 +302,7 @@ class DownloadStateManagerTest {
         stateManager.restore(listOf(running) + queued)
         testDispatcher.scheduler.advanceUntilIdle()
 
-        // 模拟正在下载的任务完成
+        // simulate the running task completing
         stateManager.serviceProgressListener.onDownloadUpdate(
             running.copy(status = DownloadStatus.COMPLETED, progress = 100)
         )
@@ -280,13 +315,13 @@ class DownloadStateManagerTest {
             3,
             downloading
         )
-        // 剩余的应保持 QUEUED
+        // the rest should stay QUEUED
         assertEquals(1, statuses.count { it.second == DownloadStatus.QUEUED })
     }
 
     @Test
     fun completion_respectsMaxConcurrentBound() = runTest(testDispatcher) {
-        // max=2：已有 2 个下载中，完成其中一个后只能再启动 1 个。
+        // max=2: with 2 already downloading, completing one can only start 1 more.
         val prefs = app.getSharedPreferences("tumblr_downloader", android.content.Context.MODE_PRIVATE)
         prefs.edit().putInt("max_concurrent_downloads", 2).commit()
 
@@ -298,7 +333,7 @@ class DownloadStateManagerTest {
         stateManager.restore(listOf(running1, running2) + queued)
         testDispatcher.scheduler.advanceUntilIdle()
 
-        // b1 完成 → 槽位空出 1 个 → 应启动 1 个排队任务
+        // b1 completes -> 1 slot frees -> exactly 1 queued task should start
         stateManager.serviceProgressListener.onDownloadUpdate(
             running1.copy(status = DownloadStatus.COMPLETED, progress = 100)
         )
@@ -315,8 +350,9 @@ class DownloadStateManagerTest {
 
     @Test
     fun resumeAll_startsMultipleUpToMaxConcurrent() = runTest(testDispatcher) {
-        // max=3：resumeAll 应循环启动排队任务直到并发槽位满，
-        // 而不是只启动一个（旧实现的实际串行行为）。
+        // max=3: resumeAll should start queued tasks in a loop until the concurrent
+        // slots are full, instead of starting only one (the old effectively
+        // serial behavior).
         val prefs = app.getSharedPreferences("tumblr_downloader", android.content.Context.MODE_PRIVATE)
         prefs.edit().putInt("max_concurrent_downloads", 3).commit()
 

@@ -725,6 +725,19 @@ object TumblrParser {
         Log.d(TAG, "  parsed sizes: ${candidates.joinToString(" | ") { "$it -> ${MediaQualitySelector.parseSize(it, type)}" }}")
 
         if (unlimited) {
+            // Prefer the highest parsed rendition. URL length is only a
+            // fallback: `_250sq` can make a low-resolution URL longer than
+            // `_1280`, which would otherwise make the square crop win.
+            val knownSizes = candidates.mapNotNull { url ->
+                MediaQualitySelector.parseSize(url, type)?.let { size -> url to size }
+            }
+            if (knownSizes.isNotEmpty()) {
+                return knownSizes
+                    .maxWithOrNull(compareBy<Pair<String, Int>> { it.second }
+                        .thenBy { if (isSquareRendition(it.first)) 0 else 1 }
+                        .thenBy { mediaPreferenceScore(it.first) })!!
+                    .first
+            }
             return candidates.maxByOrNull { mediaPreferenceScore(it) } ?: candidates.first()
         }
 
@@ -758,6 +771,9 @@ object TumblrParser {
 
         return score + url.length
     }
+
+    private fun isSquareRendition(url: String): Boolean =
+        Regex("_\\d{2,4}sq(?=\\.[a-z0-9]+$)", RegexOption.IGNORE_CASE).containsMatchIn(url)
 
     private fun normalizeShareUrl(rawUrl: String): String {
         return sourceParamRegex.replace(normalizeText(rawUrl), "").trimEnd('?', '&', ' ')

@@ -55,6 +55,8 @@
     <string name="resume_all">全部开始</string>
     <string name="action_pause">暂停</string>
     <string name="action_resume">继续</string>
+    <!-- 通知栏按钮：一键暂停所有排队/进行中的下载 -->
+    <string name="action_stop_all">全部停止</string>
     <string name="action_cancel">取消</string>
 
     <string name="clear_all_confirm_message">已完成的项目将被清出列表，暂停、失败和排队中的项目会保留不动。</string>
@@ -92,6 +94,9 @@
     <string name="download_timed_out">下载超时（10 分钟），请重试</string>
     <string name="download_waiting_network">等待网络连接…</string>
     <string name="download_speed_notification">%1$d%% — %2$s</string>
+    <string name="download_summary_title">下载统计</string>
+    <string name="download_summary_notification">成功：%1$d，失败：%2$d</string>
+    <string name="toast_message_with_app_name">%1$s：%2$s</string>
 
     <!-- Parser / state messages -->
     <string name="parse_error_generic">解析失败：%1$s</string>

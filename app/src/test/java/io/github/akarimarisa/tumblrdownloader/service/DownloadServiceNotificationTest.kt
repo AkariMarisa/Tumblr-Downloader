@@ -1,9 +1,7 @@
 package io.github.akarimarisa.tumblrdownloader.service
 
 import android.app.Notification
-import android.content.Context
 import android.content.Intent
-import androidx.test.core.app.ApplicationProvider
 import io.github.akarimarisa.tumblrdownloader.model.DownloadItem
 import io.github.akarimarisa.tumblrdownloader.model.DownloadStatus
 import io.github.akarimarisa.tumblrdownloader.model.MediaType
@@ -18,17 +16,24 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 /**
- * Tests for the notification action buttons (pause / resume / cancel).
+ * Tests for the notification action buttons.
  *
  * `buildNotification` is exercised directly (it's `internal` for testability)
  * because Robolectric's ShadowNotificationManager does not capture notifications
  * posted through the service's own `notificationManager` field.
  *
+ * Issue #24 follow-up: the notification deliberately has EXACTLY ONE action —
+ * "Stop all" (ACTION_PAUSE_ALL) — for every unfinished state. It pauses all
+ * queued/in-flight downloads at once. Per-item pause/resume/retry buttons and
+ * any remove/cancel button are gone; state transitions are driven from the app
+ * UI (DownloadStateManager).
+ *
  * Verifies:
- * - DOWNLOADING / QUEUED notifications show Pause + Cancel actions
- * - PAUSED notifications show Resume + Cancel actions
- * - COMPLETED notifications show no actions
- * - Each action's PendingIntent targets the right service action and extras
+ * - DOWNLOADING / QUEUED / PAUSED / FAILED notifications show exactly one
+ *   action, and it always points to ACTION_PAUSE_ALL
+ * - the Stop-all action carries no per-item extras
+ * - there is never an ACTION_REMOVE / ACTION_PAUSE / ACTION_START button
+ * - COMPLETED / null-item notifications show no actions
  *
  * Run with: `./gradlew testDebugUnitTest --tests "*DownloadServiceNotificationTest*"`
  */
@@ -83,139 +88,64 @@ class DownloadServiceNotificationTest {
         maxRetries = 3
     )
 
-    @Test
-    fun downloading_notification_showsPauseAndCancel() {
-        val notification = buildFor(item("notif-dl"))
+    private val unfinishedStatuses = listOf(
+        DownloadStatus.DOWNLOADING,
+        DownloadStatus.QUEUED,
+        DownloadStatus.PAUSED,
+        DownloadStatus.FAILED
+    )
 
-        val actions = notification.actions ?: emptyArray()
-        assertEquals("downloading should show 2 actions", 2, actions.size)
-        assertEquals(
-            "pause action should point to ACTION_PAUSE",
-            DownloadService.ACTION_PAUSE,
-            actionIntents(notification)[0].action
+    @Test
+    fun everyUnfinishedState_showsExactlyOneStopAllAction() {
+        for (status in unfinishedStatuses) {
+            val notification = buildFor(item("notif-$status", status = status, progress = 40))
+            val actions = notification.actions ?: emptyArray()
+            assertEquals("$status should show exactly 1 action", 1, actions.size)
+            assertEquals(
+                "$status should show the stop-all (ACTION_PAUSE_ALL) action",
+                DownloadService.ACTION_PAUSE_ALL,
+                actionIntents(notification)[0].action
+            )
+        }
+    }
+
+    @Test
+    fun stopAllAction_carriesNoPerItemExtras() {
+        val notification = buildFor(item("notif-stopall", progress = 60))
+        val intent = actionIntents(notification)[0]
+
+        assertEquals(DownloadService.ACTION_PAUSE_ALL, intent.action)
+        assertNull(
+            "stop-all must be global — no item id",
+            intent.getStringExtra(DownloadService.EXTRA_ITEM_ID)
         )
-        assertEquals(
-            "cancel action should point to ACTION_REMOVE",
-            DownloadService.ACTION_REMOVE,
-            actionIntents(notification)[1].action
+        assertNull(
+            "stop-all must be global — no media url",
+            intent.getStringExtra(DownloadService.EXTRA_MEDIA_URL)
         )
     }
 
     @Test
-    fun queued_notification_showsPauseAndCancel() {
-        val notification = buildFor(item("notif-queued", status = DownloadStatus.QUEUED))
-
-        val actions = notification.actions ?: emptyArray()
-        assertEquals("queued should show 2 actions", 2, actions.size)
-        assertEquals(
-            DownloadService.ACTION_PAUSE,
-            actionIntents(notification)[0].action
-        )
-        assertEquals(
-            DownloadService.ACTION_REMOVE,
-            actionIntents(notification)[1].action
-        )
-    }
-
-    @Test
-    fun downloading_notification_pauseAction_targetsActionPause() {
-        val notification = buildFor(item("notif-pause-target"))
-        val savedIntents = actionIntents(notification)
-
-        assertEquals(
-            "pause action should point to ACTION_PAUSE",
-            DownloadService.ACTION_PAUSE,
-            savedIntents[0].action
-        )
-        assertEquals(
-            "pause action should carry the item id",
-            "notif-pause-target",
-            savedIntents[0].getStringExtra(DownloadService.EXTRA_ITEM_ID)
-        )
-    }
-
-    @Test
-    fun downloading_notification_cancelAction_targetsActionRemove() {
-        val notification = buildFor(item("notif-remove-target"))
-        val savedIntents = actionIntents(notification)
-
-        assertEquals(
-            "cancel action should point to ACTION_REMOVE",
-            DownloadService.ACTION_REMOVE,
-            savedIntents[1].action
-        )
-        assertEquals(
-            "cancel action should carry the item id",
-            "notif-remove-target",
-            savedIntents[1].getStringExtra(DownloadService.EXTRA_ITEM_ID)
-        )
-    }
-
-    @Test
-    fun paused_notification_showsResumeAndCancel() {
-        val notification = buildFor(item("notif-paused", status = DownloadStatus.PAUSED, progress = 40))
-
-        val actions = notification.actions ?: emptyArray()
-        assertEquals("paused should show 2 actions", 2, actions.size)
-        assertEquals(
-            "resume action should point to ACTION_START",
-            DownloadService.ACTION_START,
-            actionIntents(notification)[0].action
-        )
-        assertEquals(
-            "cancel action should point to ACTION_REMOVE",
-            DownloadService.ACTION_REMOVE,
-            actionIntents(notification)[1].action
-        )
-    }
-
-    @Test
-    fun paused_notification_resumeAction_targetsActionStart() {
-        val notification = buildFor(item(
-            "notif-resume-target",
-            status = DownloadStatus.PAUSED,
-            progress = 40,
-            downloadedBytes = 2048L,
-            downloadFileUri = "content://media/test/notif-resume-target.jpg"
-        ))
-        val savedIntents = actionIntents(notification)
-
-        assertEquals(
-            "resume action should point to ACTION_START",
-            DownloadService.ACTION_START,
-            savedIntents[0].action
-        )
-        assertEquals(
-            "resume action should carry the item id",
-            "notif-resume-target",
-            savedIntents[0].getStringExtra(DownloadService.EXTRA_ITEM_ID)
-        )
-        assertEquals(
-            "resume action should carry the media url",
-            "https://media.tumblr.com/notif-resume-target.jpg",
-            savedIntents[0].getStringExtra(DownloadService.EXTRA_MEDIA_URL)
-        )
-        assertEquals(
-            "resume action should carry the resume offset",
-            2048L,
-            savedIntents[0].getLongExtra(DownloadService.EXTRA_DOWNLOADED_BYTES, 0L)
-        )
-    }
-
-    @Test
-    fun failed_notification_showsPauseAndCancel() {
-        val notification = buildFor(item("notif-failed", status = DownloadStatus.FAILED))
-
-        val actions = notification.actions ?: emptyArray()
-        assertEquals("failed should show 2 actions", 2, actions.size)
-        assertEquals(
-            DownloadService.ACTION_PAUSE,
-            actionIntents(notification)[0].action
-        )
-        assertEquals(
-            DownloadService.ACTION_REMOVE,
-            actionIntents(notification)[1].action
-        )
+    fun notification_hasNoRemoveOrPerItemActionsForAnyUnfinishedState() {
+        // Issue #24: a notification "cancel" used to send ACTION_REMOVE (which
+        // zeroed the item's progress) and per-item pause/resume/retry buttons
+        // no longer exist either — only the global stop-all may be offered.
+        for (status in unfinishedStatuses) {
+            val notification = buildFor(item("notif-$status", status = status, progress = 40))
+            val intents = actionIntents(notification)
+            assertTrue(
+                "$status notification must never offer ACTION_REMOVE (bug #24)",
+                intents.none { it.action == DownloadService.ACTION_REMOVE }
+            )
+            assertTrue(
+                "$status notification must never offer per-item ACTION_PAUSE",
+                intents.none { it.action == DownloadService.ACTION_PAUSE }
+            )
+            assertTrue(
+                "$status notification must never offer per-item ACTION_START (resume/retry)",
+                intents.none { it.action == DownloadService.ACTION_START }
+            )
+        }
     }
 
     @Test

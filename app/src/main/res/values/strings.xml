@@ -55,6 +55,8 @@
     <string name="resume_all">Resume All</string>
     <string name="action_pause">Pause</string>
     <string name="action_resume">Resume</string>
+    <!-- Notification button: pauses every queued/in-flight download at once -->
+    <string name="action_stop_all">Stop all</string>
     <string name="action_cancel">Cancel</string>
 
     <string name="clear_all_confirm_message">All finished downloads will be removed from the list. Paused, failed, and queued items will stay right where they are.</string>
@@ -92,6 +94,9 @@
     <string name="download_timed_out">Download timed out after 10 minutes, please try again</string>
     <string name="download_waiting_network">Waiting for network…</string>
     <string name="download_speed_notification">%1$d%% — %2$s</string>
+    <string name="download_summary_title">Download summary</string>
+    <string name="download_summary_notification">Completed: %1$d, failed: %2$d</string>
+    <string name="toast_message_with_app_name">%1$s: %2$s</string>
 
     <!-- Parser / state messages -->
     <string name="parse_error_generic">Parse failed: %1$s</string>

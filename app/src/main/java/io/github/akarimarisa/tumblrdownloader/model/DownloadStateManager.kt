@@ -5,12 +5,15 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
+import androidx.annotation.VisibleForTesting
 import io.github.akarimarisa.tumblrdownloader.R
 import io.github.akarimarisa.tumblrdownloader.service.DownloadService
 import io.github.akarimarisa.tumblrdownloader.model.MediaQualityPrefs
 import io.github.akarimarisa.tumblrdownloader.utils.CompletedMediaStore
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadHistoryStore
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadUtils
+import io.github.akarimarisa.tumblrdownloader.utils.LocaleHelper
 import io.github.akarimarisa.tumblrdownloader.utils.ParsedTumblrMedia
 import io.github.akarimarisa.tumblrdownloader.utils.TumblrParser
 import io.github.akarimarisa.tumblrdownloader.utils.TumblrShareParseResult
@@ -33,12 +36,44 @@ import kotlinx.coroutines.withContext
  * Every state transition passes through a single coroutine that validates,
  * applies, and persists changes.  The ViewModel and Service delegate all
  * mutations here — no more races between user actions and progress callbacks.
+ *
+ * Production code must use [getInstance] — there must be exactly ONE
+ * instance per process (see [getInstance] for why).  [forTest] exists only
+ * to give unit tests fresh, isolated instances.
  */
-class DownloadStateManager(private val app: Application) {
+class DownloadStateManager private constructor(private val app: Application) {
+
+    private fun localizedString(@androidx.annotation.StringRes id: Int, vararg args: Any): String =
+        LocaleHelper.contextForAppLocale(app).getString(id, *args)
 
     companion object {
         private const val PREFS_NAME = "tumblr_downloader"
         private const val PREF_MAX_CONCURRENT = "max_concurrent_downloads"
+
+        @Volatile
+        private var instance: DownloadStateManager? = null
+
+        /**
+         * Process-wide shared instance.
+         *
+         * MainViewModel is constructed once per hosting Activity — both
+         * MainActivity and SettingsActivity have their own — and a second
+         * live instance would restore and re-persist its OWN snapshot
+         * (racing the visible instance's persistence via replaceAll) and
+         * reintroduce the registration-order bugs behind issue #24
+         * (downloads stuck at "0%" while files complete in the background).
+         */
+        fun getInstance(app: Application): DownloadStateManager =
+            instance ?: synchronized(this) {
+                instance ?: DownloadStateManager(app).also { instance = it }
+            }
+
+        /** Fresh, isolated instance for unit tests only. */
+        @VisibleForTesting
+        internal fun forTest(app: Application): DownloadStateManager = DownloadStateManager(app)
+
+        /** Minimum interval before a progress event can trigger persistence — a low-frequency snapshot so high-frequency progress cannot starve the disk writes. */
+        private const val PERSIST_PROGRESS_INTERVAL_MS = 5_000L
     }
 
     private fun getMaxConcurrentDownloads(): Int {
@@ -51,6 +86,11 @@ class DownloadStateManager(private val app: Application) {
     // ── state ──────────────────────────────────────────────────────────
     private val _items = MutableStateFlow<List<DownloadItem>>(emptyList())
     val items: StateFlow<List<DownloadItem>> = _items.asStateFlow()
+    @Volatile
+    private var pauseAllRequested = false
+    /** Items for which the UI pause command was sent but the service has not
+     * emitted its final PAUSED checkpoint yet. */
+    private val pendingPauseIds = mutableSetOf<String>()
 
     private var isParsing = false
 
@@ -79,6 +119,7 @@ class DownloadStateManager(private val app: Application) {
         data class Progress(val item: DownloadItem) : Cmd()
         data object PauseAll : Cmd()
         data object ResumeAll : Cmd()
+        data object ServicePauseAll : Cmd()
     }
 
     private val cmdCh = Channel<Cmd>(Channel.UNLIMITED)
@@ -107,6 +148,25 @@ class DownloadStateManager(private val app: Application) {
         override fun onDownloadUpdate(item: DownloadItem) {
             cmdCh.trySend(Cmd.Progress(item))
         }
+
+        override fun onAllDownloadsPaused() {
+            pauseAllRequested = true
+            cmdCh.trySend(Cmd.ServicePauseAll)
+        }
+
+        override fun hasPendingDownloads(exceptId: String?): Boolean {
+            return _items.value.any { item ->
+                item.id != exceptId &&
+                    (item.status == DownloadStatus.DOWNLOADING || item.status == DownloadStatus.QUEUED)
+            }
+        }
+
+        override fun nextPendingDownload(exceptId: String?): DownloadItem? =
+            _items.value.firstOrNull { item ->
+                item.id != exceptId && item.status == DownloadStatus.DOWNLOADING
+            } ?: _items.value.filter { item ->
+                item.id != exceptId && item.status == DownloadStatus.QUEUED
+            }.minByOrNull { it.createdAt }
     }
 
     /**
@@ -140,7 +200,7 @@ class DownloadStateManager(private val app: Application) {
                                 android.util.Log.w("DownloadSM", "LoginRequired after login retry — giving up")
                                 _parseEvent.tryEmit(
                                     ParseEvent.CookieSecurityNotice(
-                                        app.getString(R.string.login_retry_failed)
+                                        localizedString(R.string.login_retry_failed)
                                     )
                                 )
                             } else {
@@ -148,7 +208,7 @@ class DownloadStateManager(private val app: Application) {
                                 _parseEvent.tryEmit(
                                     ParseEvent.LoginRequired(
                                         url = result.url.ifBlank { url },
-                                        message = app.getString(R.string.parse_login_required)
+                                        message = localizedString(R.string.parse_login_required)
                                     )
                                 )
                             }
@@ -164,7 +224,7 @@ class DownloadStateManager(private val app: Application) {
                     }
                 }
             } catch (e: Exception) {
-                _parseEvent.tryEmit(ParseEvent.Message(app.getString(R.string.parse_error_generic, e.message ?: app.getString(R.string.download_unknown_error))))
+                _parseEvent.tryEmit(ParseEvent.Message(localizedString(R.string.parse_error_generic, e.message ?: localizedString(R.string.download_unknown_error))))
             } finally {
                 isParsing = false
             }
@@ -238,16 +298,29 @@ class DownloadStateManager(private val app: Application) {
             is Cmd.ClearAll -> processClearAll()
             is Cmd.PauseAll -> processPauseAll()
             is Cmd.ResumeAll -> processResumeAll()
+            is Cmd.ServicePauseAll -> processServicePauseAll()
             is Cmd.Progress -> processProgress(cmd.item)
         }
-        persistDirty()
+        // persistDirty() used to be called unconditionally for every command: the
+        // progress spam (one event ~every 30ms while downloading) kept cancelling
+        // the previous 100ms-debounced write job, so an in-flight persistence
+        // never got to run — append/pause/progress snapshots during a download
+        // were all lost. Fix: non-progress commands schedule a write right away;
+        // progress only gets a low-frequency snapshot (5s), and no new job is
+        // scheduled while one is already running (the running job reads the
+        // latest _items anyway).
+        if (cmd !is Cmd.Progress) {
+            persistDirty()
+        } else if (SystemClock.elapsedRealtime() - lastPersistAtMillis >= PERSIST_PROGRESS_INTERVAL_MS) {
+            persistDirty()
+        }
     }
 
     // ── Append (from parse result) ─────────────────────────────────────
     private fun processAppend(candidates: List<ParsedTumblrMedia>) {
         android.util.Log.d("DownloadSM", "processAppend: ${candidates.size} candidates")
         if (candidates.isEmpty()) {
-            _parseEvent.tryEmit(ParseEvent.Message(app.getString(R.string.parse_no_new_media)))
+            _parseEvent.tryEmit(ParseEvent.Message(localizedString(R.string.parse_no_new_media)))
             return
         }
 
@@ -279,7 +352,7 @@ class DownloadStateManager(private val app: Application) {
         android.util.Log.d("DownloadSM", "processAppend: ${added.size} new items after dedup")
 
         if (added.isEmpty()) {
-            _parseEvent.tryEmit(ParseEvent.Message(app.getString(R.string.parse_duplicate_skipped)))
+            _parseEvent.tryEmit(ParseEvent.Message(localizedString(R.string.parse_duplicate_skipped)))
             return
         }
 
@@ -291,6 +364,9 @@ class DownloadStateManager(private val app: Application) {
         _items.value = (added + existing).sortedByDescending { it.createdAt }
         _parseEvent.tryEmit(ParseEvent.Queued(added.size))
         dirty = true
+        // Newly appended items are ordinary queue starts. They must not carry
+        // the explicit-resume marker, otherwise an ACTION_START delayed from
+        // before a notification pause could reopen the globally paused queue.
         startNextIfSlotAvailable()
     }
 
@@ -317,18 +393,27 @@ class DownloadStateManager(private val app: Application) {
 
         if (item.status == DownloadStatus.DOWNLOADING || item.status == DownloadStatus.COMPLETED) return
 
+        // A direct per-item resume is an explicit user request after a global
+        // pause, so allow the queue to advance again.
+        pauseAllRequested = false
+        pendingPauseIds.remove(itemId)
+
         val runningCount = _items.value.count { it.status == DownloadStatus.DOWNLOADING }
         val canStartNow = runningCount < getMaxConcurrentDownloads()
 
         val toStart = item.copy(
             status = if (canStartNow) DownloadStatus.DOWNLOADING else DownloadStatus.QUEUED,
-            progress = 0,
+            // Keep the visible checkpoint while a paused partial file resumes.
+            progress = if (item.downloadedBytes > 0L) item.progress else 0,
             errorMessage = null,
             retryCount = if (item.status == DownloadStatus.FAILED) 0 else item.retryCount
         )
         replaceItem(idx, toStart)
 
-        if (canStartNow) sendStartIntent(toStart)
+        // This is always a user-requested resume. It must also work for a
+        // paused queued item whose checkpoint is zero; the service may still
+        // be globally paused after the notification action.
+        if (canStartNow) sendStartIntent(toStart, explicitResume = true)
     }
 
     // ── Pause ───────────────────────────────────────────────────────────
@@ -340,6 +425,7 @@ class DownloadStateManager(private val app: Application) {
         if (item.status == DownloadStatus.COMPLETED || item.status == DownloadStatus.PAUSED) return
 
         replaceItem(idx, item.copy(status = DownloadStatus.PAUSED, errorMessage = null))
+        pendingPauseIds.add(itemId)
         sendPauseIntent(itemId)
     }
 
@@ -371,41 +457,65 @@ class DownloadStateManager(private val app: Application) {
 
     // ── Pause All / Resume All ─────────────────────────────────────────
     private fun processPauseAll() {
-        // Send a single batch intent to the service first (cancels active +
-        // drains queue), then update all local statuses.
-        sendPauseAllIntent()
-
+        pauseAllRequested = true
         var changed = false
         _items.value = _items.value.map { item ->
             if (item.status == DownloadStatus.DOWNLOADING || item.status == DownloadStatus.QUEUED) {
                 changed = true
-                item.copy(status = DownloadStatus.PAUSED, progress = 0, errorMessage = null)
+                pendingPauseIds.add(item.id)
+                // Keep the item's progress: an in-flight download must keep
+                // showing its real percentage after pause-all.  (The service
+                // also emits PAUSED with lastProgress, which the
+                // processProgress guard coalesces into this preserved value.)
+                item.copy(status = DownloadStatus.PAUSED, errorMessage = null)
+            } else item
+        }
+        if (changed) dirty = true
+
+        // Update local statuses before notifying the service. The service may
+        // emit PAUSED while draining its channel, so this avoids a callback
+        // observing a still-QUEUED item during the pause-all race window.
+        sendPauseAllIntent()
+    }
+
+    private fun processServicePauseAll() {
+        pauseAllRequested = true
+        var changed = false
+        _items.value = _items.value.map { item ->
+            if (item.status == DownloadStatus.DOWNLOADING || item.status == DownloadStatus.QUEUED) {
+                changed = true
+                pendingPauseIds.add(item.id)
+                item.copy(status = DownloadStatus.PAUSED, errorMessage = null)
             } else item
         }
         if (changed) dirty = true
     }
 
     private fun processResumeAll() {
-        val items = _items.value
-        var hasActive = items.any { it.status == DownloadStatus.DOWNLOADING }
-
-        // 先把所有 PAUSED/FAILED 置为 QUEUED，再统一用 startNextIfSlotAvailable
-        // 循环启动直到达到并发上限 —— 避免 "resumeAll 后实际串行"（旧的
-        // startedOne 逻辑每次只启动一个，其余排队等前一个完成）。
+        pauseAllRequested = false
+        // The notification action pauses the Service directly, so clear its
+        // global gate before sending the individual ACTION_START intents.
+        // Without this, a resume-all where the local rows were already marked
+        // DOWNLOADING could leave the Service permanently in summary mode.
+        sendResumeAllIntent()
+        // First flip all PAUSED/FAILED to QUEUED, then use startNextIfSlotAvailable
+        // in a loop until the concurrency cap is reached — avoids "resumeAll
+        // ending up effectively serial" (the old startedOne logic started only
+        // one at a time, leaving the rest queued behind the previous one).
         var changed = false
         _items.value = _items.value.map { item ->
             if (item.status == DownloadStatus.PAUSED || item.status == DownloadStatus.FAILED) {
                 changed = true
                 item.copy(
                     status = DownloadStatus.QUEUED,
-                    progress = 0,
+                    progress = if (item.downloadedBytes > 0L) item.progress else 0,
                     errorMessage = null,
                     retryCount = if (item.status == DownloadStatus.FAILED) 0 else item.retryCount
                 )
             } else item
         }
         if (changed) dirty = true
-        startNextIfSlotAvailable()
+        startNextIfSlotAvailable(explicitResume = true)
     }
 
     // ── Progress callback (from service) ────────────────────────────────
@@ -421,8 +531,69 @@ class DownloadStateManager(private val app: Application) {
             // RecyclerView flicker.
             val oldSt = existing.status
             val result = when {
-                existing.status == DownloadStatus.PAUSED && update.status == DownloadStatus.DOWNLOADING -> existing
-                existing.status == DownloadStatus.PAUSED && update.status == DownloadStatus.PAUSED -> existing
+                // A manual pause is authoritative immediately. The service
+                // can still deliver one or more old DOWNLOADING callbacks
+                // while cancellation propagates, but those callbacks must not
+                // undo the local PAUSED state.
+                existing.id in pendingPauseIds &&
+                    update.status == DownloadStatus.DOWNLOADING -> existing
+                existing.id in pendingPauseIds &&
+                    update.status == DownloadStatus.PAUSED -> {
+                    pendingPauseIds.remove(existing.id)
+                    existing.copy(
+                        progress = maxOf(existing.progress, update.progress),
+                        downloadedBytes = if (update.downloadedBytes > 0L) {
+                            update.downloadedBytes
+                        } else existing.downloadedBytes,
+                        downloadFileUri = update.downloadFileUri ?: existing.downloadFileUri,
+                        errorMessage = existing.errorMessage ?: update.errorMessage
+                    )
+                }
+                // A PAUSED event arriving after a new start belongs to the
+                // cancelled previous download job. The UI already marked the
+                // item paused before a manual pause command was sent, so this
+                // late event must not move a resumed item back to PAUSED.
+                existing.status == DownloadStatus.DOWNLOADING &&
+                    update.status == DownloadStatus.PAUSED &&
+                    !pauseAllRequested -> existing
+                existing.status == DownloadStatus.DOWNLOADING &&
+                    update.status == DownloadStatus.DOWNLOADING &&
+                    update.progress == 0 &&
+                    update.downloadedBytes <= existing.downloadedBytes -> existing
+                // ACTION_PAUSE_ALL cancels the service jobs, but their final
+                // callbacks can still be queued after the local row was
+                // changed to PAUSED. They must not resurrect DOWNLOADING in
+                // the list while the service is globally paused.
+                pauseAllRequested &&
+                    existing.status == DownloadStatus.PAUSED &&
+                    update.status == DownloadStatus.DOWNLOADING -> existing
+                // A resumed item is changed to DOWNLOADING before its ACTION_START
+                // is sent. Do not discard the first service callback merely because
+                // a late PAUSED callback left the local row at PAUSED; otherwise
+                // the row can remain frozen at its old checkpoint while the file
+                // is actually downloading.
+                existing.status == DownloadStatus.PAUSED && update.status == DownloadStatus.PAUSED -> {
+                    // The UI marks an item PAUSED before the service finishes
+                    // cancelling its socket. Merge the service's final
+                    // checkpoint instead of discarding it just because both
+                    // states are PAUSED. Queued pause-all events carry zero;
+                    // they therefore cannot erase a real checkpoint.
+                    existing.copy(
+                        // A non-zero PAUSED callback contains the actual file
+                        // checkpoint. It may be lower than the displayed
+                        // checkpoint when the server rejected Range and the
+                        // current attempt restarted from byte zero, so do not
+                        // keep the stale offset for the next resume.
+                        progress = maxOf(existing.progress, update.progress),
+                        downloadedBytes = if (update.downloadedBytes > 0L) {
+                            update.downloadedBytes
+                        } else {
+                            existing.downloadedBytes
+                        },
+                        downloadFileUri = update.downloadFileUri ?: existing.downloadFileUri,
+                        errorMessage = existing.errorMessage ?: update.errorMessage
+                    )
+                }
                 existing.status == DownloadStatus.COMPLETED && update.status != DownloadStatus.COMPLETED -> existing
                 else -> update
             }
@@ -438,7 +609,7 @@ class DownloadStateManager(private val app: Application) {
         val updateIdx = _items.value.indexOfFirst { it.id == update.id }
         if (updateIdx >= 0) {
             val item = _items.value[updateIdx]
-            if (item.status != DownloadStatus.DOWNLOADING) {
+            if (!pauseAllRequested && item.status != DownloadStatus.DOWNLOADING) {
                 startNextIfSlotAvailable()
             }
         }
@@ -453,34 +624,40 @@ class DownloadStateManager(private val app: Application) {
         dirty = true
     }
 
-    private fun startNextIfSlotAvailable() {
-        // ponytail: 循环启动排队任务直到达到并发上限，而不是每次只启动一个。
-        // 之前的实现只在批量添加时启动一个任务，其余排队任务要等前一个
-        // 完成后才被启动（终态回调），导致实际永远串行 —— maxConcurrent
-        // 设置形同虚设。
+    private fun startNextIfSlotAvailable(explicitResume: Boolean = false) {
+        // ponytail: loop starting queued tasks until the concurrency cap is reached,
+        // instead of starting only one at a time. The previous implementation
+        // started a single task on batch add and only started the rest when the
+        // previous one finished (terminal-status callback), which made the queue
+        // effectively serial forever — rendering the maxConcurrent setting moot.
         while (true) {
             val running = _items.value.count { it.status == DownloadStatus.DOWNLOADING }
             if (running >= getMaxConcurrentDownloads()) return
 
-            // FIFO 顺序 — 按 createdAt 升序（最早添加的先下载），
-            // 而不是按降序。降序会导致新任务插队，旧任务的剩余图片被延后，
-            // 当新旧任务包含相同媒体时产生重复下载。
+            // FIFO order — by ascending createdAt (oldest added first),
+            // not descending. Descending would let new tasks jump the queue,
+            // delaying the remaining media of older tasks and causing duplicate
+            // downloads when newer and older tasks contain the same media.
             val next = _items.value
                 .filter { it.status == DownloadStatus.QUEUED }
                 .minByOrNull { it.createdAt } ?: return
 
             val idx = _items.value.indexOfFirst { it.id == next.id }
-            val started = next.copy(status = DownloadStatus.DOWNLOADING, progress = 0)
+            val started = next.copy(
+                status = DownloadStatus.DOWNLOADING,
+                progress = if (next.downloadedBytes > 0L) next.progress else 0
+            )
             replaceItem(idx, started)
-            sendStartIntent(started)
+            sendStartIntent(started, explicitResume)
         }
     }
 
     // ── Intent helpers ──────────────────────────────────────────────────
 
-    private fun sendStartIntent(item: DownloadItem) {
+    private fun sendStartIntent(item: DownloadItem, explicitResume: Boolean = false) {
         val intent = Intent(app, DownloadService::class.java).apply {
             action = DownloadService.ACTION_START
+            putExtra(DownloadService.EXTRA_EXPLICIT_RESUME, explicitResume)
             putExtra(DownloadService.EXTRA_ITEM_ID, item.id)
             putExtra(DownloadService.EXTRA_SOURCE_URL, item.sourceUrl)
             putExtra(DownloadService.EXTRA_MEDIA_URL, item.mediaUrl)
@@ -490,6 +667,9 @@ class DownloadStateManager(private val app: Application) {
             putExtra(DownloadService.EXTRA_MAX_RETRIES, item.maxRetries)
             if (item.downloadedBytes > 0L) {
                 putExtra(DownloadService.EXTRA_DOWNLOADED_BYTES, item.downloadedBytes)
+            }
+            if (item.downloadedBytes > 0L && item.progress > 0) {
+                putExtra(DownloadService.EXTRA_PROGRESS, item.progress)
             }
             if (!item.downloadFileUri.isNullOrBlank()) {
                 putExtra(DownloadService.EXTRA_FILE_URI, item.downloadFileUri)
@@ -532,20 +712,37 @@ class DownloadStateManager(private val app: Application) {
         app.startService(intent)
     }
 
+    private fun sendResumeAllIntent() {
+        val intent = Intent(app, DownloadService::class.java).apply {
+            action = DownloadService.ACTION_RESUME_ALL
+        }
+        app.startService(intent)
+    }
+
     // ── Persistence ─────────────────────────────────────────────────────
 
     private var dirty = false
     private var persistJob: Job? = null
 
+    /** Milliseconds since the last actual disk write — caps how often progress events can trigger persistence. */
+    private var lastPersistAtMillis: Long = 0L
+
     /** Debounced persist — coalesces rapid mutations into one disk write. */
     private fun persistDirty() {
         if (!dirty) return
+        // If a write job is already running, let it finish: it saves the
+        // _items.value at the time of execution, so there is no need to cancel
+        // and restart — cancelling was exactly what caused the starvation.
+        persistJob?.let { if (it.isActive) return }
         dirty = false
-        persistJob?.cancel()
         persistJob = scope.launch {
-            delay(100)
-            withContext(Dispatchers.IO) {
-                DownloadHistoryStore.save(app, _items.value)
+            try {
+                delay(100)
+                withContext(Dispatchers.IO) {
+                    DownloadHistoryStore.save(app, _items.value)
+                }
+            } finally {
+                lastPersistAtMillis = SystemClock.elapsedRealtime()
             }
         }
     }
@@ -594,31 +791,31 @@ class DownloadStateManager(private val app: Application) {
     private fun localizeError(msg: String): String {
         return when {
             msg.startsWith("Not a valid Tumblr share link") ->
-                app.getString(R.string.parse_not_valid_url)
+                localizedString(R.string.parse_not_valid_url)
             msg.startsWith("Private Tumblr posts are not supported yet") ->
-                app.getString(R.string.parse_private_not_supported)
+                localizedString(R.string.parse_private_not_supported)
             msg.startsWith("oEmbed redirect error") -> {
                 val code = msg.filter { it.isDigit() }.toIntOrNull() ?: 0
-                app.getString(R.string.parse_oembed_redirect_error, code)
+                localizedString(R.string.parse_oembed_redirect_error, code)
             }
             msg.startsWith("oEmbed request failed, HTTP") -> {
                 val code = msg.filter { it.isDigit() }.toIntOrNull() ?: 0
-                app.getString(R.string.parse_oembed_http_error, code)
+                localizedString(R.string.parse_oembed_http_error, code)
             }
             msg.startsWith("oEmbed unavailable:") ->
-                app.getString(R.string.parse_oembed_unavailable, msg.substringAfter("oEmbed unavailable: "))
+                localizedString(R.string.parse_oembed_unavailable, msg.substringAfter("oEmbed unavailable: "))
             msg.startsWith("oEmbed parsed but no downloadable media found") ->
-                app.getString(R.string.parse_oembed_parsed_empty)
+                localizedString(R.string.parse_oembed_parsed_empty)
             msg.startsWith("oEmbed parse failed:") ->
-                app.getString(R.string.parse_error_generic, msg.substringAfter("oEmbed parse failed: "))
+                localizedString(R.string.parse_error_generic, msg.substringAfter("oEmbed parse failed: "))
             msg.startsWith("Page request failed, HTTP") -> {
                 val code = msg.filter { it.isDigit() }.toIntOrNull() ?: 0
-                app.getString(R.string.parse_page_request_failed, code)
+                localizedString(R.string.parse_page_request_failed, code)
             }
             msg.startsWith("Page parse failed:") ->
-                app.getString(R.string.parse_error_generic, msg.substringAfter("Page parse failed: "))
+                localizedString(R.string.parse_error_generic, msg.substringAfter("Page parse failed: "))
             msg.startsWith("No downloadable media found") ->
-                app.getString(R.string.parse_no_new_media)
+                localizedString(R.string.parse_no_new_media)
             else -> msg
         }
     }

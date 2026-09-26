@@ -47,8 +47,9 @@ class DownloadsFragment : Fragment() {
         binding.rvDownloads.adapter = adapter
 
         viewLifecycleOwner.lifecycleScope.launch {
-            // repeatOnLifecycle 确保每次回到前台时重新收集 Flow，
-            // 否则后台下载完成后切回前台时 UI 不会刷新。
+            // repeatOnLifecycle re-collects the Flow every time the screen returns to
+            // the foreground; otherwise the UI would not refresh after background
+            // downloads finish when switching back to the app.
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.downloads.collect { list ->
                     adapter.submitList(list)

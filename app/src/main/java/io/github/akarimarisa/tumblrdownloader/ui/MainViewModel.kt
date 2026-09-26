@@ -14,6 +14,7 @@ import io.github.akarimarisa.tumblrdownloader.service.DownloadService
 import io.github.akarimarisa.tumblrdownloader.model.ParseEvent
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadHistoryStore
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadUtils
+import io.github.akarimarisa.tumblrdownloader.utils.LocaleHelper
 import io.github.akarimarisa.tumblrdownloader.utils.TumblrAccount
 import io.github.akarimarisa.tumblrdownloader.utils.TumblrAccountStore
 import io.github.akarimarisa.tumblrdownloader.R
@@ -38,15 +39,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = appContext.getSharedPreferences("tumblr_downloader", Context.MODE_PRIVATE)
 
     // ── download state manager (sequential, race-free) ────────────────
-    val stateManager = DownloadStateManager(appContext).also { sm ->
-        // Only set the static progressListener if it isn't already set.
-        // When a transient ViewModel is created after the real ViewModel
-        // already registered its listener, we must NOT overwrite —
-        // otherwise the transient VM's onCleared() would null out the
-        // listener the real VM needs to receive progress updates.
-        if (DownloadService.progressListener == null) {
-            DownloadService.progressListener = sm.serviceProgressListener
-        }
+    // Process-wide singleton — there must be exactly ONE state owner per
+    // process.  MainViewModel is constructed once per hosting Activity
+    // (MainActivity AND SettingsActivity each have their own instance), so
+    // a per-instance DownloadStateManager would restore and re-persist its
+    // own snapshot on every Settings visit (racing the live one) and
+    // reintroduce the registration-order bugs behind issue #24.
+    val stateManager = DownloadStateManager.getInstance(appContext)
+
+    /**
+     * Claims the singleton [DownloadService.progressListener] slot for this
+     * state manager.
+     *
+     * Called from MainActivity.onResume() so the visible screen always
+     * receives download updates regardless of which ViewModel was
+     * constructed first.  Safe to call repeatedly (resume happens on every
+     * return to the screen); SettingsActivity's ViewModel never claims the
+     * slot, so the download list stays live even while Settings is on top.
+     *
+     * The slot is intentionally NEVER released by a ViewModel: the state
+     * manager is process-wide and persists even when every hosting Activity
+     * is destroyed or evicted while the app is backgrounded.  Releasing it
+     * on onCleared() would leave the manager deaf (and stop it persisting)
+     * while the foreground service keeps downloading — the exact issue #24
+     * "stuck progress" symptom class.
+     */
+    fun claimServiceProgressListener() {
+        DownloadService.progressListener = stateManager.serviceProgressListener
     }
 
     val downloads: StateFlow<List<DownloadItem>> = stateManager.items
@@ -69,7 +88,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     DownloadStatus.DOWNLOADING -> item.copy(
                         status = DownloadStatus.FAILED,
                         progress = 0,
-                        errorMessage = appContext.getString(R.string.restored_state_invalid)
+                        errorMessage = LocaleHelper.contextForAppLocale(appContext).getString(R.string.restored_state_invalid)
                     )
                     else -> item
                 }
@@ -88,13 +107,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         refreshDownloadDirectoryLabel()
         refreshTumblrAccount()
-    }
-
-    override fun onCleared() {
-        if (DownloadService.progressListener === stateManager.serviceProgressListener) {
-            DownloadService.progressListener = null
-        }
-        super.onCleared()
     }
 
     // ── delegated to stateManager (sequential, race-free) ─────────────
@@ -137,7 +149,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Log.w(TAG, "retryPendingLoginUrl: cookie sync timeout, URL preserved for manual retry")
                 stateManager.emitParseEvent(
                     ParseEvent.CookieSecurityNotice(
-                        getApplication<Application>().getString(R.string.cookie_sync_timeout)
+                        LocaleHelper.contextForAppLocale(appContext).getString(R.string.cookie_sync_timeout)
                     )
                 )
             }
