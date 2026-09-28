@@ -14,6 +14,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 
@@ -30,7 +31,7 @@ import org.robolectric.annotation.Config
  * Run with: `./gradlew testDebugUnitTest --tests "*DownloadServiceNetworkTest*"`
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [34])
 class DownloadServiceNetworkTest {
 
     private lateinit var context: Context
@@ -58,6 +59,20 @@ class DownloadServiceNetworkTest {
 
     @After
     fun tearDown() {
+        // Stop any background download/retry coroutines started by this test.
+        // They run on the real coroutine scheduler, so without this they
+        // outlive the test class, NPE after Robolectric tears the app down,
+        // and poison the shared coroutine-test state (surfacing later as
+        // UncaughtExceptionsBeforeTest in an unrelated runTest).
+        runCatching {
+            service.onStartCommand(
+                Intent(service, DownloadService::class.java).apply {
+                    action = DownloadService.ACTION_PAUSE_ALL
+                },
+                0,
+                Int.MAX_VALUE
+            )
+        }
         DownloadService.progressListener = null
     }
 
@@ -306,8 +321,64 @@ class DownloadServiceNetworkTest {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  Foreground contract (crash regression)
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Test
+    fun startWhileGloballyPaused_acceptsItemAndEstablishesForeground() {
+        // Regression for the ForegroundServiceDidNotStartInTimeException
+        // crash: after a pause-all the service is no longer foreground (its
+        // notification was removed), yet ACTION_START intents still arrive via
+        // startForegroundService(). Every ACTION_START must establish
+        // foreground before any early return — and a fresh explicit start must
+        // actually be accepted (the old gate left new downloads stuck QUEUED
+        // forever after a pause-all).
+        service.setNetworkAvailableForTest(true)
+
+        service.onStartCommand(pauseAllIntent(), 0, 1)
+        assertNull(
+            "after pause-all the foreground notification must be removed",
+            shadowOf(service).lastForegroundNotification
+        )
+
+        val result = service.onStartCommand(createStartIntent("fg-1"), 0, 2)
+
+        assertEquals(Service.START_STICKY, result)
+        assertNotNull(
+            "ACTION_START must call startForeground()",
+            shadowOf(service).lastForegroundNotification
+        )
+        assertTrue(
+            "ACTION_START must attach the notification",
+            shadowOf(service).isLastForegroundNotificationAttached
+        )
+        assertTrue(
+            "an explicit start after pause-all must be accepted into the queue (not wedged)",
+            service.hasQueuedItemForTest("fg-1")
+        )
+    }
+
+    @Test
+    fun pauseAllButton_returnsStartSticky() {
+        // The notification "Stop all" button is delivered via
+        // PendingIntent.getForegroundService — the branch must handle the
+        // foreground contract (ensureForeground) and keep its contract.
+        val result = service.onStartCommand(pauseAllIntent(), 0, 1)
+
+        assertEquals(Service.START_STICKY, result)
+        assertFalse(
+            "after pause-all the service goes back to background summary mode",
+            shadowOf(service).isLastForegroundNotificationAttached
+        )
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  Helpers
     // ═══════════════════════════════════════════════════════════════════
+
+    private fun pauseAllIntent() = Intent(service, DownloadService::class.java).apply {
+        action = DownloadService.ACTION_PAUSE_ALL
+    }
 
     private fun createStartIntent(id: String) =
         Intent(service, DownloadService::class.java).apply {

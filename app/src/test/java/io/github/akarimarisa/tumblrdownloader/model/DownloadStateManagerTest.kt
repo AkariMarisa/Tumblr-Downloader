@@ -13,6 +13,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import io.github.akarimarisa.tumblrdownloader.utils.ParsedTumblrMedia
 
 /**
  * Tests for [DownloadStateManager] pause / resume / remove state transitions.
@@ -256,6 +257,27 @@ class DownloadStateManagerTest {
         assertTrue("failed item should remain", remaining.any { it.id == "o" })
     }
 
+    @Test
+    fun clearAll_keepsCompletedBlogBatchItems() = runTest(testDispatcher) {
+        // Blog batch items back their card's full-download record. "Clear
+        // completed" must only act on standalone downloads — otherwise it
+        // hollows out the blog detail while leaving the card dangling.
+        stateManager.restore(listOf(
+            item("solo", status = DownloadStatus.COMPLETED),
+            item("batchDone", status = DownloadStatus.COMPLETED, batchId = "b1", blogName = "b1"),
+            item("batchPaused", status = DownloadStatus.PAUSED, batchId = "b1", blogName = "b1")
+        ))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.clearAll()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val remaining = stateManager.items.value
+        assertFalse("standalone completed item should be removed", remaining.any { it.id == "solo" })
+        assertTrue("completed batch item must be kept", remaining.any { it.id == "batchDone" })
+        assertTrue("paused batch item must be kept", remaining.any { it.id == "batchPaused" })
+    }
+
     // ── restore ─────────────────────────────────────────────────────────
 
     @Test
@@ -349,6 +371,113 @@ class DownloadStateManagerTest {
     }
 
     @Test
+    fun batchItem_progressUpdate_withoutBatchId_keepsBatchMetadata() = runTest(testDispatcher) {
+        // Regression: the service rebuilds its DownloadItem from ACTION_START
+        // intent extras, which carry no batchId/blogName. A progress update for
+        // a downloading blog item must NOT wipe the row's batchId, otherwise a
+        // blog download silently leaks into the standalone main list (the
+        // "blog tasks show mixed with single downloads" complaint).
+        val batchItem = item("b1", status = DownloadStatus.DOWNLOADING, batchId = "job-z", blogName = "z")
+        stateManager.restore(listOf(batchItem))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        // Simulate the service's progress callback — no batchId, no blogName.
+        stateManager.serviceProgressListener.onDownloadUpdate(
+            DownloadItem(
+                id = "b1",
+                sourceUrl = batchItem.sourceUrl,
+                mediaUrl = batchItem.mediaUrl,
+                title = batchItem.title,
+                type = MediaType.IMAGE,
+                status = DownloadStatus.DOWNLOADING,
+                downloadedBytes = 4096,
+                progress = 10,
+                retryCount = 0,
+                maxRetries = 3
+            )
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val updated = stateManager.items.value.find { it.id == "b1" }
+        assertEquals(
+            "blog item must keep its batchId after service progress",
+            "job-z",
+            updated?.batchId
+        )
+        assertEquals("blog item must keep its blogName after service progress", "z", updated?.blogName)
+    }
+
+    @Test
+    fun appendWhileGloballyPaused_chainContinuesAfterEachCompletion() = runTest(testDispatcher) {
+        // max=1: two fresh appends made while the queue is globally paused.
+        // The first starts immediately; when it completes, the SECOND must
+        // start too — new downloads must keep flowing after a pause, not stall
+        // behind the (paused) older rows.
+        val prefs = app.getSharedPreferences("tumblr_downloader", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putInt("max_concurrent_downloads", 1).commit()
+
+        val pausedOld = item("old1", status = DownloadStatus.PAUSED, batchId = "job-o", blogName = "o")
+        stateManager.restore(listOf(pausedOld))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.pauseAll()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.enqueueBlogAfterParse(
+            listOf(
+                ParsedTumblrMedia(
+                    sourceUrl = "https://www.tumblr.com/post/9",
+                    mediaUrl = "https://media.tumblr.com/new-1.jpg",
+                    title = "new-1",
+                    type = MediaType.IMAGE
+                ),
+                ParsedTumblrMedia(
+                    sourceUrl = "https://www.tumblr.com/post/10",
+                    mediaUrl = "https://media.tumblr.com/new-2.jpg",
+                    title = "new-2",
+                    type = MediaType.IMAGE
+                )
+            ),
+            batchId = "job-n",
+            blogName = "n"
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        fun statusOfUrl(url: String) = stateManager.items.value.firstOrNull { it.mediaUrl == url }?.status
+        assertEquals("first fresh append starts despite global pause", DownloadStatus.DOWNLOADING, statusOfUrl("https://media.tumblr.com/new-1.jpg"))
+        assertEquals("second fresh append waits for the single slot", DownloadStatus.QUEUED, statusOfUrl("https://media.tumblr.com/new-2.jpg"))
+
+        // Simulate the first completing (service update carries no batchId).
+        val firstId = stateManager.items.value.first { it.mediaUrl == "https://media.tumblr.com/new-1.jpg" }.id
+        stateManager.serviceProgressListener.onDownloadUpdate(
+            DownloadItem(
+                id = firstId,
+                sourceUrl = "https://www.tumblr.com/post/9",
+                mediaUrl = "https://media.tumblr.com/new-1.jpg",
+                title = "new-1",
+                type = MediaType.IMAGE,
+                status = DownloadStatus.COMPLETED,
+                progress = 100,
+                retryCount = 0,
+                maxRetries = 3
+            )
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("second fresh append starts after the first completes", DownloadStatus.DOWNLOADING, statusOfUrl("https://media.tumblr.com/new-2.jpg"))
+        assertEquals(
+            "old paused row must stay paused while new downloads flow",
+            DownloadStatus.PAUSED,
+            statusOfUrl("https://media.tumblr.com/old1.jpg")
+        )
+        assertEquals(
+            "newer appends keep their batchId",
+            "job-n",
+            stateManager.items.value.firstOrNull { it.mediaUrl == "https://media.tumblr.com/new-2.jpg" }?.batchId
+        )
+    }
+
+    @Test
     fun resumeAll_startsMultipleUpToMaxConcurrent() = runTest(testDispatcher) {
         // max=3: resumeAll should start queued tasks in a loop until the concurrent
         // slots are full, instead of starting only one (the old effectively
@@ -378,13 +507,189 @@ class DownloadStateManagerTest {
         assertEquals(2, statuses.count { it.second == DownloadStatus.QUEUED })
     }
 
+    // ── blog batch queue ───────────────────────────────────────────────
+
+    @Test
+    fun pauseBatch_pausesOnlyBatchItems() = runTest(testDispatcher) {
+        stateManager.restore(listOf(
+            item("b1", status = DownloadStatus.DOWNLOADING, batchId = "job-x", blogName = "x"),
+            item("b2", status = DownloadStatus.QUEUED, batchId = "job-x", blogName = "x"),
+            item("b3", status = DownloadStatus.COMPLETED, batchId = "job-x", blogName = "x"),
+            item("s1", status = DownloadStatus.DOWNLOADING)
+        ))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.pauseBatch("job-x")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val items = stateManager.items.value.associateBy { it.id }
+        assertEquals("downloading batch item paused", DownloadStatus.PAUSED, items["b1"]?.status)
+        assertEquals("queued batch item paused", DownloadStatus.PAUSED, items["b2"]?.status)
+        assertEquals("completed batch item untouched", DownloadStatus.COMPLETED, items["b3"]?.status)
+        assertEquals("standalone item untouched", DownloadStatus.DOWNLOADING, items["s1"]?.status)
+    }
+
+    @Test
+    fun pauseBatch_unknownBatch_doesNothing() = runTest(testDispatcher) {
+        stateManager.restore(listOf(item("z1", status = DownloadStatus.DOWNLOADING)))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.pauseBatch("nope")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(DownloadStatus.DOWNLOADING, stateManager.items.value.single().status)
+    }
+
+    @Test
+    fun resumeBatch_restartsPausedBatchItemsUpToConcurrencyCap() = runTest(testDispatcher) {
+        val prefs = app.getSharedPreferences("tumblr_downloader", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putInt("max_concurrent_downloads", 2).commit()
+
+        stateManager.restore(listOf(
+            item("r1", status = DownloadStatus.PAUSED, batchId = "job-y", blogName = "y"),
+            item("r2", status = DownloadStatus.PAUSED, batchId = "job-y", blogName = "y"),
+            item("r3", status = DownloadStatus.PAUSED, batchId = "job-y", blogName = "y")
+        ))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.resumeBatch("job-y")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val statuses = stateManager.items.value.map { it.id to it.status }
+        assertEquals(2, statuses.count { it.second == DownloadStatus.DOWNLOADING })
+        assertEquals(1, statuses.count { it.second == DownloadStatus.QUEUED })
+    }
+
+    @Test
+    fun resumeBatch_ignoresOtherBatchItems() = runTest(testDispatcher) {
+        stateManager.restore(listOf(
+            item("x1", status = DownloadStatus.PAUSED, batchId = "job-a", blogName = "a"),
+            item("x2", status = DownloadStatus.PAUSED, batchId = "job-b", blogName = "b")
+        ))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.resumeBatch("job-a")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val statuses = stateManager.items.value.map { it.id to it.status }
+        assertEquals(
+            "job-a resumes",
+            DownloadStatus.DOWNLOADING,
+            statuses.find { it.first == "x1" }?.second
+        )
+        assertEquals("job-b stays paused", DownloadStatus.PAUSED, statuses.find { it.first == "x2" }?.second)
+    }
+
+    @Test
+    fun resumeBatch_retriesFailedBatchItems() = runTest(testDispatcher) {
+        stateManager.restore(listOf(
+            item("f1", status = DownloadStatus.FAILED, batchId = "job-r", blogName = "r"),
+            item("p2", status = DownloadStatus.PAUSED, batchId = "job-r", blogName = "r"),
+            item("d3", status = DownloadStatus.COMPLETED, batchId = "job-r", blogName = "r"),
+            item("f4", status = DownloadStatus.FAILED)
+        ))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.resumeBatch("job-r")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val statuses = stateManager.items.value.map { it.id to it.status }
+        assertTrue(
+            "failed batch item must be retried on resume",
+            statuses.any { it.first == "f1" && it.second != DownloadStatus.FAILED }
+        )
+        assertTrue("paused batch item must resume", statuses.any { it.first == "p2" && it.second != DownloadStatus.PAUSED })
+        assertTrue("completed batch item is untouched", statuses.any { it.first == "d3" && it.second == DownloadStatus.COMPLETED })
+        assertEquals(
+            "standalone failed item is not touched by the batch resume",
+            DownloadStatus.FAILED,
+            statuses.find { it.first == "f4" }?.second
+        )
+    }
+
+    @Test
+    fun removeBatch_removesOnlyUnfinishedBatchItems() = runTest(testDispatcher) {
+        stateManager.restore(listOf(
+            item("m1", status = DownloadStatus.PAUSED, batchId = "job-z", blogName = "z"),
+            item("m2", status = DownloadStatus.QUEUED, batchId = "job-z", blogName = "z"),
+            item("m3", status = DownloadStatus.COMPLETED, batchId = "job-z", blogName = "z"),
+            item("s2", status = DownloadStatus.QUEUED)
+        ))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.removeBatch("job-z")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val ids = stateManager.items.value.map { it.id }
+        assertFalse("paused batch item removed", "m1" in ids)
+        assertFalse("queued batch item removed", "m2" in ids)
+        assertTrue("completed batch item kept", "m3" in ids)
+        assertTrue("standalone item kept", "s2" in ids)
+    }
+
+    @Test
+    fun removeBatch_unknownBatch_doesNothing() = runTest(testDispatcher) {
+        stateManager.restore(listOf(item("k2")))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.removeBatch("nope")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, stateManager.items.value.size)
+    }
+
+    @Test
+    fun appendWhileGloballyPaused_startsImmediately() = runTest(testDispatcher) {
+        // Regression for "pause downloads, then add a new download": a fresh
+        // append must start right away instead of sitting at QUEUED forever.
+        // The old guard treated every append as paused too, which wedged the
+        // queue behind the paused rows (nothing ever finished → nothing ever
+        // started).  DownloadService accepts every explicit ACTION_START, so
+        // starting the append is safe (no foreground-service crash).
+        stateManager.restore(listOf(
+            item("d1", status = DownloadStatus.DOWNLOADING),
+            item("d2", status = DownloadStatus.QUEUED)
+        ))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.pauseAll()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.enqueueBlogAfterParse(
+            listOf(
+                ParsedTumblrMedia(
+                    sourceUrl = "https://www.tumblr.com/post/1",
+                    mediaUrl = "https://media.tumblr.com/append-paused.jpg",
+                    title = "x",
+                    type = MediaType.IMAGE
+                )
+            ),
+            batchId = "job-a",
+            blogName = "a"
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val appended = stateManager.items.value.find { it.batchId == "job-a" }
+        assertNotNull("new append should still be added", appended)
+        assertEquals(
+            "a fresh append must start even while the queue is globally paused",
+            DownloadStatus.DOWNLOADING,
+            appended?.status
+        )
+        // The pre-existing paused rows must have stayed paused.
+        assertEquals(DownloadStatus.PAUSED, stateManager.items.value.find { it.id == "d1" }?.status)
+        assertEquals(DownloadStatus.PAUSED, stateManager.items.value.find { it.id == "d2" }?.status)
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────
 
     private fun item(
         id: String,
         status: DownloadStatus = DownloadStatus.QUEUED,
         mediaUrl: String = "https://media.tumblr.com/$id.jpg",
-        retryCount: Int = 0
+        retryCount: Int = 0,
+        batchId: String? = null,
+        blogName: String? = null
     ) = DownloadItem(
         id = id,
         sourceUrl = "https://www.tumblr.com/blog/$id",
@@ -393,6 +698,8 @@ class DownloadStateManagerTest {
         type = MediaType.IMAGE,
         status = status,
         retryCount = retryCount,
-        maxRetries = 3
+        maxRetries = 3,
+        batchId = batchId,
+        blogName = blogName
     )
 }

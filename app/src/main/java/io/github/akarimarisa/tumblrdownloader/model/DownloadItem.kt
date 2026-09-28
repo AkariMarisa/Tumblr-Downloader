@@ -33,7 +33,11 @@ data class DownloadItem(
     /** Content URI of the partial file for append-on-resume. */
     val downloadFileUri: String? = null,
     /** Current download speed in bytes per second (transient, not persisted). */
-    val speedBytesPerSecond: Long = 0L
+    val speedBytesPerSecond: Long = 0L,
+    /** Batch-job id when this item was enqueued by a blog full-profile scan (null = single post). */
+    val batchId: String? = null,
+    /** Blog name of the originating batch scan (only set when [batchId] is set). */
+    val blogName: String? = null
 ) {
     /** Preserve the byte offset and target needed for an HTTP Range retry. */
     internal fun withPartialDownload(fileUri: String, downloadedBytes: Long): DownloadItem =

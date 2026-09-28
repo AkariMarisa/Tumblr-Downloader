@@ -110,7 +110,13 @@ class DownloadStateManager private constructor(private val app: Application) {
 
     // ── command queue (single consumer processes one at a time) ────────
     private sealed class Cmd {
-        data class Append(val candidates: List<ParsedTumblrMedia>) : Cmd()
+        data class Append(
+            val candidates: List<ParsedTumblrMedia>,
+            val batchId: String? = null,
+            val blogName: String? = null,
+            /** Batch scans enqueue page-by-page; suppress the per-append toast. */
+            val emitQueuedEvent: Boolean = true
+        ) : Cmd()
         data class Restore(val items: List<DownloadItem>) : Cmd()
         data class StartOrResume(val itemId: String) : Cmd()
         data class Pause(val itemId: String) : Cmd()
@@ -120,6 +126,9 @@ class DownloadStateManager private constructor(private val app: Application) {
         data object PauseAll : Cmd()
         data object ResumeAll : Cmd()
         data object ServicePauseAll : Cmd()
+        data class PauseBatch(val batchId: String) : Cmd()
+        data class ResumeBatch(val batchId: String) : Cmd()
+        data class RemoveBatch(val batchId: String) : Cmd()
     }
 
     private val cmdCh = Channel<Cmd>(Channel.UNLIMITED)
@@ -237,6 +246,24 @@ class DownloadStateManager private constructor(private val app: Application) {
         cmdCh.trySend(Cmd.Restore(items))
     }
 
+    /**
+     * Enqueue parsed media from a blog full-profile scan (batch download).
+     *
+     * Unlike [enqueueFromUrl], this bypasses single-post parsing entirely:
+     * the caller ([BlogDownloadManager]) already fed the page's posts through
+     * [BlogFeedParser.extractMediaFromPost]. Items are tagged with [batchId]
+     * so the blog-job detail page can filter them, and the per-page "Queued"
+     * toast is suppressed because a scan enqueues many pages silently.
+     */
+    fun enqueueBlogAfterParse(
+        candidates: List<ParsedTumblrMedia>,
+        batchId: String,
+        blogName: String
+    ) {
+        if (candidates.isEmpty()) return
+        cmdCh.trySend(Cmd.Append(candidates, batchId, blogName, emitQueuedEvent = false))
+    }
+
     fun startOrResume(itemId: String) { cmdCh.trySend(Cmd.StartOrResume(itemId)) }
 
     fun pause(itemId: String) { cmdCh.trySend(Cmd.Pause(itemId)) }
@@ -248,6 +275,23 @@ class DownloadStateManager private constructor(private val app: Application) {
     fun pauseAll() { cmdCh.trySend(Cmd.PauseAll) }
 
     fun resumeAll() { cmdCh.trySend(Cmd.ResumeAll) }
+
+    /**
+     * Pause every unfinished item that belongs to one blog batch job
+     * ([batchId] == [jobId]). Used when the user pauses a blog card, so its
+     * whole download queue stops with the scan.
+     */
+    fun pauseBatch(batchId: String) { cmdCh.trySend(Cmd.PauseBatch(batchId)) }
+
+    /** Re-queue the paused items of one blog batch job (card "Resume"). */
+    fun resumeBatch(batchId: String) { cmdCh.trySend(Cmd.ResumeBatch(batchId)) }
+
+    /**
+     * Remove every unfinished item of one blog batch job from the queue.
+     * [DownloadStatus.COMPLETED] items are kept — their files stay downloaded
+     * and a later re-scan dedupes against them instead of re-downloading.
+     */
+    fun removeBatch(batchId: String) { cmdCh.trySend(Cmd.RemoveBatch(batchId)) }
 
     fun peekPendingLoginUrl(): String? = pendingLoginUrl
 
@@ -290,7 +334,7 @@ class DownloadStateManager private constructor(private val app: Application) {
     // ── command processing (sequential on main thread) ────────────────
     private fun process(cmd: Cmd) {
         when (cmd) {
-            is Cmd.Append -> processAppend(cmd.candidates)
+            is Cmd.Append -> processAppend(cmd)
             is Cmd.Restore -> processRestore(cmd.items)
             is Cmd.StartOrResume -> processStartOrResume(cmd.itemId)
             is Cmd.Pause -> processPause(cmd.itemId)
@@ -299,6 +343,9 @@ class DownloadStateManager private constructor(private val app: Application) {
             is Cmd.PauseAll -> processPauseAll()
             is Cmd.ResumeAll -> processResumeAll()
             is Cmd.ServicePauseAll -> processServicePauseAll()
+            is Cmd.PauseBatch -> processPauseBatch(cmd.batchId)
+            is Cmd.ResumeBatch -> processResumeBatch(cmd.batchId)
+            is Cmd.RemoveBatch -> processRemoveBatch(cmd.batchId)
             is Cmd.Progress -> processProgress(cmd.item)
         }
         // persistDirty() used to be called unconditionally for every command: the
@@ -317,10 +364,13 @@ class DownloadStateManager private constructor(private val app: Application) {
     }
 
     // ── Append (from parse result) ─────────────────────────────────────
-    private fun processAppend(candidates: List<ParsedTumblrMedia>) {
+    private fun processAppend(cmd: Cmd.Append) {
+        val candidates = cmd.candidates
         android.util.Log.d("DownloadSM", "processAppend: ${candidates.size} candidates")
         if (candidates.isEmpty()) {
-            _parseEvent.tryEmit(ParseEvent.Message(localizedString(R.string.parse_no_new_media)))
+            if (cmd.emitQueuedEvent) {
+                _parseEvent.tryEmit(ParseEvent.Message(localizedString(R.string.parse_no_new_media)))
+            }
             return
         }
 
@@ -343,7 +393,9 @@ class DownloadStateManager private constructor(private val app: Application) {
                     mediaUrl = media.mediaUrl,
                     title = displayFileName(media.sourceUrl, media.mediaUrl),
                     type = media.type,
-                    createdAt = baseTime + index
+                    createdAt = baseTime + index,
+                    batchId = cmd.batchId,
+                    blogName = cmd.blogName
                 )
             }
             .filter { existingKeys.add(DownloadUtils.normalizeMediaIdentity(it.mediaUrl)) }
@@ -352,7 +404,9 @@ class DownloadStateManager private constructor(private val app: Application) {
         android.util.Log.d("DownloadSM", "processAppend: ${added.size} new items after dedup")
 
         if (added.isEmpty()) {
-            _parseEvent.tryEmit(ParseEvent.Message(localizedString(R.string.parse_duplicate_skipped)))
+            if (cmd.emitQueuedEvent) {
+                _parseEvent.tryEmit(ParseEvent.Message(localizedString(R.string.parse_duplicate_skipped)))
+            }
             return
         }
 
@@ -362,7 +416,9 @@ class DownloadStateManager private constructor(private val app: Application) {
         }
 
         _items.value = (added + existing).sortedByDescending { it.createdAt }
-        _parseEvent.tryEmit(ParseEvent.Queued(added.size))
+        if (cmd.emitQueuedEvent) {
+            _parseEvent.tryEmit(ParseEvent.Queued(added.size))
+        }
         dirty = true
         // Newly appended items are ordinary queue starts. They must not carry
         // the explicit-resume marker, otherwise an ACTION_START delayed from
@@ -445,13 +501,21 @@ class DownloadStateManager private constructor(private val app: Application) {
      * so the user can retry or resume them later.
      */
     private fun processClearAll() {
-        val toRemove = _items.value.filter { it.status == DownloadStatus.COMPLETED }
+        // Only standalone downloads belong to the main list's "clear
+        // completed" action. Blog batch items back their card's
+        // full-download/subscription state — clearing them while leaving the
+        // card behind would hollow out the record (see issue reports).
+        val toRemove = _items.value.filter {
+            it.status == DownloadStatus.COMPLETED && it.batchId == null
+        }
         if (toRemove.isEmpty()) return
 
         toRemove.forEach { item ->
             CompletedMediaStore.remove(app, item.mediaUrl)
         }
-        _items.value = _items.value.filterNot { it.status == DownloadStatus.COMPLETED }
+        _items.value = _items.value.filterNot {
+            it.status == DownloadStatus.COMPLETED && it.batchId == null
+        }
         dirty = true
     }
 
@@ -518,11 +582,85 @@ class DownloadStateManager private constructor(private val app: Application) {
         startNextIfSlotAvailable(explicitResume = true)
     }
 
+    // ── Blog batch (per-job queue) ────────────────────────────────────
+    private fun processPauseBatch(batchId: String) {
+        if (_items.value.none { it.batchId == batchId }) return
+        var changed = false
+        _items.value = _items.value.map { item ->
+            if (item.batchId == batchId &&
+                (item.status == DownloadStatus.DOWNLOADING || item.status == DownloadStatus.QUEUED)
+            ) {
+                changed = true
+                pendingPauseIds.add(item.id)
+                // Keep the item's progress: an in-flight download must keep
+                // showing its real percentage after the batch is paused.
+                item.copy(status = DownloadStatus.PAUSED, errorMessage = null)
+            } else item
+        }
+        if (changed) dirty = true
+        // Tell the service to cancel the batch's in-flight download jobs.
+        // Paused-while-queued rows aren't in the service yet, so their
+        // ACTION_PAUSE is simply consumed and ignored there.
+        _items.value.filter { it.batchId == batchId && it.status == DownloadStatus.PAUSED }
+            .forEach { sendPauseIntent(it.id) }
+    }
+
+    private fun processResumeBatch(batchId: String) {
+        if (_items.value.none { it.batchId == batchId }) return
+        // Explicit user request: the blog queue may advance again.
+        pauseAllRequested = false
+        var changed = false
+        _items.value = _items.value.map { item ->
+            // Resume paused items and retry failed ones together — the card's
+            // Start / the detail page's Start-all must recover the whole
+            // blog, not just the paused subset.
+            if (item.batchId == batchId &&
+                (item.status == DownloadStatus.PAUSED || item.status == DownloadStatus.FAILED)
+            ) {
+                changed = true
+                pendingPauseIds.remove(item.id)
+                item.copy(
+                    status = DownloadStatus.QUEUED,
+                    progress = if (item.downloadedBytes > 0L) item.progress else 0,
+                    errorMessage = null
+                )
+            } else item
+        }
+        if (changed) dirty = true
+        startNextIfSlotAvailable(explicitResume = true)
+    }
+
+    private fun processRemoveBatch(batchId: String) {
+        val toRemove = _items.value.filter {
+            it.batchId == batchId && it.status != DownloadStatus.COMPLETED
+        }
+        if (toRemove.isEmpty()) return
+        _items.value = _items.value.filterNot { item ->
+            item.batchId == batchId && item.status != DownloadStatus.COMPLETED
+        }
+        dirty = true
+        // Cancel any in-flight service jobs for the batch's unfinished items.
+        toRemove.forEach { sendRemoveIntent(it.id) }
+    }
+
     // ── Progress callback (from service) ────────────────────────────────
     private fun processProgress(update: DownloadItem) {
         android.util.Log.d("DownloadSM", "processProgress: id=${update.id.take(8)}... st=${update.status} prog=${update.progress} dl=${update.downloadedBytes}")
         _items.value = _items.value.map { existing ->
             if (existing.id != update.id) return@map existing
+
+            // The service rebuilds its DownloadItem from ACTION_START intent
+            // extras, which carry no batchId/blogName. Preserve the local
+            // row's batch metadata so a downloading blog item cannot silently
+            // lose its batchId and "leak" into the standalone main list.
+            val incoming = if (update.batchId == null || update.blogName == null) {
+                update.copy(
+                    batchId = update.batchId ?: existing.batchId,
+                    blogName = update.blogName ?: existing.blogName
+                )
+            } else {
+                update
+            }
 
             // ponytail: ignore stale DOWNLOADING progress when user already paused
             // the item.  Also coalesce successive PAUSED (the service's
@@ -536,17 +674,17 @@ class DownloadStateManager private constructor(private val app: Application) {
                 // while cancellation propagates, but those callbacks must not
                 // undo the local PAUSED state.
                 existing.id in pendingPauseIds &&
-                    update.status == DownloadStatus.DOWNLOADING -> existing
+                    incoming.status == DownloadStatus.DOWNLOADING -> existing
                 existing.id in pendingPauseIds &&
-                    update.status == DownloadStatus.PAUSED -> {
+                    incoming.status == DownloadStatus.PAUSED -> {
                     pendingPauseIds.remove(existing.id)
                     existing.copy(
-                        progress = maxOf(existing.progress, update.progress),
-                        downloadedBytes = if (update.downloadedBytes > 0L) {
-                            update.downloadedBytes
+                        progress = maxOf(existing.progress, incoming.progress),
+                        downloadedBytes = if (incoming.downloadedBytes > 0L) {
+                            incoming.downloadedBytes
                         } else existing.downloadedBytes,
-                        downloadFileUri = update.downloadFileUri ?: existing.downloadFileUri,
-                        errorMessage = existing.errorMessage ?: update.errorMessage
+                        downloadFileUri = incoming.downloadFileUri ?: existing.downloadFileUri,
+                        errorMessage = existing.errorMessage ?: incoming.errorMessage
                     )
                 }
                 // A PAUSED event arriving after a new start belongs to the
@@ -554,25 +692,25 @@ class DownloadStateManager private constructor(private val app: Application) {
                 // item paused before a manual pause command was sent, so this
                 // late event must not move a resumed item back to PAUSED.
                 existing.status == DownloadStatus.DOWNLOADING &&
-                    update.status == DownloadStatus.PAUSED &&
+                    incoming.status == DownloadStatus.PAUSED &&
                     !pauseAllRequested -> existing
                 existing.status == DownloadStatus.DOWNLOADING &&
-                    update.status == DownloadStatus.DOWNLOADING &&
-                    update.progress == 0 &&
-                    update.downloadedBytes <= existing.downloadedBytes -> existing
+                    incoming.status == DownloadStatus.DOWNLOADING &&
+                    incoming.progress == 0 &&
+                    incoming.downloadedBytes <= existing.downloadedBytes -> existing
                 // ACTION_PAUSE_ALL cancels the service jobs, but their final
                 // callbacks can still be queued after the local row was
                 // changed to PAUSED. They must not resurrect DOWNLOADING in
                 // the list while the service is globally paused.
                 pauseAllRequested &&
                     existing.status == DownloadStatus.PAUSED &&
-                    update.status == DownloadStatus.DOWNLOADING -> existing
+                    incoming.status == DownloadStatus.DOWNLOADING -> existing
                 // A resumed item is changed to DOWNLOADING before its ACTION_START
                 // is sent. Do not discard the first service callback merely because
                 // a late PAUSED callback left the local row at PAUSED; otherwise
                 // the row can remain frozen at its old checkpoint while the file
                 // is actually downloading.
-                existing.status == DownloadStatus.PAUSED && update.status == DownloadStatus.PAUSED -> {
+                existing.status == DownloadStatus.PAUSED && incoming.status == DownloadStatus.PAUSED -> {
                     // The UI marks an item PAUSED before the service finishes
                     // cancelling its socket. Merge the service's final
                     // checkpoint instead of discarding it just because both
@@ -584,18 +722,18 @@ class DownloadStateManager private constructor(private val app: Application) {
                         // checkpoint when the server rejected Range and the
                         // current attempt restarted from byte zero, so do not
                         // keep the stale offset for the next resume.
-                        progress = maxOf(existing.progress, update.progress),
-                        downloadedBytes = if (update.downloadedBytes > 0L) {
-                            update.downloadedBytes
+                        progress = maxOf(existing.progress, incoming.progress),
+                        downloadedBytes = if (incoming.downloadedBytes > 0L) {
+                            incoming.downloadedBytes
                         } else {
                             existing.downloadedBytes
                         },
-                        downloadFileUri = update.downloadFileUri ?: existing.downloadFileUri,
-                        errorMessage = existing.errorMessage ?: update.errorMessage
+                        downloadFileUri = incoming.downloadFileUri ?: existing.downloadFileUri,
+                        errorMessage = existing.errorMessage ?: incoming.errorMessage
                     )
                 }
-                existing.status == DownloadStatus.COMPLETED && update.status != DownloadStatus.COMPLETED -> existing
-                else -> update
+                existing.status == DownloadStatus.COMPLETED && incoming.status != DownloadStatus.COMPLETED -> existing
+                else -> incoming
             }
             if (result !== existing) {
                 android.util.Log.d("DownloadSM", "processProgress: ${existing.id.take(8)}... ${oldSt}/${existing.progress}% → ${update.status}/${update.progress}%")
@@ -606,10 +744,15 @@ class DownloadStateManager private constructor(private val app: Application) {
 
         // When a terminal status (COMPLETED/FAILED/PAUSED) arrives for the
         // currently-DOWNLOADING item, try to start the next queued one.
+        // There is no global-pause gate here: pause-all marks every pre-existing
+        // row PAUSED, and startNextIfSlotAvailable only ever starts QUEUED rows
+        // — so this safely advances *new* appends (added after the pause) while
+        // leaving the paused rows untouched. Without it, the second and later
+        // fresh downloads would stall behind the first after a pause.
         val updateIdx = _items.value.indexOfFirst { it.id == update.id }
         if (updateIdx >= 0) {
             val item = _items.value[updateIdx]
-            if (!pauseAllRequested && item.status != DownloadStatus.DOWNLOADING) {
+            if (item.status != DownloadStatus.DOWNLOADING) {
                 startNextIfSlotAvailable()
             }
         }
@@ -625,6 +768,15 @@ class DownloadStateManager private constructor(private val app: Application) {
     }
 
     private fun startNextIfSlotAvailable(explicitResume: Boolean = false) {
+        // A fresh append or an explicit resume always advances the queue, even
+        // while the queue is globally paused: the user explicitly asked for
+        // THIS download, and DownloadService now honors every ACTION_START with
+        // an upfront startForeground() (so the paused path can no longer crash
+        // with ForegroundServiceDidNotStartInTimeException).  Pausing still
+        // stops queued-channel auto-advance (processProgress only advances
+        // when !pauseAllRequested), but it must NOT wedge brand-new downloads
+        // behind the paused ones — that was the "everything waits forever"
+        // deadlock reported after pausing a blog then adding a download.
         // ponytail: loop starting queued tasks until the concurrency cap is reached,
         // instead of starting only one at a time. The previous implementation
         // started a single task on batch add and only started the rest when the
@@ -757,9 +909,18 @@ class DownloadStateManager private constructor(private val app: Application) {
     }
 
     private fun sourceAuthor(sourceUrl: String): String {
-        val path = runCatching { Uri.parse(sourceUrl).path?.trim('/')?.split('/') ?: emptyList<String>() }
-            .getOrDefault(emptyList<String>())
-        return path.firstOrNull()?.takeIf { it.isNotBlank() } ?: "tumblr"
+        val uri = runCatching { Uri.parse(sourceUrl) }.getOrNull()
+        val host = uri?.host?.lowercase() ?: ""
+        // bonesbunns.tumblr.com/post/... → "bonesbunns"
+        if (host.endsWith(".tumblr.com") && !host.startsWith("www.")) {
+            return host.removeSuffix(".tumblr.com")
+        }
+        val path = uri?.path?.trim('/')?.split('/') ?: emptyList()
+        // www.tumblr.com/bonesbunns/828871589032558592/... → "bonesbunns"
+        return path.firstOrNull()
+            ?.takeIf { it.isNotBlank() && it != "post" }
+            ?: path.getOrNull(1)?.takeIf { it.isNotBlank() }
+            ?: "tumblr"
     }
 
     private fun mediaIdFromUrl(mediaUrl: String): String {

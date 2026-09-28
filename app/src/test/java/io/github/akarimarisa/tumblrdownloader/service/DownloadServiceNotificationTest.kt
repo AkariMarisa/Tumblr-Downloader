@@ -38,7 +38,7 @@ import org.robolectric.annotation.Config
  * Run with: `./gradlew testDebugUnitTest --tests "*DownloadServiceNotificationTest*"`
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [34])
 class DownloadServiceNotificationTest {
 
     private lateinit var service: DownloadService
@@ -52,6 +52,19 @@ class DownloadServiceNotificationTest {
 
     @After
     fun tearDown() {
+        // Stop any background download/retry coroutines started by this test.
+        // See DownloadServiceNetworkTest teardown for the rationale: they
+        // outlive the test class, NPE after Robolectric tears the app down,
+        // and poison the shared coroutine-test state.
+        runCatching {
+            service.onStartCommand(
+                Intent(service, DownloadService::class.java).apply {
+                    action = DownloadService.ACTION_PAUSE_ALL
+                },
+                0,
+                Int.MAX_VALUE
+            )
+        }
         DownloadService.progressListener = null
     }
 

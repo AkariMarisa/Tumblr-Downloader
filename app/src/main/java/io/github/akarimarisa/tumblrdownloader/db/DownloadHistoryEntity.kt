@@ -23,7 +23,9 @@ data class DownloadHistoryEntity(
     val maxRetries: Int,
     val createdAt: Long,
     val downloadedBytes: Long,
-    val downloadFileUri: String?
+    val downloadFileUri: String?,
+    val batchId: String? = null,
+    val blogName: String? = null
 ) {
     fun toDownloadItem(): DownloadItem = DownloadItem(
         id = id,
@@ -38,7 +40,9 @@ data class DownloadHistoryEntity(
         maxRetries = maxRetries,
         createdAt = createdAt,
         downloadedBytes = downloadedBytes,
-        downloadFileUri = downloadFileUri?.ifBlank { null }
+        downloadFileUri = downloadFileUri?.ifBlank { null },
+        batchId = batchId?.ifBlank { null },
+        blogName = blogName?.ifBlank { null }
     )
 
     companion object {
@@ -55,7 +59,9 @@ data class DownloadHistoryEntity(
             maxRetries = item.maxRetries,
             createdAt = item.createdAt,
             downloadedBytes = item.downloadedBytes,
-            downloadFileUri = item.downloadFileUri
+            downloadFileUri = item.downloadFileUri,
+            batchId = item.batchId,
+            blogName = item.blogName
         )
     }
 }

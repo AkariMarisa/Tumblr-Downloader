@@ -7,6 +7,10 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.github.akarimarisa.tumblrdownloader.db.BlogDownloadJobEntity
+import io.github.akarimarisa.tumblrdownloader.model.BlogDownloadManager
+import io.github.akarimarisa.tumblrdownloader.model.BlogDownloadOptions
+import io.github.akarimarisa.tumblrdownloader.model.BlogEvent
 import io.github.akarimarisa.tumblrdownloader.model.DownloadItem
 import io.github.akarimarisa.tumblrdownloader.model.DownloadStateManager
 import io.github.akarimarisa.tumblrdownloader.model.DownloadStatus
@@ -71,6 +75,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val downloads: StateFlow<List<DownloadItem>> = stateManager.items
     val parseEvent = stateManager.parseEvent
 
+    // ── blog full-profile batch download manager (process-wide singleton) ──
+    val blogManager = BlogDownloadManager.getInstance(appContext)
+    val blogJobs: StateFlow<List<BlogDownloadJobEntity>> = blogManager.jobs
+    val blogEvents = blogManager.events
+
+    fun blogIsActive(jobId: String): Boolean = blogManager.isActive(jobId)
+    val blogActiveJobIds = blogManager.activeJobIds
+    fun enqueueBlogUrl(rawUrl: String, options: BlogDownloadOptions): Boolean =
+        blogManager.enqueueBlog(rawUrl, options)
+    fun resumeBlogJob(jobId: String) = blogManager.resume(jobId)
+    fun cancelBlogJob(jobId: String) = blogManager.cancel(jobId)
+    fun removeBlogJob(jobId: String) = blogManager.remove(jobId)
+
+    /** Card-level pause: pauses the blog's downloads, halting the scan too if it is still running. */
+    fun pauseBlogCard(jobId: String) = blogManager.pause(jobId)
+    fun respondBlogLong(jobId: String, proceed: Boolean) = blogManager.respondLongBlog(jobId, proceed)
+
     // ── non-download VM state ─────────────────────────────────────────
     private val _autoPasteUrl = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val autoPasteUrl = _autoPasteUrl.asSharedFlow()
@@ -131,6 +152,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun pauseAllDownloads() = stateManager.pauseAll()
 
     fun resumeAllDownloads() = stateManager.resumeAll()
+
+    /** Pause every unfinished item of one blog batch (used from the detail page). */
+    fun pauseBlogBatch(batchId: String) = stateManager.pauseBatch(batchId)
+
+    /** Resume every paused item of one blog batch (used from the detail page). */
+    fun resumeBlogBatch(batchId: String) = stateManager.resumeBatch(batchId)
 
     fun retryPendingLoginUrl() {
         // beginLoginRetry consumes the pending URL AND sets a guard so

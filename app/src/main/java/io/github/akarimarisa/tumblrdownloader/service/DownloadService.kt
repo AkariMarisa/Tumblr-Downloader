@@ -366,15 +366,49 @@ class DownloadService : Service() {
         startHeartbeat()
     }
 
+    /**
+     * Satisfy the foreground-service contract *before* any early return in
+     * [onStartCommand]. Every [ACTION_START] (and the notification's
+     * "Stop all" [ACTION_PAUSE_ALL]) is delivered via `startForegroundService()`,
+     * which demands a `startForeground()` call within 5 seconds EVEN when the
+     * handler bails out early — globally paused queue, duplicate id, malformed
+     * intent, offline. Skipping it kills the whole process with
+     * `ForegroundServiceDidNotStartInTimeException` (reported for "pause a blog
+     * queue, then download a single image").
+     *
+     * Calling it again later with a per-item notification is harmless — a
+     * repeated `startForeground()` just updates the existing notification.
+     */
+    private fun ensureForeground() {
+        try {
+            val neutral = buildNotification(
+                null,
+                resolveString(R.string.app_name),
+                resolveString(R.string.status_queued),
+                0,
+                null
+            )
+            startForeground(NOTIFICATION_ID, neutral)
+        } catch (e: Exception) {
+            android.util.Log.w("DownloadSvc", "startForeground failed: ${e.message}")
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action ?: ACTION_START) {
             ACTION_START -> {
-                // Already-issued ACTION_START intents may arrive after a
-                // notification pause-all. Only an explicit UI resume may
-                // re-open the queue.
-                if (globalPauseRequested && intent?.getBooleanExtra(EXTRA_EXPLICIT_RESUME, false) != true) {
-                    return START_STICKY
-                }
+                // MUST run before any return path below.
+                ensureForeground()
+                // An explicit ACTION_START (a fresh queue append or a manual
+                // resume) always starts ITS item, even right after a "Stop all"
+                // set globalPauseRequested: the user explicitly asked for this
+                // download. Rejecting every start while paused wedged the queue
+                // — new downloads sat at QUEUED forever (or DOWNLOADING with no
+                // live job) after a pause-all. The pause gate still governs the
+                // queued-channel auto-advance in runQueue(); it must not block
+                // explicit starts. A delayed ACTION_START from before a pause
+                // merely downloads that one item; other paused rows stay
+                // paused until individually resumed.
                 if (intent?.getBooleanExtra(EXTRA_EXPLICIT_RESUME, false) == true) {
                     globalPauseRequested = false
                 }
@@ -467,6 +501,10 @@ class DownloadService : Service() {
             }
 
             ACTION_PAUSE_ALL -> {
+                // The notification's "Stop all" button is delivered via
+                // PendingIntent.getForegroundService — satisfy the foreground
+                // contract before doing anything else.
+                ensureForeground()
                 globalPauseRequested = true
                 notificationMode = NotificationMode.SUMMARY
                 // Switch the visible notification before cancellation work
@@ -1732,4 +1770,8 @@ class DownloadService : Service() {
     internal fun setConnectivityManagerConnectedForTest(connected: Boolean) {
         testConnectivityManagerConnected = connected
     }
+
+    /** Test-only hook: whether an ACTION_START intent was accepted into the queue. */
+    @VisibleForTesting
+    internal fun hasQueuedItemForTest(itemId: String): Boolean = queuedItemIds.contains(itemId)
 }

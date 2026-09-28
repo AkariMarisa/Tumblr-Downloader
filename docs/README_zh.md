@@ -231,7 +231,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ### 功能
 
 - [x] **并行下载**：目前仅支持单任务顺序下载，增加可配置的并行下载数（2-3 个）
-- [ ] **批量下载**：一键下载某个博客、标签或帖子合集的所有媒体
+- [x] **批量下载**：一键下载整个博客的媒体（遍历分页接口，去重 + 断点续传，支持取消/恢复）。入口：在主界面打开形如 `https://blog.tumblr.com` / `https://www.tumblr.com/blog` 的博客链接直接入队；标签页与帖子合集暂未覆盖
 - [x] **视频画质选择**：当存在多个清晰度时，让用户选择 480p / 720p / 1080p
 - [x] **下载速度显示**：在通知栏和下载列表中显示实时速度（KB/s）
 - [ ] **关注博主频道与自动扫描下载**：用户可配置关注的 Tumblr 博主，设置自动扫描间隔（如每小时/每天），应用自动下载最新帖子媒体。需要 AccessibilityService 保活实现持续后台运行（WorkManager 为降级方案）。含新数据表 `followed_blogs`、`scan_config`，需扩展 `DownloadHistoryEntity` 增加 `blogName`/`tags` 字段

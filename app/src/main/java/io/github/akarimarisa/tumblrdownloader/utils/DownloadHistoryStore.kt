@@ -51,6 +51,18 @@ object DownloadHistoryStore {
             .deleteAll()
     }
 
+    /**
+     * Snapshot of every `sourceUrl` currently in history — used by the blog
+     * downloader to count posts already scanned in earlier runs (skip stats).
+     */
+    suspend fun loadSourceUrls(context: Context): Set<String> = withContext(Dispatchers.IO) {
+        AppDatabase.getInstance(context)
+            .downloadHistoryDao()
+            .getAll()
+            .map { it.sourceUrl }
+            .toSet()
+    }
+
     // ── migration helpers ──────────────────────────────────────────────
 
     /**

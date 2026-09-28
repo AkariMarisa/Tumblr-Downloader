@@ -1,0 +1,551 @@
+package io.github.akarimarisa.tumblrdownloader.model
+
+import android.app.Application
+import android.content.Context
+import androidx.annotation.StringRes
+import androidx.annotation.VisibleForTesting
+import io.github.akarimarisa.tumblrdownloader.R
+import io.github.akarimarisa.tumblrdownloader.db.BlogDownloadJobEntity
+import io.github.akarimarisa.tumblrdownloader.utils.BlogDownloadJobStore
+import io.github.akarimarisa.tumblrdownloader.utils.BlogFeedParser
+import io.github.akarimarisa.tumblrdownloader.utils.DownloadHistoryStore
+import io.github.akarimarisa.tumblrdownloader.utils.DownloadUtils
+import io.github.akarimarisa.tumblrdownloader.utils.LiveBlogFeedGateway
+import io.github.akarimarisa.tumblrdownloader.utils.LocaleHelper
+import io.github.akarimarisa.tumblrdownloader.utils.ParsedTumblrMedia
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.json.JSONObject
+import java.io.IOException
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+
+/** Which media a blog scan should enqueue. */
+enum class BlogMediaFilter { ALL, IMAGES, VIDEOS }
+
+/** Per-job user choices for a blog full-profile scan. */
+data class BlogDownloadOptions(
+    val mediaFilter: BlogMediaFilter = BlogMediaFilter.ALL,
+    /** Skip the long-blog confirmation dialog even when the feed exceeds the threshold. */
+    val forceLongBlog: Boolean = false
+)
+
+/** One-shot events surfaced to the UI (toasts, confirm dialogs). */
+sealed class BlogEvent {
+    data class ConfirmLongBlog(
+        val jobId: String,
+        val blogName: String,
+        val totalPosts: Int,
+        val estimatedRequests: Int,
+        val mediaFilter: BlogMediaFilter
+    ) : BlogEvent()
+    data class Finished(val jobId: String, val cancelled: Boolean) : BlogEvent()
+    data class Message(val text: String) : BlogEvent()
+}
+
+/**
+ * Coordinator for blog full-profile batch downloads (issue #22).
+ *
+ * Owns one worker coroutine per job and the durable cursor stored in
+ * [BlogDownloadJobEntity]: every page boundary persists the next feed href,
+ * so an interrupted scan resumes mid-profile instead of starting over.
+ *
+ * The optimism guarantee: all enqueues funnel through
+ * [DownloadStateManager.enqueueBlogAfterParse], which runs on the single
+ * command processor, so batch appends are race-free with user actions.
+ */
+class BlogDownloadManager private constructor(
+    private val app: Application,
+    private val gateway: BlogFeedParser.FeedGateway,
+    private val stateManager: DownloadStateManager,
+    private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO
+) {
+
+    companion object {
+        @Volatile
+        private var INSTANCE: BlogDownloadManager? = null
+
+        fun getInstance(app: Application): BlogDownloadManager =
+            INSTANCE ?: synchronized(this) {
+                INSTANCE ?: BlogDownloadManager(app, LiveBlogFeedGateway, DownloadStateManager.getInstance(app))
+                    .also { INSTANCE = it }
+            }
+
+        /** Fresh, isolated instance for unit tests only. */
+        @VisibleForTesting
+        internal fun forTest(
+            app: Application,
+            gateway: BlogFeedParser.FeedGateway,
+            stateManager: DownloadStateManager,
+            ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO
+        ): BlogDownloadManager =
+            BlogDownloadManager(app, gateway, stateManager, ioDispatcher)
+    }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val _jobs = MutableStateFlow<List<BlogDownloadJobEntity>>(emptyList())
+    private val _events = MutableSharedFlow<BlogEvent>(extraBufferCapacity = 16)
+
+    private val activeJobs = ConcurrentHashMap<String, Job>()
+    private val cancelFlags = ConcurrentHashMap<String, Boolean>()
+    private val confirmGates = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+    private val jobOptions = ConcurrentHashMap<String, BlogDownloadOptions>()
+    private val stateMutex = Mutex()
+    private val _activeJobIds = MutableStateFlow<Set<String>>(emptySet())
+
+    /** All known job cards, newest first. */
+    val jobs: StateFlow<List<BlogDownloadJobEntity>> = _jobs.asStateFlow()
+    val events: SharedFlow<BlogEvent> = _events.asSharedFlow()
+
+    /**
+     * Job ids whose scan worker is currently running, as a [StateFlow] so the
+     * UI can react the moment a scan starts or stops (the card must show
+     * "parsing" immediately on enqueue, not a beat later).
+     */
+    val activeJobIds: StateFlow<Set<String>> = _activeJobIds.asStateFlow()
+
+    /** True when a worker is actively scanning this job right now. */
+    fun isActive(jobId: String): Boolean = activeJobs.containsKey(jobId)
+
+    private fun trackActive(jobId: String) {
+        _activeJobIds.value = _activeJobIds.value + jobId
+    }
+
+    private fun untrackActive(jobId: String) {
+        _activeJobIds.value = _activeJobIds.value - jobId
+    }
+
+    init {
+        // Restore persisted job cards. Merge (never replace): a job enqueued
+        // before this async restore finishes must not be thrown away.
+        scope.launch {
+            stateMutex.withLock {
+                val loaded = BlogDownloadJobStore.loadAll(app)
+                _jobs.value = (loaded + _jobs.value)
+                    .distinctBy { it.jobId }
+                    .sortedByDescending { it.createdAt }
+            }
+        }
+    }
+
+    // ── public API ────────────────────────────────────────────────────
+
+    /**
+     * Start a full-profile scan for a standalone blog URL.
+     * Returns false when the URL is not a blog URL or a non-terminal job
+     * for the same blog already exists.
+     */
+    fun enqueueBlog(rawUrl: String, options: BlogDownloadOptions = BlogDownloadOptions()): Boolean {
+        val blogName = BlogFeedParser.parseBlogIdentifier(rawUrl)
+            ?: run {
+                _events.tryEmit(BlogEvent.Message(localizedString(R.string.blog_url_invalid)))
+                return false
+            }
+        if (_jobs.value.any {
+                it.blogName == blogName &&
+                    it.state() != BlogJobState.DONE
+            }
+        ) {
+            _events.tryEmit(BlogEvent.Message(localizedString(R.string.blog_job_already_running, blogName)))
+            return false
+        }
+
+        val now = System.currentTimeMillis()
+        val job = BlogDownloadJobEntity(
+            jobId = UUID.randomUUID().toString(),
+            blogName = blogName,
+            state = BlogJobState.RUNNING.name,
+            resumeLink = null,
+            totalPosts = null,
+            pagesCompleted = 0,
+            postsDiscovered = 0,
+            postsSkipped = 0,
+            postsNoMedia = 0,
+            mediaEnqueued = 0,
+            createdAt = now,
+            updatedAt = now,
+            errorCode = null
+        )
+        jobOptions[job.jobId] = options
+        // Show the card immediately; persist in the background.
+        _jobs.value = (listOf(job) + _jobs.value.filterNot { it.jobId == job.jobId })
+            .sortedByDescending { it.createdAt }
+        scope.launch { stateMutex.withLock { BlogDownloadJobStore.upsert(app, job) } }
+        launchWorker(job)
+        return true
+    }
+
+    /**
+     * Resume a previously interrupted/cancelled/blocked job from its persisted
+     * cursor. The scan re-bootstraps for a fresh token, then continues at the
+     * stored `resumeLink`.
+     */
+    fun resume(jobId: String) {
+        val job = _jobs.value.firstOrNull { it.jobId == jobId } ?: return
+        if (activeJobs.containsKey(jobId)) return
+        // A finished scan (DONE) has no feed left to re-fetch: only restart
+        // the batch's paused/queued downloads. Everything else relaunches the
+        // scan from its persisted cursor and resumes the batch alongside it.
+        if (job.state() == BlogJobState.DONE) {
+            stateManager.resumeBatch(jobId)
+            return
+        }
+        // `cancel()` leaves the flag set for the worker to observe; clear it here
+        // so the relaunched worker does not immediately break out again.
+        cancelFlags.remove(jobId)
+        jobOptions.putIfAbsent(jobId, BlogDownloadOptions())
+        markState(jobId, BlogJobState.RUNNING, errorCode = null)
+        // Re-start the batch's paused download items alongside the scan.
+        stateManager.resumeBatch(jobId)
+        launchWorker(job)
+    }
+
+    /**
+     * Card-level pause. A still-running scan is cancelled (marking the job
+     * CANCELLED so [resume] relaunches it from its cursor); a finished scan
+     * (DONE) only pauses the batch's unfinished download items, keeping the
+     * job DONE so a later [resume] continues downloading without re-parsing
+     * the whole feed.
+     */
+    fun pause(jobId: String) {
+        val job = _jobs.value.firstOrNull { it.jobId == jobId } ?: return
+        if (job.state() == BlogJobState.RUNNING) cancel(jobId) else stateManager.pauseBatch(jobId)
+    }
+
+    /** Stop the worker (if any), mark the job cancelled, and pause its queue. Resume remains available. */
+    fun cancel(jobId: String) {
+        cancelFlags[jobId] = true
+        activeJobs.remove(jobId)?.cancel()
+        untrackActive(jobId)
+        confirmGates.remove(jobId)?.complete(false)
+        markState(jobId, BlogJobState.CANCELLED)
+        // "Pause the blog's queue": pause every unfinished item it enqueued,
+        // so the whole blog task stops together with the scan.
+        stateManager.pauseBatch(jobId)
+    }
+
+    /** Remove the job card entirely (any state) and purge its unfinished queue. */
+    fun remove(jobId: String) {
+        cancelFlags[jobId] = true
+        activeJobs.remove(jobId)?.cancel()
+        untrackActive(jobId)
+        confirmGates.remove(jobId)?.complete(false)
+        // Drop the batch's unfinished download items (completed files stay on
+        // disk and their list rows are kept, so a re-scan dedupes instead of
+        // re-downloading). Runs after the card is gone so the items disappear
+        // from the (hidden) queue at the same time as their entry point.
+        stateManager.removeBatch(jobId)
+        scope.launch {
+            stateMutex.withLock {
+                BlogDownloadJobStore.delete(app, jobId)
+                _jobs.value = _jobs.value.filterNot { it.jobId == jobId }
+            }
+        }
+    }
+
+    /** Answer the long-blog confirmation dialog. */
+    fun respondLongBlog(jobId: String, proceed: Boolean) {
+        confirmGates.remove(jobId)?.complete(proceed)
+    }
+
+    // ── internal ──────────────────────────────────────────────────────
+
+    private fun markState(jobId: String, state: BlogJobState, errorCode: String? = null) {
+        scope.launch {
+            stateMutex.withLock {
+                val cur = BlogDownloadJobStore.load(app, jobId)
+                    ?.copy(state = state.name, errorCode = errorCode, updatedAt = System.currentTimeMillis())
+                    ?: return@withLock
+                BlogDownloadJobStore.upsert(app, cur)
+                _jobs.value = _jobs.value.map { if (it.jobId == jobId) cur else it }
+            }
+        }
+    }
+
+    private fun publish(job: BlogDownloadJobEntity) {
+        _jobs.value = _jobs.value.map { if (it.jobId == job.jobId) job else it }
+    }
+
+    private fun launchWorker(job: BlogDownloadJobEntity) {
+        val jobId = job.jobId
+        if (activeJobs.containsKey(jobId)) return
+        val worker = scope.launch(ioDispatcher) {
+            var blocked: BlogDownloadManager.BlockedException? = null
+            var crashed: Exception? = null
+            try {
+                runWorker(job)
+            } catch (ce: CancellationException) {
+                if (cancelFlags[jobId] != true) throw ce
+            } catch (be: BlockedException) {
+                blocked = be
+            } catch (e: Exception) {
+                crashed = e
+                android.util.Log.e("BlogDM", "worker crashed for $jobId", e)
+            } finally {
+                activeJobs.remove(jobId)
+                untrackActive(jobId)
+            }
+            val reason = blocked
+            if (reason != null) {
+                markState(jobId, BlogJobState.BLOCKED, errorCode = reason.code)
+                _events.tryEmit(BlogEvent.Message(localizedString(blogErrorString(reason.code))))
+            } else if (crashed != null) {
+                markState(jobId, BlogJobState.BLOCKED, errorCode = "internal")
+                _events.tryEmit(BlogEvent.Message(localizedString(R.string.blog_error_internal)))
+            }
+        }
+        activeJobs[jobId] = worker
+        trackActive(jobId)
+    }
+
+    private suspend fun runWorker(initialJob: BlogDownloadJobEntity) {
+        val jobId = initialJob.jobId
+        var job = initialJob
+        val blogName = job.blogName
+        val opts = jobOptions[jobId] ?: BlogDownloadOptions()
+        val quality = MediaQualityPrefs.read(app)
+        val interval = BlogPrefs.scanIntervalMs(app)
+        val longThreshold = BlogPrefs.longThreshold(app)
+
+        val fresh = job.resumeLink == null && job.pagesCompleted == 0
+
+        val boot = bootstrapBlog(blogName)
+        val token = boot.apiToken
+        var posts = if (fresh) boot.posts else emptyList()
+        var nextLink = if (fresh) boot.nextLink else job.resumeLink
+        var total = job.totalPosts
+
+        var pages = job.pagesCompleted
+        var discovered = job.postsDiscovered
+        var skipped = job.postsSkipped
+        var noMedia = job.postsNoMedia
+        var enqueued = job.mediaEnqueued
+        var gated = false
+
+        var knownSources: Set<String>? = null
+        var seenPosts = HashSet<String>()
+        var seenMedia = HashSet<String>()
+
+        while (true) {
+            if (cancelFlags.containsKey(jobId)) {
+                break
+            }
+            if (posts.isNotEmpty()) {
+                val snapshot = knownSources ?: DownloadHistoryStore.loadSourceUrls(app)
+                    .also { knownSources = it }
+                for (post in posts) {
+                    val postUrl = post.optString("postUrl")
+                    if (postUrl.isBlank()) continue
+                    if (!seenPosts.add(postUrl)) continue
+                    if (postUrl in snapshot) {
+                        skipped++
+                        continue
+                    }
+                    val all = BlogFeedParser.extractMediaFromPost(post, postUrl, quality)
+                    val filtered = when (opts.mediaFilter) {
+                        BlogMediaFilter.ALL -> all
+                        BlogMediaFilter.IMAGES -> all.filter { it.type == MediaType.IMAGE }
+                        BlogMediaFilter.VIDEOS -> all.filter { it.type == MediaType.VIDEO }
+                    }
+                    val batch = mutableListOf<ParsedTumblrMedia>()
+                    for (candidate in filtered) {
+                        if (seenMedia.add(DownloadUtils.normalizeMediaIdentity(candidate.mediaUrl))) {
+                            batch += candidate
+                        }
+                    }
+                    if (batch.isEmpty()) {
+                        noMedia++
+                    } else {
+                        discovered++
+                        enqueued += batch.size
+                        stateManager.enqueueBlogAfterParse(batch, jobId, blogName)
+                    }
+                }
+            }
+
+            val nextToFetch = nextLink
+            if (nextToFetch == null) {
+                // Feed fully consumed. If the job was removed while the last
+                // page was being processed, its row is already deleted — don't
+                // resurrect the card.
+                if (cancelFlags.containsKey(jobId)) return
+                val done = job.copy(
+                    state = BlogJobState.DONE.name,
+                    resumeLink = null,
+                    pagesCompleted = pages,
+                    postsDiscovered = discovered,
+                    postsSkipped = skipped,
+                    postsNoMedia = noMedia,
+                    mediaEnqueued = enqueued,
+                    totalPosts = total,
+                    updatedAt = System.currentTimeMillis(),
+                    errorCode = null
+                )
+                BlogDownloadJobStore.upsert(app, done)
+                publish(done)
+                _events.tryEmit(BlogEvent.Finished(jobId, cancelled = false))
+                return
+            }
+
+            // Persist the cursor before attempting the next fetch.
+            job = job.copy(
+                state = BlogJobState.RUNNING.name,
+                resumeLink = nextToFetch,
+                pagesCompleted = pages,
+                postsDiscovered = discovered,
+                postsSkipped = skipped,
+                postsNoMedia = noMedia,
+                mediaEnqueued = enqueued,
+                totalPosts = total,
+                updatedAt = System.currentTimeMillis()
+            )
+            BlogDownloadJobStore.upsert(app, job)
+            publish(job)
+
+            // Long-blog gate — ask once, before pulling the next page.
+            if (!gated && !opts.forceLongBlog && total != null && total >= longThreshold) {
+                gated = true
+                _events.tryEmit(
+                    BlogEvent.ConfirmLongBlog(
+                        jobId = jobId,
+                        blogName = blogName,
+                        totalPosts = total,
+                        estimatedRequests = (total / 20).coerceAtLeast(pages),
+                        mediaFilter = opts.mediaFilter
+                    )
+                )
+                val proceed = confirmGates.getOrPut(jobId) { CompletableDeferred() }.await()
+                if (!proceed) {
+                    break
+                }
+            }
+
+            if (cancelFlags.containsKey(jobId)) {
+                break
+            }
+
+            delay(interval)
+
+            val feed = fetchFeedPage(nextToFetch, token)
+            if (total == null) total = feed.totalPosts
+            posts = feed.posts
+            nextLink = feed.nextLink
+            pages++
+        }
+
+        // Only reachable via `break`: the job was cancelled or the user said no.
+        cancelFlags.remove(jobId)
+        markState(jobId, BlogJobState.CANCELLED)
+        _events.tryEmit(BlogEvent.Finished(jobId, cancelled = true))
+    }
+
+    private suspend fun bootstrapBlog(blogName: String): BlogFeedParser.BootstrapData {
+        var attempts = 0
+        while (true) {
+            try {
+                val resp = gateway.fetch("https://www.tumblr.com/$blogName", null)
+                if (resp.code == 404) throw BlockedException("not_found")
+                if (resp.code == 429 || resp.code == 503) {
+                    if (attempts >= 3) throw BlockedException("rate_limited")
+                    delay(backoffMs(attempts++))
+                    continue
+                }
+                if (resp.code !in 200..299) throw BlockedException("http_${resp.code}")
+                val boot = BlogFeedParser.parseBootstrap(resp.body, blogName)
+                    ?: throw BlockedException("page_parse_failed")
+                if (boot.info.isPasswordProtected) throw BlockedException("password_protected")
+                if (boot.apiToken.isBlank()) throw BlockedException("token_missing")
+                return boot
+            } catch (io: IOException) {
+                if (attempts >= 3) throw BlockedException("network")
+                delay(backoffMs(attempts++))
+            }
+        }
+    }
+
+    /** Fetch one feed page with bounded retries; a 401 re-bootstraps a fresh token. */
+    private suspend fun fetchFeedPage(url: String, token: String): BlogFeedParser.FeedPage {
+        var currentToken = token
+        var refreshed = false
+        var attempts = 0
+        while (true) {
+            try {
+                val resp = gateway.fetch(url, currentToken)
+                if (resp.code in 200..299) {
+                    return BlogFeedParser.parseFeedPage(resp.body)
+                        ?: throw BlockedException("page_parse_failed")
+                }
+                if (resp.code == 401 && !refreshed) {
+                    val blog = url.substringAfter("www.tumblr.com/api/v2/blog/")
+                        .substringBefore("/")
+                        .substringBefore("?")
+                        .ifBlank { "tumblr" }
+                    currentToken = bootstrapBlog(blog).apiToken
+                    refreshed = true
+                    continue
+                }
+                if (resp.code == 429 || resp.code == 503 || resp.code == 500) {
+                    if (attempts >= 3) throw BlockedException("rate_limited")
+                    delay(backoffMs(attempts++))
+                    continue
+                }
+                if (resp.code == 404) throw BlockedException("not_found")
+                throw BlockedException("http_${resp.code}")
+            } catch (io: IOException) {
+                if (attempts >= 3) throw BlockedException("network")
+                delay(backoffMs(attempts++))
+            }
+        }
+    }
+
+    private fun backoffMs(attempt: Int): Long = when (attempt) {
+        0 -> 500L
+        1 -> 1_000L
+        else -> 2_000L
+    }
+
+    private fun blogErrorString(code: String): Int = when (code) {
+        "not_found" -> R.string.blog_error_not_found
+        "password_protected" -> R.string.blog_error_password_protected
+        "rate_limited" -> R.string.blog_error_rate_limited
+        "network" -> R.string.blog_error_network
+        "page_parse_failed", "token_missing" -> R.string.blog_error_parse_failed
+        else -> R.string.blog_error_http
+    }
+
+    private fun localizedString(@StringRes res: Int, vararg args: Any): String =
+        LocaleHelper.contextForAppLocale(app).getString(res, *args)
+
+    private class BlockedException(val code: String) : Exception(code)
+}
+
+/** SharedPreferences for blog scan tuning. */
+object BlogPrefs {
+    const val PREF_SCAN_INTERVAL_MS = "blog_scan_interval_ms"
+    const val PREF_LONG_THRESHOLD = "blog_long_threshold"
+    const val DEFAULT_SCAN_INTERVAL_MS = 500L
+    const val DEFAULT_LONG_THRESHOLD = 10_000
+
+    fun prefs(context: Context) =
+        context.getSharedPreferences(MediaQualityPrefs.PREFS_NAME, Context.MODE_PRIVATE)
+
+    fun scanIntervalMs(context: Context): Long =
+        prefs(context).getLong(PREF_SCAN_INTERVAL_MS, DEFAULT_SCAN_INTERVAL_MS)
+
+    fun longThreshold(context: Context): Int =
+        prefs(context).getInt(PREF_LONG_THRESHOLD, DEFAULT_LONG_THRESHOLD)
+}

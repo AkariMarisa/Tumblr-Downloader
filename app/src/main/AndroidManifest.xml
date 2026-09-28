@@ -58,6 +58,10 @@
             android:name=".ui.about.AboutActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".ui.download.BlogDetailActivity"
+            android:exported="false" />
+
         <service
             android:name=".service.DownloadService"
             android:exported="false"

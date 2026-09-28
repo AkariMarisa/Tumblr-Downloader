@@ -2,7 +2,7 @@
     <string name="app_name">Tumblr Downloader</string>
     <string name="tab_download">Download</string>
     <string name="tab_downloads">Downloads</string>
-    <string name="input_hint">Enter Tumblr post URL</string>
+    <string name="input_hint">Enter Tumblr post or blog URL</string>
     <string name="download_button">Download Media</string>
     <string name="downloaded_media">Downloaded Media</string>
     <string name="no_downloads">No downloads yet</string>
@@ -165,4 +165,65 @@
     <string name="pref_rate_limit">Download speed limit</string>
     <string name="rate_limit_unlimited">Unlimited</string>
     <string name="rate_limit_value">%1$s</string>
+
+    <!-- Blog full-profile batch download -->
+    <string name="blog_url_invalid">Not a valid Tumblr blog URL</string>
+    <string name="blog_job_already_running">A job for “%1$s” already exists — remove or finish it first</string>
+    <string name="blog_media_filter_dialog_title">Download</string>
+    <string name="blog_media_filter_all">Images and videos</string>
+    <string name="blog_media_filter_images">Images only</string>
+    <string name="blog_media_filter_videos">Videos only</string>
+    <string name="blog_confirm_long_title">Download this blog?</string>
+    <string name="blog_confirm_long_message">“%1$s” has about %2$d posts (%3$d+ page requests). This will take a while and may be rate-limited. Continue?</string>
+    <string name="blog_confirm_start">Start download</string>
+    <string name="blog_confirm_cancel">Cancel</string>
+    <string name="blog_jobs_section_title">Blog downloads</string>
+    <string name="blog_job_state_running">Scanning</string>
+    <string name="blog_job_state_done">Completed</string>
+    <string name="blog_job_state_cancelled">Cancelled</string>
+    <string name="blog_job_state_blocked">Error</string>
+    <string name="blog_job_state_parsing">Parsing…</string>
+    <string name="blog_job_state_parsed">Parsed</string>
+    <string name="blog_job_state_downloading">Downloading</string>
+    <string name="blog_job_state_paused">Paused</string>
+    <string name="blog_job_interrupted">Not finished</string>
+    <string name="blog_job_stats">%1$d posts · %2$d media</string>
+    <string name="blog_job_download_progress">Downloaded %1$d/%2$d media</string>
+    <string name="blog_job_download_complete">All %1$d media downloaded</string>
+    <string name="blog_job_detail">Details</string>
+    <string name="blog_job_resume">Start</string>
+    <string name="blog_job_cancel">Pause</string>
+    <string name="blog_job_remove">Remove</string>
+    <string name="blog_job_cancel_confirm_message">Pause this blog? Its scan and queued downloads pause together. You can resume later from the card.</string>
+    <string name="blog_job_remove_confirm_message">Remove this blog job card? Its unfinished downloads are removed from the queue (completed files are kept).</string>
+    <string name="blog_job_scanned_toast">Blog parsed: %1$d posts, %2$d media now downloading</string>
+    <string name="blog_job_cancelled_toast">Blog paused — resume later from the card</string>
+    <string name="blog_error_not_found">Blog not found (deleted or never existed)</string>
+    <string name="blog_error_password_protected">This blog is password-protected and cannot be batch-downloaded</string>
+    <string name="blog_error_rate_limited">Rate-limited by Tumblr — wait a while and try again</string>
+    <string name="blog_error_network">Network request failed — check your connection and retry</string>
+    <string name="blog_error_parse_failed">Could not read the blog page — please retry</string>
+    <string name="blog_error_http">Tumblr returned an unexpected response — please retry</string>
+    <string name="blog_error_internal">Internal error in the batch downloader — please retry</string>
+
+    <!-- Settings for the blog scanner -->
+    <string name="pref_blog_scan_interval">Blog scan request interval</string>
+    <string name="pref_blog_scan_interval_summary">Pause between feed page requests. Keep it ≥500 ms to avoid rate limits</string>
+    <string name="blog_scan_interval_dialog_title">Blog scan request interval</string>
+    <string name="blog_scan_interval_200ms">200 ms (fast, risky)</string>
+    <string name="blog_scan_interval_500ms">500 ms (recommended)</string>
+    <string name="blog_scan_interval_1000ms">1 s (safe)</string>
+    <string name="blog_scan_interval_2000ms">2 s (very safe)</string>
+    <string name="blog_scan_interval_5000ms">5 s (slowest)</string>
+    <string name="blog_scan_interval_display">%1$d ms</string>
+    <string name="pref_blog_long_threshold">Long-blog confirmation threshold</string>
+    <string name="pref_blog_long_threshold_summary">Ask for confirmation when a blog has more posts than this</string>
+    <string name="blog_long_threshold_dialog_title">Long-blog confirmation threshold</string>
+    <string name="blog_long_threshold_unlimited">Never ask (unlimited)</string>
+    <string name="blog_long_threshold_display">%1$d posts</string>
+
+    <!-- Blog job detail page -->
+    <string name="blog_detail_title">Blog download details</string>
+    <string name="blog_detail_empty">No items for this blog job yet</string>
+    <string name="blog_detail_item_count">%1$d items from this blog</string>
 </resources>

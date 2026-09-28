@@ -45,7 +45,7 @@ import org.robolectric.annotation.Config
  * Run with: `./gradlew testDebugUnitTest --tests "*MainViewModelProgressListenerTest*"`
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [34])
 class MainViewModelProgressListenerTest {
 
     @Before

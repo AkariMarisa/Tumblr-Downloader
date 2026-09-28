@@ -5,6 +5,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.appcompat.app.AlertDialog
+import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
@@ -14,8 +15,10 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import io.github.akarimarisa.tumblrdownloader.R
 import io.github.akarimarisa.tumblrdownloader.databinding.FragmentDownloadsBinding
 import io.github.akarimarisa.tumblrdownloader.model.DownloadItem
+import io.github.akarimarisa.tumblrdownloader.model.DownloadStatus
 import io.github.akarimarisa.tumblrdownloader.ui.MainViewModel
 import io.github.akarimarisa.tumblrdownloader.ui.media.MediaViewerActivity
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 class DownloadsFragment : Fragment() {
@@ -29,6 +32,17 @@ class DownloadsFragment : Fragment() {
         onStartOrResume = { item -> viewModel.startOrResumeDownload(item.id) },
         onPause = { item -> viewModel.pauseDownload(item.id) },
         onRemove = { item -> confirmRemoveDownload(item) }
+    )
+
+    private val blogJobAdapter = BlogJobAdapter(
+        onDetail = { job ->
+            startActivity(
+                BlogDetailActivity.newIntent(requireContext(), job.jobId, job.blogName)
+            )
+        },
+        onResume = { job -> viewModel.resumeBlogJob(job.jobId) },
+        onPause = { job -> viewModel.pauseBlogCard(job.jobId) },
+        onRemove = { job -> confirmRemoveBlogJob(job) }
     )
 
     override fun onCreateView(
@@ -46,14 +60,52 @@ class DownloadsFragment : Fragment() {
         binding.rvDownloads.layoutManager = LinearLayoutManager(requireContext())
         binding.rvDownloads.adapter = adapter
 
+        binding.rvBlogJobs.layoutManager = LinearLayoutManager(requireContext())
+        binding.rvBlogJobs.adapter = blogJobAdapter
+
         viewLifecycleOwner.lifecycleScope.launch {
             // repeatOnLifecycle re-collects the Flow every time the screen returns to
             // the foreground; otherwise the UI would not refresh after background
             // downloads finish when switching back to the app.
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.downloads.collect { list ->
-                    adapter.submitList(list)
-                    binding.tvEmpty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
+                    // Blog batch items belong behind their blog card
+                    // (BlogDetailActivity) — keep the main queue to standalone
+                    // downloads only.
+                    val visible = list.filter { it.batchId == null }
+                    adapter.submitList(visible)
+                    binding.tvEmpty.visibility =
+                        if (visible.isEmpty() && blogJobAdapter.itemCount == 0) View.VISIBLE else View.GONE
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                combine(
+                    combine(viewModel.blogJobs, viewModel.downloads) { jobs, items -> jobs to items },
+                    viewModel.blogActiveJobIds
+                ) { (jobs, items), activeIds ->
+                    jobs.map { job ->
+                        val batch = items.filter { it.batchId == job.jobId }
+                        BlogCardUi(
+                            job = job,
+                            active = job.jobId in activeIds,
+                            running = batch.any {
+                                it.status == DownloadStatus.DOWNLOADING ||
+                                    it.status == DownloadStatus.QUEUED
+                            },
+                            paused = batch.any { it.status == DownloadStatus.PAUSED },
+                            completed = batch.count { it.status == DownloadStatus.COMPLETED },
+                            total = batch.size
+                        )
+                    }
+                }.collect { cardUi ->
+                    blogJobAdapter.submitList(cardUi)
+                    binding.tvBlogSectionTitle.isVisible = cardUi.isNotEmpty()
+                    binding.rvBlogJobs.isVisible = cardUi.isNotEmpty()
+                    binding.tvEmpty.visibility =
+                        if (cardUi.isEmpty() && adapter.itemCount == 0) View.VISIBLE else View.GONE
                 }
             }
         }
@@ -81,6 +133,17 @@ class DownloadsFragment : Fragment() {
                     cm?.setPrimaryClip(android.content.ClipData.newPlainText(null, ""))
                 }
                 viewModel.removeDownload(item.id)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun confirmRemoveBlogJob(job: io.github.akarimarisa.tumblrdownloader.db.BlogDownloadJobEntity) {
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.blog_job_remove)
+            .setMessage(R.string.blog_job_remove_confirm_message)
+            .setPositiveButton(R.string.blog_job_remove) { _, _ ->
+                viewModel.removeBlogJob(job.jobId)
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()

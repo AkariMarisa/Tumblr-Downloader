@@ -20,7 +20,7 @@ import org.robolectric.annotation.Config
  * Run with: `./gradlew testDebugUnitTest --tests "*DownloadUtilsNormalizeTest*"`
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [34])
 class DownloadUtilsNormalizeTest {
 
     private val base = "https://64.media.tumblr.com/5c1a73de0ad924992daf87df503ea296"

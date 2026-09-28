@@ -28,6 +28,7 @@ import io.github.akarimarisa.tumblrdownloader.ui.about.AboutActivity
 import io.github.akarimarisa.tumblrdownloader.ui.settings.SettingsActivity
 import io.github.akarimarisa.tumblrdownloader.utils.LocaleHelper
 import io.github.akarimarisa.tumblrdownloader.utils.LocalizedToast
+import io.github.akarimarisa.tumblrdownloader.utils.BlogFeedParser
 import io.github.akarimarisa.tumblrdownloader.utils.TumblrParser
 import com.google.android.material.tabs.TabLayoutMediator
 import io.github.akarimarisa.tumblrdownloader.ui.download.DownloadFragment
@@ -305,6 +306,16 @@ class MainActivity : AppCompatActivity() {
             ?: intent.clipData?.getItemAt(0)?.coerceToText(this)?.toString()
             ?: return
 
+        // A standalone blog URL kicks off the batch-download flow instead of
+        // single-post parsing — fill the Download tab field so the user picks
+        // media options there.
+        if (BlogFeedParser.isBlogUrl(text)) {
+            Log.d(TAG, "Incoming share is a blog URL: ${text.take(60)}")
+            binding.viewPager.currentItem = 0
+            viewModel.notifyFromClipboard(text)
+            return
+        }
+
         // Skip if this URL is already fully downloaded (same guard as clipboard auto-detect).
         if (viewModel.isUrlFullyCompleted(text)) {
             Log.d(TAG, "Incoming share URL already fully downloaded, skipping: ${text.take(60)}")
@@ -338,7 +349,9 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        if (!TumblrParser.isTumblrShareUrl(clipText)) {
+        val isPostUrl = TumblrParser.isTumblrShareUrl(clipText)
+        val isBlogUrl = !isPostUrl && BlogFeedParser.isBlogUrl(clipText)
+        if (!isPostUrl && !isBlogUrl) {
             Log.d(TAG, "Clipboard not a Tumblr URL: ${clipText.take(60)}")
             return
         }
@@ -353,13 +366,21 @@ class MainActivity : AppCompatActivity() {
         // Skip if all items for this source URL are already fully downloaded.
         // This prevents spurious loading when returning from the media viewer
         // with a previously-completed Tumblr URL still in the clipboard.
+        // Blog URLs are never "fully completed" (firstTumblrUrl has no match).
         if (viewModel.isUrlFullyCompleted(clipText)) {
             Log.d(TAG, "Clipboard URL already fully downloaded, skipping: ${clipText.take(60)}")
             return
         }
 
         Log.d(TAG, "Clipboard auto-detect: ${clipText.take(80)}")
-        if (viewModel.enqueueFromUrl(clipText)) {
+        if (isBlogUrl) {
+            // Blog URLs enter the batch flow: fill the field, switch to the
+            // Download tab so the user picks media options and starts the scan.
+            prefs.edit().putString(PREF_LAST_AUTO_URL, clipText).apply()
+            binding.viewPager.currentItem = 0
+            viewModel.notifyFromClipboard(clipText)
+            Log.d(TAG, "Clipboard auto-detect: blog URL staged for batch download")
+        } else if (viewModel.enqueueFromUrl(clipText)) {
             prefs.edit().putString(PREF_LAST_AUTO_URL, clipText).apply()
             // Switch to Download tab first so the user sees the loading overlay
             binding.viewPager.currentItem = 0

@@ -61,6 +61,16 @@ android {
     buildFeatures {
         viewBinding = true
     }
+
+    testOptions {
+        unitTests {
+            // Make the merged app resources available to Robolectric tests
+            // (needed for locale-aware strings in parser/manager events).
+            // The Robolectric SDK must be >= minSdk (30); see
+            // src/test/resources/robolectric.properties (sdk=34).
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {

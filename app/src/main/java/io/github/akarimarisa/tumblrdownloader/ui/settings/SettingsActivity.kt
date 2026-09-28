@@ -19,6 +19,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import io.github.akarimarisa.tumblrdownloader.R
 import io.github.akarimarisa.tumblrdownloader.databinding.ActivitySettingsBinding
+import io.github.akarimarisa.tumblrdownloader.model.BlogPrefs
 import io.github.akarimarisa.tumblrdownloader.model.ImageQualityTier
 import io.github.akarimarisa.tumblrdownloader.model.MediaQualityPrefs
 import io.github.akarimarisa.tumblrdownloader.model.ThemeMode
@@ -38,6 +39,10 @@ private const val PREF_MAX_CONCURRENT = "max_concurrent_downloads"
 private const val PREF_RATE_LIMIT = "rate_limit_bytes_per_second"
 
 private val RATE_LIMIT_OPTIONS = longArrayOf(0L, 262_144L, 524_288L, 1_048_576L, 2_097_152L, 4_194_304L)
+
+private const val BLOG_LONG_UNLIMITED = Int.MAX_VALUE
+private val BLOG_SCAN_INTERVAL_OPTIONS = longArrayOf(200L, 500L, 1_000L, 2_000L, 5_000L)
+private val BLOG_LONG_THRESHOLD_OPTIONS = intArrayOf(5_000, 10_000, 20_000, 50_000, BLOG_LONG_UNLIMITED)
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -135,6 +140,12 @@ class SettingsActivity : AppCompatActivity() {
         updateVideoQualityDisplay()
         binding.btnImageQuality.setOnClickListener { showImageQualityDialog() }
         binding.btnVideoQuality.setOnClickListener { showVideoQualityDialog() }
+
+        // ── Blog scan tuning ──
+        updateBlogScanIntervalDisplay()
+        updateBlogLongThresholdDisplay()
+        binding.btnBlogScanInterval.setOnClickListener { showBlogScanIntervalDialog() }
+        binding.btnBlogLongThreshold.setOnClickListener { showBlogLongThresholdDialog() }
 
         lifecycleScope.launch {
             viewModel.downloadDirectoryLabel.collect { text ->
@@ -331,6 +342,67 @@ class SettingsActivity : AppCompatActivity() {
             .setSingleChoiceItems(labels, checkedIndex) { dialog, which ->
                 MediaQualityPrefs.setVideoTier(this, options[which])
                 updateVideoQualityDisplay()
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    // ── Blog scan tuning ───────────────────────────────────────────
+
+    private fun updateBlogScanIntervalDisplay() {
+        val interval = BlogPrefs.scanIntervalMs(this)
+        binding.tvBlogScanInterval.text = getString(R.string.blog_scan_interval_display, interval)
+    }
+
+    private fun showBlogScanIntervalDialog() {
+        val options = BLOG_SCAN_INTERVAL_OPTIONS
+        val current = BlogPrefs.scanIntervalMs(this).toInt()
+        val labels = options.map {
+            when (it) {
+                200L -> getString(R.string.blog_scan_interval_200ms)
+                500L -> getString(R.string.blog_scan_interval_500ms)
+                1_000L -> getString(R.string.blog_scan_interval_1000ms)
+                2_000L -> getString(R.string.blog_scan_interval_2000ms)
+                else -> getString(R.string.blog_scan_interval_5000ms)
+            }
+        }.toTypedArray()
+        val checkedIndex = options.indexOf(current.toLong()).coerceAtLeast(0)
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.blog_scan_interval_dialog_title)
+            .setSingleChoiceItems(labels, checkedIndex) { dialog, which ->
+                prefs.edit().putLong(BlogPrefs.PREF_SCAN_INTERVAL_MS, options[which]).apply()
+                updateBlogScanIntervalDisplay()
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun updateBlogLongThresholdDisplay() {
+        val threshold = BlogPrefs.longThreshold(this)
+        binding.tvBlogLongThreshold.text = if (threshold == BLOG_LONG_UNLIMITED) {
+            getString(R.string.blog_long_threshold_unlimited)
+        } else {
+            getString(R.string.blog_long_threshold_display, threshold)
+        }
+    }
+
+    private fun showBlogLongThresholdDialog() {
+        val options = BLOG_LONG_THRESHOLD_OPTIONS
+        val current = BlogPrefs.longThreshold(this)
+        val labels = options.map {
+            if (it == BLOG_LONG_UNLIMITED) getString(R.string.blog_long_threshold_unlimited)
+            else getString(R.string.blog_long_threshold_display, it)
+        }.toTypedArray()
+        val checkedIndex = options.indexOf(current).coerceAtLeast(0)
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.blog_long_threshold_dialog_title)
+            .setSingleChoiceItems(labels, checkedIndex) { dialog, which ->
+                prefs.edit().putInt(BlogPrefs.PREF_LONG_THRESHOLD, options[which]).apply()
+                updateBlogLongThresholdDisplay()
                 dialog.dismiss()
             }
             .setNegativeButton(android.R.string.cancel, null)
