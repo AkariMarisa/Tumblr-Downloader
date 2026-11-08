@@ -129,15 +129,30 @@ class BlogDownloadManager private constructor(
         _activeJobIds.value = _activeJobIds.value - jobId
     }
 
+    /**
+     * Completed once the persisted cards have been merged into [jobs].
+     * [enqueueBlog] awaits this before its duplicate-job check, so an enqueue
+     * racing the very first restore (process start → immediate paste) cannot
+     * create a second job for a blog that already has one on disk.
+     */
+    private val restored = CompletableDeferred<Unit>()
+
     init {
         // Restore persisted job cards. Merge (never replace): a job enqueued
         // before this async restore finishes must not be thrown away.
         scope.launch {
-            stateMutex.withLock {
-                val loaded = BlogDownloadJobStore.loadAll(app)
-                _jobs.value = (loaded + _jobs.value)
-                    .distinctBy { it.jobId }
-                    .sortedByDescending { it.createdAt }
+            try {
+                stateMutex.withLock {
+                    val loaded = BlogDownloadJobStore.loadAll(app)
+                    _jobs.value = (loaded + _jobs.value)
+                        .distinctBy { it.jobId }
+                        .sortedByDescending { it.createdAt }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("BlogDM", "job card restore failed", e)
+            } finally {
+                // Always release the enqueue path, even on a failed restore.
+                restored.complete(Unit)
             }
         }
     }
@@ -148,44 +163,53 @@ class BlogDownloadManager private constructor(
      * Start a full-profile scan for a standalone blog URL.
      * Returns false when the URL is not a blog URL or a non-terminal job
      * for the same blog already exists.
+     *
+     * Suspend on purpose: it waits for the initial card restore so the
+     * duplicate check sees persisted jobs, and it writes the new card inside
+     * the same [stateMutex] critical section as the in-memory insert — so a
+     * cancel/pause landing right after enqueue can never observe an in-memory
+     * card with no row on disk (which used to make [markState] a no-op).
      */
-    fun enqueueBlog(rawUrl: String, options: BlogDownloadOptions = BlogDownloadOptions()): Boolean {
+    suspend fun enqueueBlog(rawUrl: String, options: BlogDownloadOptions = BlogDownloadOptions()): Boolean {
         val blogName = BlogFeedParser.parseBlogIdentifier(rawUrl)
             ?: run {
                 _events.tryEmit(BlogEvent.Message(localizedString(R.string.blog_url_invalid)))
                 return false
             }
-        if (_jobs.value.any {
-                it.blogName == blogName &&
-                    it.state() != BlogJobState.DONE
+        restored.await()
+        stateMutex.withLock {
+            if (_jobs.value.any {
+                    it.blogName == blogName &&
+                        it.state() != BlogJobState.DONE
+                }
+            ) {
+                _events.tryEmit(BlogEvent.Message(localizedString(R.string.blog_job_already_running, blogName)))
+                return false
             }
-        ) {
-            _events.tryEmit(BlogEvent.Message(localizedString(R.string.blog_job_already_running, blogName)))
-            return false
-        }
 
-        val now = System.currentTimeMillis()
-        val job = BlogDownloadJobEntity(
-            jobId = UUID.randomUUID().toString(),
-            blogName = blogName,
-            state = BlogJobState.RUNNING.name,
-            resumeLink = null,
-            totalPosts = null,
-            pagesCompleted = 0,
-            postsDiscovered = 0,
-            postsSkipped = 0,
-            postsNoMedia = 0,
-            mediaEnqueued = 0,
-            createdAt = now,
-            updatedAt = now,
-            errorCode = null
-        )
-        jobOptions[job.jobId] = options
-        // Show the card immediately; persist in the background.
-        _jobs.value = (listOf(job) + _jobs.value.filterNot { it.jobId == job.jobId })
-            .sortedByDescending { it.createdAt }
-        scope.launch { stateMutex.withLock { BlogDownloadJobStore.upsert(app, job) } }
-        launchWorker(job)
+            val now = System.currentTimeMillis()
+            val job = BlogDownloadJobEntity(
+                jobId = UUID.randomUUID().toString(),
+                blogName = blogName,
+                state = BlogJobState.RUNNING.name,
+                resumeLink = null,
+                totalPosts = null,
+                pagesCompleted = 0,
+                postsDiscovered = 0,
+                postsSkipped = 0,
+                postsNoMedia = 0,
+                mediaEnqueued = 0,
+                createdAt = now,
+                updatedAt = now,
+                errorCode = null
+            )
+            jobOptions[job.jobId] = options
+            // Show the card immediately and persist it before returning.
+            _jobs.value = (listOf(job) + _jobs.value.filterNot { it.jobId == job.jobId })
+                .sortedByDescending { it.createdAt }
+            BlogDownloadJobStore.upsert(app, job)
+            launchWorker(job)
+        }
         return true
     }
 
@@ -267,8 +291,16 @@ class BlogDownloadManager private constructor(
     private fun markState(jobId: String, state: BlogJobState, errorCode: String? = null) {
         scope.launch {
             stateMutex.withLock {
+                val now = System.currentTimeMillis()
+                // A card is normally on disk already (enqueueBlog persists it
+                // inside this same lock). Fall back to the in-memory row so a
+                // state change is never dropped when the first write has not
+                // landed; if the card is gone altogether there is nothing to
+                // mark — [remove] deletes the row and the entry together.
                 val cur = BlogDownloadJobStore.load(app, jobId)
-                    ?.copy(state = state.name, errorCode = errorCode, updatedAt = System.currentTimeMillis())
+                    ?.copy(state = state.name, errorCode = errorCode, updatedAt = now)
+                    ?: _jobs.value.firstOrNull { it.jobId == jobId }
+                        ?.copy(state = state.name, errorCode = errorCode, updatedAt = now)
                     ?: return@withLock
                 BlogDownloadJobStore.upsert(app, cur)
                 _jobs.value = _jobs.value.map { if (it.jobId == jobId) cur else it }
@@ -276,8 +308,21 @@ class BlogDownloadManager private constructor(
         }
     }
 
-    private fun publish(job: BlogDownloadJobEntity) {
-        _jobs.value = _jobs.value.map { if (it.jobId == job.jobId) job else it }
+    /**
+     * Persist a worker's card snapshot and mirror it into [jobs] atomically.
+     *
+     * The [cancelFlags] check runs *under* the lock: cancel/remove always set
+     * the flag before launching their own state change, so a worker snapshot
+     * that arrives too late is dropped instead of resurrecting a card that
+     * was just cancelled or removed (and the reverse ordering still ends with
+     * the cancel winning, because it writes last).
+     */
+    private suspend fun persistAndPublish(job: BlogDownloadJobEntity) {
+        stateMutex.withLock {
+            if (cancelFlags.containsKey(job.jobId)) return@withLock
+            BlogDownloadJobStore.upsert(app, job)
+            _jobs.value = _jobs.value.map { if (it.jobId == job.jobId) job else it }
+        }
     }
 
     private fun launchWorker(job: BlogDownloadJobEntity) {
@@ -395,8 +440,7 @@ class BlogDownloadManager private constructor(
                     updatedAt = System.currentTimeMillis(),
                     errorCode = null
                 )
-                BlogDownloadJobStore.upsert(app, done)
-                publish(done)
+                persistAndPublish(done)
                 _events.tryEmit(BlogEvent.Finished(jobId, cancelled = false))
                 return
             }
@@ -413,8 +457,7 @@ class BlogDownloadManager private constructor(
                 totalPosts = total,
                 updatedAt = System.currentTimeMillis()
             )
-            BlogDownloadJobStore.upsert(app, job)
-            publish(job)
+            persistAndPublish(job)
 
             // Long-blog gate — ask once, before pulling the next page.
             if (!gated && !opts.forceLongBlog && total != null && total >= longThreshold) {

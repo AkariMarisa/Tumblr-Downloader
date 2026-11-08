@@ -180,14 +180,18 @@ class DownloadFragment : Fragment() {
                     t.getString(R.string.blog_media_filter_videos)
                 )
             ) { _, which ->
-                val ok = viewModel.enqueueBlogUrl(
-                    url,
-                    BlogDownloadOptions(mediaFilter = mediaFilterChoices[which])
-                )
-                if (ok) {
-                    binding.etUrl.text?.clear()
-                    showLoading(false)
-                    (requireActivity() as? MainActivity)?.showDownloadsTab()
+                // enqueueBlogUrl suspends (card restore + first disk write),
+                // so it must not run on the dialog's click thread directly.
+                lifecycleScope.launch {
+                    val ok = viewModel.enqueueBlogUrl(
+                        url,
+                        BlogDownloadOptions(mediaFilter = mediaFilterChoices[which])
+                    )
+                    if (ok && _binding != null) {
+                        binding.etUrl.text?.clear()
+                        showLoading(false)
+                        (requireActivity() as? MainActivity)?.showDownloadsTab()
+                    }
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)

@@ -82,7 +82,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun blogIsActive(jobId: String): Boolean = blogManager.isActive(jobId)
     val blogActiveJobIds = blogManager.activeJobIds
-    fun enqueueBlogUrl(rawUrl: String, options: BlogDownloadOptions): Boolean =
+    /** Suspends until the card restore has finished and the job card is on disk. */
+    suspend fun enqueueBlogUrl(rawUrl: String, options: BlogDownloadOptions): Boolean =
         blogManager.enqueueBlog(rawUrl, options)
     fun resumeBlogJob(jobId: String) = blogManager.resume(jobId)
     fun cancelBlogJob(jobId: String) = blogManager.cancel(jobId)

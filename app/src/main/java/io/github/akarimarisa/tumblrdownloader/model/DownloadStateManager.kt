@@ -817,11 +817,13 @@ class DownloadStateManager private constructor(private val app: Application) {
         // while the queue is globally paused: the user explicitly asked for
         // THIS download, and DownloadService now honors every ACTION_START with
         // an upfront startForeground() (so the paused path can no longer crash
-        // with ForegroundServiceDidNotStartInTimeException).  Pausing still
-        // stops queued-channel auto-advance (processProgress only advances
-        // when !pauseAllRequested), but it must NOT wedge brand-new downloads
-        // behind the paused ones — that was the "everything waits forever"
-        // deadlock reported after pausing a blog then adding a download.
+        // with ForegroundServiceDidNotStartInTimeException).  A pause-all still
+        // holds the rest of the queue still — it flips every QUEUED row to
+        // PAUSED, so startNextIfSlotAvailable() below has nothing else to pick
+        // up — but it must NOT wedge brand-new downloads (appended after the
+        // pause) behind the paused ones: that was the "everything waits
+        // forever" deadlock reported after pausing a blog then adding a
+        // download.
         // ponytail: loop starting queued tasks until the concurrency cap is reached,
         // instead of starting only one at a time. The previous implementation
         // started a single task on batch add and only started the rest when the
