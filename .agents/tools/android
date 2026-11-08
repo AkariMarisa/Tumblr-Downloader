@@ -1,0 +1,1393 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import pathlib
+import re
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import xml.etree.ElementTree as ET
+
+
+KEYCODES = {
+    "back": 4,
+    "home": 3,
+    "enter": 66,
+    "tab": 61,
+    "delete": 67,
+    "menu": 82,
+    "recent_apps": 187,
+    "volume_up": 24,
+    "volume_down": 25,
+    "power": 26,
+    "search": 84,
+    "dpad_up": 19,
+    "dpad_down": 20,
+    "dpad_left": 21,
+    "dpad_right": 22,
+    "dpad_center": 23,
+    "space": 62,
+    "escape": 111,
+    "page_up": 92,
+    "page_down": 93,
+}
+
+
+UI_DUMP_RETRIES = 3
+
+
+class ToolError(RuntimeError):
+    pass
+
+
+def discover_sdk_roots():
+    roots = []
+    for env_name in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        value = os.environ.get(env_name)
+        if value:
+            roots.append(value)
+
+    home = pathlib.Path.home()
+    roots.append(str(home / "Library" / "Android" / "sdk"))
+    roots.append(str(home / "Android" / "Sdk"))
+
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        roots.append(str(pathlib.Path(local_app_data) / "Android" / "Sdk"))
+    roots.append(str(home / "AppData" / "Local" / "Android" / "Sdk"))
+
+    unique = []
+    for root in roots:
+        if root and root not in unique:
+            unique.append(root)
+    return unique
+
+
+def executable_candidates(path):
+    if os.name == "nt":
+        with_extensions = [path.with_name(path.name + ext) for ext in (".exe", ".bat", ".cmd")]
+        return with_extensions + [path]
+    return [path]
+
+
+def discover_binary(relative_path, fallback_name):
+    for sdk_root in discover_sdk_roots():
+        for candidate in executable_candidates(pathlib.Path(sdk_root) / relative_path):
+            if candidate.exists():
+                return str(candidate)
+
+    on_path = shutil.which(fallback_name)
+    return on_path or fallback_name
+
+
+ADB_PATH = discover_binary("platform-tools/adb", "adb")
+EMULATOR_PATH = discover_binary("emulator/emulator", "emulator")
+
+
+def discover_build_tool(name):
+    for sdk_root in discover_sdk_roots():
+        build_tools = pathlib.Path(sdk_root) / "build-tools"
+        if build_tools.exists():
+            versions = sorted(build_tools.iterdir(), reverse=True)
+            for version_dir in versions:
+                for candidate in executable_candidates(version_dir / name):
+                    if candidate.exists():
+                        return str(candidate)
+
+        cmdline_candidates = [
+            pathlib.Path(sdk_root) / "cmdline-tools" / "latest" / "bin" / name,
+            pathlib.Path(sdk_root) / "cmdline-tools" / "bin" / name,
+            pathlib.Path(sdk_root) / "tools" / "bin" / name,
+        ]
+        for base_candidate in cmdline_candidates:
+            for candidate in executable_candidates(base_candidate):
+                if candidate.exists():
+                    return str(candidate)
+
+    return shutil.which(name)
+
+
+def run_command(command, *, text=True, check=True, timeout=10):
+    try:
+        return subprocess.run(
+            command,
+            check=check,
+            capture_output=True,
+            text=text,
+            timeout=timeout,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.decode() if isinstance(exc.stderr, bytes) else exc.stderr
+        stdout = exc.stdout.decode() if isinstance(exc.stdout, bytes) else exc.stdout
+        output = "\n".join(part for part in [stdout, stderr] if part).strip()
+        raise ToolError(output or f"Command failed: {' '.join(command)}") from exc
+    except FileNotFoundError as exc:
+        raise ToolError(f"Command not found: {command[0]}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ToolError(f"Command timed out after {timeout}s: {' '.join(command)}") from exc
+    except OSError as exc:
+        raise ToolError(f"Failed to run {command[0]}: {exc}") from exc
+
+
+def adb_base(device_id=None):
+    base = [ADB_PATH]
+    if device_id:
+        base.extend(["-s", device_id])
+    return base
+
+
+def adb_text(args, *, device_id=None, check=True, timeout=10):
+    result = run_command(adb_base(device_id) + args, text=True, check=check, timeout=timeout)
+    return result.stdout
+
+
+def adb_result(args, *, device_id=None, check=True, timeout=10):
+    return run_command(adb_base(device_id) + args, text=True, check=check, timeout=timeout)
+
+
+def adb_bytes(args, *, device_id=None, timeout=10):
+    result = run_command(adb_base(device_id) + args, text=False, check=True, timeout=timeout)
+    return result.stdout
+
+
+def command_output(result):
+    return "\n".join(part for part in [result.stdout, result.stderr] if part).strip()
+
+
+def connection_type(device_id):
+    if device_id.startswith("emulator-"):
+        return "emulator"
+    if ":" in device_id or "._tcp" in device_id:
+        return "tcp"
+    return "usb"
+
+
+def parse_devices(output):
+    devices = []
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("List of devices"):
+            continue
+        parts = re.split(r"\s+", line)
+        if len(parts) < 2:
+            continue
+        device_id = parts[0]
+        state = parts[1]
+        model_match = re.search(r"model:(\S+)", line)
+        devices.append(
+            {
+                "id": device_id,
+                "state": state,
+                "model": model_match.group(1) if model_match else None,
+                "connection": connection_type(device_id),
+                "raw": line,
+            }
+        )
+    return devices
+
+
+def get_devices():
+    return parse_devices(adb_text(["devices", "-l"], timeout=10))
+
+
+def choose_device(explicit_device=None):
+    if explicit_device:
+        return explicit_device
+
+    env_device = os.environ.get("ANDROID_SERIAL")
+    if env_device:
+        return env_device
+
+    ready = [device for device in get_devices() if device["state"] == "device"]
+    if not ready:
+        raise ToolError("No ready Android devices detected. Connect a device or start an emulator.")
+    if len(ready) > 1:
+        device_lines = "\n".join(f"- {device['id']}" for device in ready)
+        raise ToolError(f"Multiple devices detected. Re-run with --device.\n{device_lines}")
+    return ready[0]["id"]
+
+
+def parse_bounds(bounds_str):
+    match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds_str or "")
+    if not match:
+        return None
+
+    left, top, right, bottom = [int(group) for group in match.groups()]
+    if right <= left or bottom <= top:
+        return None
+    return {
+        "x": left,
+        "y": top,
+        "width": right - left,
+        "height": bottom - top,
+    }
+
+
+def center_from_bounds(bounds):
+    return {
+        "x": round(bounds["x"] + bounds["width"] / 2),
+        "y": round(bounds["y"] + bounds["height"] / 2),
+    }
+
+
+def get_ui_xml(device_id):
+    attempts = []
+    for attempt in range(UI_DUMP_RETRIES):
+        primary = adb_result(["shell", "uiautomator", "dump", "/dev/tty"], device_id=device_id, check=False, timeout=20)
+        primary_output = command_output(primary)
+        xml = extract_xml(primary_output)
+        if xml:
+            return xml
+
+        fallback_dump = adb_result(
+            ["shell", "uiautomator", "dump", "/sdcard/window_dump.xml"],
+            device_id=device_id,
+            check=False,
+            timeout=20,
+        )
+        fallback_cat = adb_result(
+            ["shell", "cat", "/sdcard/window_dump.xml"],
+            device_id=device_id,
+            check=False,
+            timeout=20,
+        )
+        fallback_output = "\n".join(
+            part for part in [command_output(fallback_dump), command_output(fallback_cat)] if part
+        )
+        xml = extract_xml(fallback_output)
+        if xml:
+            return xml
+
+        attempts.append(
+            {
+                "primary": primary_output,
+                "fallback": fallback_output,
+            }
+        )
+        if attempt + 1 < UI_DUMP_RETRIES:
+            time.sleep(0.5)
+
+    last_attempt = attempts[-1] if attempts else {}
+    detail = last_attempt.get("primary") or last_attempt.get("fallback") or "uiautomator dump returned no XML"
+    raise ToolError(f"Unable to read UI hierarchy from the device. Last output: {detail}")
+
+
+def extract_xml(output):
+    xml_start = output.find("<?xml")
+    hierarchy_start = output.find("<hierarchy")
+    start = xml_start if xml_start != -1 else hierarchy_start
+    if start == -1:
+        return None
+
+    # uiautomator appends "UI hierchary dumped to: ..." after the XML on the
+    # same stream, so cut at the closing tag or ET.fromstring rejects the dump.
+    end_marker = "</hierarchy>"
+    end = output.find(end_marker, start)
+    if end != -1:
+        return output[start : end + len(end_marker)].strip()
+    return output[start:].strip()
+
+
+def parse_ui_xml(xml_text):
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as exc:
+        raise ToolError(f"Failed to parse UI XML: {exc}") from exc
+
+    elements = []
+    for node in root.iter("node"):
+        resource_id = node.attrib.get("resource-id", "")
+        text = node.attrib.get("text", "")
+        content_desc = node.attrib.get("content-desc", "")
+        clickable = node.attrib.get("clickable") == "true"
+        bounds = parse_bounds(node.attrib.get("bounds", ""))
+        if not bounds:
+            continue
+        if not (resource_id or text or content_desc or clickable):
+            continue
+
+        elements.append(
+            {
+                "index": int(node.attrib.get("index", "0") or "0"),
+                "resourceId": resource_id,
+                "text": text,
+                "contentDesc": content_desc,
+                "className": node.attrib.get("class", ""),
+                "bounds": bounds,
+                "center": center_from_bounds(bounds),
+                "clickable": clickable,
+                "enabled": node.attrib.get("enabled") == "true",
+                "focused": node.attrib.get("focused") == "true",
+                "checked": node.attrib.get("checked") == "true",
+                "scrollable": node.attrib.get("scrollable") == "true",
+            }
+        )
+    return elements
+
+
+SELECTOR_FIELDS = ("resource-id", "text", "content-desc")
+
+
+def match_element(element, by, value):
+    if by == "any":
+        return any(match_element(element, field, value) for field in SELECTOR_FIELDS)
+    lowered = value.lower()
+    if by == "resource-id":
+        resource_id = element["resourceId"]
+        return resource_id == value or resource_id.endswith(f":id/{value}") or resource_id.endswith(f"/{value}")
+    if by == "text":
+        return lowered in element["text"].lower()
+    if by == "content-desc":
+        return lowered in element["contentDesc"].lower()
+    raise ToolError(f"Unsupported selector: {by}")
+
+
+def element_score(element, by, value):
+    if by == "any":
+        return max(element_score(element, field, value) for field in SELECTOR_FIELDS)
+    score = 0
+    candidate = {
+        "resource-id": element["resourceId"],
+        "text": element["text"],
+        "content-desc": element["contentDesc"],
+    }[by]
+
+    if candidate == value:
+        score += 10
+    elif candidate.endswith(f":id/{value}") or candidate.endswith(f"/{value}"):
+        score += 8
+    elif value.lower() in candidate.lower():
+        score += 5
+
+    if element["clickable"]:
+        score += 3
+    if element["enabled"]:
+        score += 2
+    return score
+
+
+def element_area(element):
+    return element["bounds"]["width"] * element["bounds"]["height"]
+
+
+def find_elements(elements, by, value):
+    matches = [element for element in elements if match_element(element, by, value)]
+    # On score ties prefer the smallest element: collapsed drawers and clipped
+    # containers keep their full layout bounds in the dump, so a wide parent's
+    # center can land outside the visible control while the compact child's
+    # center stays inside it.
+    matches.sort(key=lambda item: (-element_score(item, by, value), element_area(item)))
+    return matches
+
+
+def validate_input_text(text):
+    if "%s" in text:
+        raise ToolError(
+            'Text contains a literal "%s", which "input text" always converts to a space. '
+            "Type it in two parts around the %, or use the app's own input method."
+        )
+    non_ascii = sorted({char for char in text if ord(char) > 127})
+    if non_ascii:
+        rendered = " ".join(non_ascii)
+        raise ToolError(
+            f"Text contains non-ASCII characters ({rendered}) that \"input text\" drops silently. "
+            "Use key events, the clipboard, or the app's own input method instead."
+        )
+
+
+def escape_input_text(text):
+    escaped = []
+    replacements = {
+        " ": "%s",
+        "\\": "\\\\",
+        "'": "\\'",
+        '"': '\\"',
+        "`": "\\`",
+        "$": "\\$",
+        "&": "\\&",
+        "|": "\\|",
+        ";": "\\;",
+        "(": "\\(",
+        ")": "\\)",
+        "<": "\\<",
+        ">": "\\>",
+        "!": "\\!",
+        "*": "\\*",
+        "?": "\\?",
+        "~": "\\~",
+        "#": "\\#",
+        "[": "\\[",
+        "]": "\\]",
+        "{": "\\{",
+        "}": "\\}",
+    }
+    for char in text:
+        escaped.append(replacements.get(char, char))
+    return "".join(escaped)
+
+
+def get_screen_size(device_id):
+    output = adb_text(["shell", "wm", "size"], device_id=device_id, timeout=10)
+    match = re.search(r"(\d+)x(\d+)", output)
+    if not match:
+        raise ToolError(f"Could not parse screen size from: {output.strip()}")
+    return int(match.group(1)), int(match.group(2))
+
+
+def get_current_activity(device_id):
+    output = adb_text(["shell", "dumpsys", "activity", "activities"], device_id=device_id, timeout=15)
+    patterns = [
+        r"topResumedActivity=.*?\{[^ ]* [^ ]* ([^\s/}]+)\/([^\s}]+)",
+        r"mResumedActivity=.*?\{[^ ]* [^ ]* ([^\s/}]+)\/([^\s}]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, output)
+        if match:
+            return {"packageName": match.group(1), "activity": match.group(2)}
+    raise ToolError("Could not determine the current foreground activity.")
+
+
+def get_device_info(device_id):
+    fields = {
+        "model": ["shell", "getprop", "ro.product.model"],
+        "manufacturer": ["shell", "getprop", "ro.product.manufacturer"],
+        "androidVersion": ["shell", "getprop", "ro.build.version.release"],
+        "apiLevel": ["shell", "getprop", "ro.build.version.sdk"],
+        "screenSize": ["shell", "wm", "size"],
+        "density": ["shell", "wm", "density"],
+        "serial": ["shell", "getprop", "ro.serialno"],
+        "build": ["shell", "getprop", "ro.build.display.id"],
+    }
+
+    info = {}
+    for key, command in fields.items():
+        info[key] = adb_text(command, device_id=device_id, timeout=10).strip()
+
+    size_match = re.search(r"(\d+x\d+)", info["screenSize"])
+    density_match = re.search(r"(\d+)", info["density"])
+    info["screenSize"] = size_match.group(1) if size_match else info["screenSize"]
+    info["density"] = density_match.group(1) if density_match else info["density"]
+    return info
+
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def extract_png(data):
+    # On multi-display devices (e.g. foldables) screencap prints a
+    # "[Warning] Multiple displays were found..." line before the PNG bytes.
+    start = data.find(PNG_SIGNATURE)
+    if start == -1:
+        return None
+    return data[start:]
+
+
+def png_dimensions(data):
+    if data[:8] != PNG_SIGNATURE:
+        return None
+    if len(data) < 24:
+        return None
+    width, height = struct.unpack(">II", data[16:24])
+    return width, height
+
+
+def detect_package_from_apk(apk_path):
+    aapt = discover_build_tool("aapt")
+    if aapt:
+        result = run_command([aapt, "dump", "badging", apk_path], text=True, check=False, timeout=20)
+        match = re.search(r"package: name='([^']+)'", result.stdout + result.stderr)
+        if match:
+            return match.group(1)
+
+    apkanalyzer = discover_build_tool("apkanalyzer")
+    if apkanalyzer:
+        result = run_command(
+            [apkanalyzer, "manifest", "application-id", apk_path],
+            text=True,
+            check=False,
+            timeout=20,
+        )
+        package_name = (result.stdout or "").strip()
+        if package_name:
+            return package_name
+
+    return None
+
+
+def get_logs(device_id, package_name=None, level=None, lines=200, since=None):
+    args = ["logcat", "-d"]
+    if since:
+        args.extend(["-T", since])
+    else:
+        args.extend(["-t", str(lines)])
+    if level:
+        args.append(f"*:{level.upper()}")
+
+    output = adb_text(args, device_id=device_id, timeout=20)
+
+    if package_name:
+        pid_result = adb_result(["shell", "pidof", package_name], device_id=device_id, check=False, timeout=10)
+        pids = [pid for pid in (pid_result.stdout or "").split() if pid]
+        if pids:
+            pid_set = set(pids)
+            filtered = []
+            for line in output.splitlines():
+                match = re.match(r"^\S+\s+\S+\s+(\d+)\s", line)
+                if match and match.group(1) in pid_set:
+                    filtered.append(line)
+            output = "\n".join(filtered)
+
+    return output
+
+
+def print_output(payload, as_json):
+    if as_json:
+        print(json.dumps(payload, indent=2))
+        return
+
+    if isinstance(payload, str):
+        print(payload)
+        return
+
+    print(json.dumps(payload, indent=2))
+
+
+def add_common_json(parser):
+    parser.add_argument("--json", action="store_true", help="Emit structured JSON output")
+
+
+def add_common_device(parser):
+    parser.add_argument("--device", help="Target a specific device ID")
+
+
+def cmd_device_list(args):
+    devices = get_devices()
+    payload = {"devices": devices, "count": len(devices)}
+    if args.json:
+        print_output(payload, True)
+        return
+
+    if not devices:
+        print("No devices connected.")
+        return
+
+    for device in devices:
+        model = f" model:{device['model']}" if device["model"] else ""
+        print(f"{device['id']} [{device['state']}]{model}")
+
+
+def cmd_device_info(args):
+    device_id = choose_device(args.device)
+    info = get_device_info(device_id)
+    payload = {"deviceId": device_id, **info}
+    if args.json:
+        print_output(payload, True)
+        return
+
+    print(f"Device: {device_id}")
+    print(f"Model: {info['manufacturer']} {info['model']}")
+    print(f"Android: {info['androidVersion']} (API {info['apiLevel']})")
+    print(f"Screen: {info['screenSize']} @ {info['density']}dpi")
+    print(f"Build: {info['build']}")
+
+
+def cmd_device_avds(args):
+    result = run_command([EMULATOR_PATH, "-list-avds"], text=True, check=True, timeout=10)
+    avds = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    payload = {"avds": avds, "count": len(avds)}
+    if args.json:
+        print_output(payload, True)
+        return
+    if not avds:
+        print("No AVDs found.")
+        return
+    print("\n".join(avds))
+
+
+def select_started_device(current_devices, before_ids, explicit_device=None):
+    ready_ids = {device["id"] for device in current_devices if device["state"] == "device"}
+    if explicit_device:
+        return explicit_device if explicit_device in ready_ids else None
+
+    new_ready = sorted(ready_ids - before_ids)
+    if len(new_ready) > 1:
+        device_lines = "\n".join(f"- {device_id}" for device_id in new_ready)
+        raise ToolError(f"Multiple new devices detected. Re-run with --device.\n{device_lines}")
+    return new_ready[0] if new_ready else None
+
+
+def cmd_device_start(args):
+    before_ids = {device["id"] for device in get_devices()}
+    detach_kwargs = {}
+    if os.name == "nt":
+        detach_kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        detach_kwargs["start_new_session"] = True
+    subprocess.Popen(
+        [EMULATOR_PATH, "-avd", args.avd_name, "-no-snapshot-load"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        **detach_kwargs,
+    )
+    deadline = time.time() + args.timeout / 1000.0
+    while time.time() < deadline:
+        try:
+            current_devices = get_devices()
+            device_id = select_started_device(current_devices, before_ids, explicit_device=args.device)
+            if not device_id:
+                time.sleep(2)
+                continue
+            boot = adb_text(["shell", "getprop", "sys.boot_completed"], device_id=device_id, timeout=5).strip()
+            if boot == "1":
+                payload = {"deviceId": device_id, "bootCompleted": True}
+                print_output(payload, args.json)
+                return
+        except ToolError:
+            pass
+        time.sleep(2)
+    raise ToolError(f"Emulator {args.avd_name} did not finish booting within {args.timeout}ms.")
+
+
+IP_ADDRESS_RE = re.compile(r"\d{1,3}(?:\.\d{1,3}){3}")
+
+
+def is_ip_address(value):
+    return bool(IP_ADDRESS_RE.fullmatch(value))
+
+
+def parse_wifi_ip(route_output, addr_output=""):
+    for line in route_output.splitlines():
+        if re.search(r"\bdev wlan", line):
+            match = re.search(r"\bsrc (\d{1,3}(?:\.\d{1,3}){3})", line)
+            if match:
+                return match.group(1)
+    match = re.search(r"\binet (\d{1,3}(?:\.\d{1,3}){3})/", addr_output)
+    return match.group(1) if match else None
+
+
+def get_wifi_ip(device_id):
+    route = adb_result(["shell", "ip", "route"], device_id=device_id, check=False, timeout=10)
+    addr = adb_result(["shell", "ip", "-4", "addr", "show", "wlan0"], device_id=device_id, check=False, timeout=10)
+    ip = parse_wifi_ip(route.stdout or "", addr.stdout or "")
+    if not ip:
+        raise ToolError("Could not determine the device's Wi-Fi IP address. Make sure Wi-Fi is connected.")
+    return ip
+
+
+def connect_endpoint(endpoint, attempts=4, delay=1.5):
+    last_output = ""
+    for attempt in range(attempts):
+        result = adb_result(["connect", endpoint], check=False, timeout=35)
+        output = command_output(result)
+        if "connected to" in output and "failed" not in output:
+            return output
+        last_output = output
+        if attempt + 1 < attempts:
+            time.sleep(delay)
+    raise ToolError(f"Could not connect to {endpoint}: {last_output or '(no output)'}")
+
+
+def pick_usb_device(explicit_device=None):
+    if explicit_device:
+        return explicit_device
+    ready = [device for device in get_devices() if device["state"] == "device" and device["connection"] == "usb"]
+    if not ready:
+        raise ToolError(
+            "No USB-connected device found. Plug the device in for 'connect wifi', "
+            "or use 'connect ip'/'connect pair' for a device already reachable over the network."
+        )
+    if len(ready) > 1:
+        device_lines = "\n".join(f"- {device['id']}" for device in ready)
+        raise ToolError(f"Multiple USB devices detected. Re-run with --device.\n{device_lines}")
+    return ready[0]["id"]
+
+
+def find_tailscale():
+    on_path = shutil.which("tailscale")
+    if on_path:
+        return on_path
+    candidates = []
+    program_files = os.environ.get("ProgramFiles")
+    if program_files:
+        candidates.append(pathlib.Path(program_files) / "Tailscale" / "tailscale.exe")
+    candidates.append(pathlib.Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale"))
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def resolve_tailscale_host(host):
+    if is_ip_address(host):
+        return host
+    tailscale = find_tailscale()
+    if not tailscale:
+        raise ToolError(
+            "Tailscale CLI not found. Install Tailscale or pass the device's Tailscale IP directly via --host."
+        )
+    result = run_command([tailscale, "ip", "-4", host], check=False, timeout=15)
+    lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    if not lines or not is_ip_address(lines[0]):
+        raise ToolError(f"Could not resolve Tailscale host {host}: {command_output(result) or '(no output)'}")
+    return lines[0]
+
+
+def cmd_connect_wifi(args):
+    serial = pick_usb_device(args.device)
+    ip = get_wifi_ip(serial)
+    adb_text(["tcpip", str(args.port)], device_id=serial, timeout=15)
+    time.sleep(1.5)
+    endpoint = f"{ip}:{args.port}"
+    output = connect_endpoint(endpoint)
+    payload = {
+        "deviceId": endpoint,
+        "usbDeviceId": serial,
+        "host": ip,
+        "port": args.port,
+        "connected": True,
+        "output": output.strip(),
+    }
+    print_output(payload, args.json)
+
+
+def cmd_connect_ip(args):
+    endpoint = args.host if ":" in args.host else f"{args.host}:{args.port}"
+    output = connect_endpoint(endpoint, attempts=2)
+    print_output({"deviceId": endpoint, "connected": True, "output": output.strip()}, args.json)
+
+
+def cmd_connect_tailscale(args):
+    ip = resolve_tailscale_host(args.host)
+    endpoint = f"{ip}:{args.port}"
+    output = connect_endpoint(endpoint, attempts=2)
+    payload = {
+        "deviceId": endpoint,
+        "tailscaleHost": args.host,
+        "host": ip,
+        "port": args.port,
+        "connected": True,
+        "output": output.strip(),
+    }
+    print_output(payload, args.json)
+
+
+def cmd_connect_pair(args):
+    endpoint = f"{args.host}:{args.port}"
+    result = adb_result(["pair", endpoint, args.code], check=False, timeout=30)
+    output = command_output(result)
+    if "Successfully paired" not in output:
+        raise ToolError(f"Pairing with {endpoint} failed: {output or '(no output)'}")
+    print_output({"paired": True, "endpoint": endpoint, "output": output.strip()}, args.json)
+
+
+def cmd_connect_disconnect(args):
+    command = ["disconnect"]
+    target = "all"
+    if args.host:
+        endpoint = args.host if ":" in args.host else f"{args.host}:{args.port}"
+        command.append(endpoint)
+        target = endpoint
+    result = adb_result(command, check=False, timeout=10)
+    print_output({"disconnected": target, "output": command_output(result).strip()}, args.json)
+
+
+def cmd_screenshot(args):
+    device_id = choose_device(args.device)
+    command = ["exec-out", "screencap", "-p"]
+    if args.display:
+        command.extend(["-d", args.display])
+    raw = adb_bytes(command, device_id=device_id, timeout=20)
+    data = extract_png(raw)
+    if data is None:
+        preview = raw[:200].decode("utf-8", "replace").strip()
+        raise ToolError(f"screencap did not return a PNG. Output started with: {preview or '(empty)'}")
+    out_path = args.out
+    if not out_path:
+        handle = tempfile.NamedTemporaryFile(prefix="android-screenshot-", suffix=".png", delete=False)
+        handle.close()
+        out_path = handle.name
+    out_file = pathlib.Path(out_path)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_file.write_bytes(data)
+
+    dimensions = png_dimensions(data) or (None, None)
+    payload = {
+        "deviceId": device_id,
+        "path": str(out_file.resolve()),
+        "bytes": len(data),
+        "width": dimensions[0],
+        "height": dimensions[1],
+    }
+    if args.json:
+        print_output(payload, True)
+        return
+
+    print(f"Saved screenshot to {payload['path']}")
+    if payload["width"] and payload["height"]:
+        print(f"Dimensions: {payload['width']}x{payload['height']}")
+
+
+def load_ui_elements(device_id):
+    xml = get_ui_xml(device_id)
+    return xml, parse_ui_xml(xml)
+
+
+def cmd_ui_dump(args):
+    device_id = choose_device(args.device)
+    xml, elements = load_ui_elements(device_id)
+    payload = {"deviceId": device_id, "count": len(elements), "elements": elements}
+    if args.json:
+        print_output(payload, True)
+        return
+
+    print(f"Found {len(elements)} elements")
+    for index, element in enumerate(elements):
+        parts = [f"[{index}]"]
+        if element["resourceId"]:
+            parts.append(f"id:{element['resourceId']}")
+        if element["text"]:
+            parts.append(f'text:"{element["text"]}"')
+        if element["contentDesc"]:
+            parts.append(f'desc:"{element["contentDesc"]}"')
+        parts.append(f"class:{element['className'].split('.')[-1]}")
+        parts.append(f"center:({element['center']['x']},{element['center']['y']})")
+        print(" ".join(parts))
+    if args.raw_xml:
+        print()
+        print(xml)
+
+
+def cmd_ui_find(args):
+    device_id = choose_device(args.device)
+    _, elements = load_ui_elements(device_id)
+    matches = find_elements(elements, args.by, args.value)
+    payload = {
+        "deviceId": device_id,
+        "selector": {"by": args.by, "value": args.value},
+        "count": len(matches),
+        "bestMatch": matches[0] if matches else None,
+        "matches": matches,
+    }
+    if args.json:
+        print_output(payload, True)
+        return
+
+    if not matches:
+        print(f'No element found for {args.by}="{args.value}"')
+        return
+
+    best = matches[0]
+    print(f'Found {len(matches)} match(es) for {args.by}="{args.value}"')
+    print(json.dumps(best, indent=2))
+
+
+def cmd_input_tap(args):
+    device_id = choose_device(args.device)
+    adb_text(["shell", "input", "tap", str(args.x), str(args.y)], device_id=device_id, timeout=10)
+    print_output({"deviceId": device_id, "x": args.x, "y": args.y, "action": "tap"}, args.json)
+
+
+def cmd_input_text(args):
+    validate_input_text(args.text)
+    device_id = choose_device(args.device)
+    escaped = escape_input_text(args.text)
+    adb_text(["shell", "input", "text", escaped], device_id=device_id, timeout=10)
+    print_output(
+        {"deviceId": device_id, "action": "text", "text": args.text, "escaped": escaped},
+        args.json,
+    )
+
+
+def cmd_input_key(args):
+    device_id = choose_device(args.device)
+    if args.code is None and args.key is None:
+        raise ToolError("Provide either --key or --code.")
+    code = args.code if args.code is not None else KEYCODES.get(args.key)
+    if code is None:
+        raise ToolError(f"Unknown key: {args.key}")
+    adb_text(["shell", "input", "keyevent", str(code)], device_id=device_id, timeout=10)
+    print_output({"deviceId": device_id, "action": "key", "code": code, "key": args.key}, args.json)
+
+
+def cmd_input_swipe(args):
+    device_id = choose_device(args.device)
+    command = [
+        "shell",
+        "input",
+        "swipe",
+        str(args.x1),
+        str(args.y1),
+        str(args.x2),
+        str(args.y2),
+    ]
+    if args.duration is not None:
+        command.append(str(args.duration))
+    adb_text(command, device_id=device_id, timeout=10)
+    print_output(
+        {
+            "deviceId": device_id,
+            "action": "swipe",
+            "from": {"x": args.x1, "y": args.y1},
+            "to": {"x": args.x2, "y": args.y2},
+            "durationMs": args.duration,
+        },
+        args.json,
+    )
+
+
+def cmd_input_long_press(args):
+    device_id = choose_device(args.device)
+    adb_text(
+        ["shell", "input", "swipe", str(args.x), str(args.y), str(args.x), str(args.y), str(args.duration)],
+        device_id=device_id,
+        timeout=10,
+    )
+    print_output(
+        {"deviceId": device_id, "action": "long-press", "x": args.x, "y": args.y, "durationMs": args.duration},
+        args.json,
+    )
+
+
+def cmd_input_double_tap(args):
+    device_id = choose_device(args.device)
+    tap = ["shell", "input", "tap", str(args.x), str(args.y)]
+    adb_text(tap, device_id=device_id, timeout=10)
+    time.sleep(args.gap / 1000.0)
+    adb_text(tap, device_id=device_id, timeout=10)
+    print_output(
+        {"deviceId": device_id, "action": "double-tap", "x": args.x, "y": args.y, "gapMs": args.gap},
+        args.json,
+    )
+
+
+def cmd_input_tap_element(args):
+    device_id = choose_device(args.device)
+    _, elements = load_ui_elements(device_id)
+    matches = find_elements(elements, args.by, args.value)
+    if not matches:
+        raise ToolError(f'No element found for {args.by}="{args.value}"')
+    best = matches[0]
+    adb_text(
+        ["shell", "input", "tap", str(best["center"]["x"]), str(best["center"]["y"])],
+        device_id=device_id,
+        timeout=10,
+    )
+    print_output(
+        {"deviceId": device_id, "selector": {"by": args.by, "value": args.value}, "element": best},
+        args.json,
+    )
+
+
+def cmd_wait_element(args):
+    device_id = choose_device(args.device)
+    start = time.time()
+    deadline = start + args.timeout / 1000.0
+    # A single UI dump can be slow (uiautomator waits for the device to go
+    # idle), so always run one final check after the deadline instead of
+    # letting a slow dump consume the window with zero effective checks.
+    while True:
+        try:
+            _, elements = load_ui_elements(device_id)
+            matches = find_elements(elements, args.by, args.value)
+        except ToolError:
+            matches = []
+        if matches:
+            elapsed = int((time.time() - start) * 1000)
+            print_output(
+                {
+                    "deviceId": device_id,
+                    "selector": {"by": args.by, "value": args.value},
+                    "elapsedMs": elapsed,
+                    "element": matches[0],
+                },
+                args.json,
+            )
+            return
+        if time.time() >= deadline:
+            break
+        time.sleep(args.interval / 1000.0)
+    raise ToolError(f'Element {args.by}="{args.value}" did not appear within {args.timeout}ms.')
+
+
+def cmd_scroll_find(args):
+    device_id = choose_device(args.device)
+    width, height = get_screen_size(device_id)
+    center_x = round(width / 2)
+    from_y = round(height * 0.75)
+    to_y = round(height * 0.25)
+    previous_signature = None
+
+    for scroll_count in range(args.max_scrolls + 1):
+        _, elements = load_ui_elements(device_id)
+        matches = find_elements(elements, args.by, args.value)
+        if matches:
+            print_output(
+                {
+                    "deviceId": device_id,
+                    "selector": {"by": args.by, "value": args.value},
+                    "scrolls": scroll_count,
+                    "element": matches[0],
+                },
+                args.json,
+            )
+            return
+
+        if scroll_count == args.max_scrolls:
+            break
+
+        signature = json.dumps(elements, sort_keys=True)
+        if signature == previous_signature:
+            break
+        previous_signature = signature
+
+        adb_text(
+            ["shell", "input", "swipe", str(center_x), str(from_y), str(center_x), str(to_y), str(args.duration)],
+            device_id=device_id,
+            timeout=10,
+        )
+        time.sleep(args.pause / 1000.0)
+
+    raise ToolError(f'Element {args.by}="{args.value}" was not found after scrolling.')
+
+
+def cmd_app_install(args):
+    device_id = choose_device(args.device)
+    apk_path = pathlib.Path(args.apk)
+    if not apk_path.exists():
+        raise ToolError(f"APK not found: {apk_path}")
+
+    output = adb_text(["install", "-r", str(apk_path)], device_id=device_id, timeout=90)
+    package_name = args.package or detect_package_from_apk(str(apk_path))
+    payload = {
+        "deviceId": device_id,
+        "apk": str(apk_path.resolve()),
+        "packageName": package_name,
+        "output": output.strip(),
+    }
+    print_output(payload, args.json)
+
+
+def cmd_app_launch(args):
+    device_id = choose_device(args.device)
+    if args.activity:
+        output = adb_text(
+            ["shell", "am", "start", "-n", f"{args.package}/{args.activity}"],
+            device_id=device_id,
+            timeout=20,
+        )
+    else:
+        output = adb_text(
+            ["shell", "monkey", "-p", args.package, "-c", "android.intent.category.LAUNCHER", "1"],
+            device_id=device_id,
+            timeout=20,
+        )
+    payload = {"deviceId": device_id, "packageName": args.package, "activity": args.activity, "output": output.strip()}
+    print_output(payload, args.json)
+
+
+def cmd_app_current(args):
+    device_id = choose_device(args.device)
+    payload = {"deviceId": device_id, **get_current_activity(device_id)}
+    print_output(payload, args.json)
+
+
+def cmd_app_stop(args):
+    device_id = choose_device(args.device)
+    adb_text(["shell", "am", "force-stop", args.package], device_id=device_id, timeout=15)
+    print_output({"deviceId": device_id, "packageName": args.package, "stopped": True}, args.json)
+
+
+def cmd_app_clear(args):
+    device_id = choose_device(args.device)
+    output = adb_text(["shell", "pm", "clear", args.package], device_id=device_id, timeout=30)
+    if "Success" not in output:
+        raise ToolError(f"pm clear failed for {args.package}: {output.strip() or '(no output)'}")
+    print_output({"deviceId": device_id, "packageName": args.package, "cleared": True}, args.json)
+
+
+def cmd_debug_logs(args):
+    device_id = choose_device(args.device)
+    output = get_logs(
+        device_id,
+        package_name=args.package,
+        level=args.level,
+        lines=args.lines,
+        since=args.since,
+    )
+    payload = {
+        "deviceId": device_id,
+        "packageName": args.package,
+        "level": args.level,
+        "lines": output.splitlines(),
+        "lineCount": len(output.splitlines()) if output else 0,
+    }
+    if args.json:
+        print_output(payload, True)
+        return
+    print(output or "(no log output)")
+
+
+def cmd_debug_clear_logs(args):
+    device_id = choose_device(args.device)
+    adb_text(["logcat", "-c"], device_id=device_id, timeout=10)
+    print_output({"deviceId": device_id, "cleared": True}, args.json)
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="tools/android",
+        description="Command-first Android automation helpers for skill-based agents.",
+    )
+    subparsers = parser.add_subparsers(dest="group")
+    subparsers.required = True
+
+    device = subparsers.add_parser("device", help="Device and emulator commands")
+    device_subparsers = device.add_subparsers(dest="action")
+    device_subparsers.required = True
+
+    device_list = device_subparsers.add_parser("list", help="List connected devices")
+    add_common_json(device_list)
+    device_list.set_defaults(func=cmd_device_list)
+
+    device_info = device_subparsers.add_parser("info", help="Show device info")
+    add_common_device(device_info)
+    add_common_json(device_info)
+    device_info.set_defaults(func=cmd_device_info)
+
+    device_avds = device_subparsers.add_parser("avds", help="List available AVDs")
+    add_common_json(device_avds)
+    device_avds.set_defaults(func=cmd_device_avds)
+
+    device_start = device_subparsers.add_parser("start-emulator", help="Start an emulator by AVD name")
+    device_start.add_argument("--avd-name", required=True)
+    device_start.add_argument("--timeout", type=int, default=60000, help="Boot timeout in milliseconds")
+    add_common_device(device_start)
+    add_common_json(device_start)
+    device_start.set_defaults(func=cmd_device_start)
+
+    connect = subparsers.add_parser("connect", help="Connect to devices over the network")
+    connect_subparsers = connect.add_subparsers(dest="action")
+    connect_subparsers.required = True
+
+    connect_wifi = connect_subparsers.add_parser(
+        "wifi", help="Switch a USB device to TCP mode and connect over Wi-Fi"
+    )
+    add_common_device(connect_wifi)
+    add_common_json(connect_wifi)
+    connect_wifi.add_argument("--port", type=int, default=5555)
+    connect_wifi.set_defaults(func=cmd_connect_wifi)
+
+    connect_ip = connect_subparsers.add_parser("ip", help="Connect to a device by IP or hostname")
+    add_common_json(connect_ip)
+    connect_ip.add_argument("--host", required=True, help="IP or hostname, optionally with :port")
+    connect_ip.add_argument("--port", type=int, default=5555)
+    connect_ip.set_defaults(func=cmd_connect_ip)
+
+    connect_tailscale = connect_subparsers.add_parser(
+        "tailscale", help="Resolve a Tailscale machine name and connect to it"
+    )
+    add_common_json(connect_tailscale)
+    connect_tailscale.add_argument("--host", required=True, help="Tailscale machine name or 100.x IP")
+    connect_tailscale.add_argument("--port", type=int, default=5555)
+    connect_tailscale.set_defaults(func=cmd_connect_tailscale)
+
+    connect_pair = connect_subparsers.add_parser(
+        "pair", help="Pair with an Android 11+ wireless debugging endpoint"
+    )
+    add_common_json(connect_pair)
+    connect_pair.add_argument("--host", required=True)
+    connect_pair.add_argument("--port", type=int, required=True, help="Pairing port shown on the device")
+    connect_pair.add_argument("--code", required=True, help="Six-digit pairing code shown on the device")
+    connect_pair.set_defaults(func=cmd_connect_pair)
+
+    connect_disconnect = connect_subparsers.add_parser("disconnect", help="Disconnect network devices")
+    add_common_json(connect_disconnect)
+    connect_disconnect.add_argument("--host", help="Endpoint to disconnect; omit to disconnect all")
+    connect_disconnect.add_argument("--port", type=int, default=5555)
+    connect_disconnect.set_defaults(func=cmd_connect_disconnect)
+
+    screenshot = subparsers.add_parser("screenshot", help="Capture a screenshot")
+    add_common_device(screenshot)
+    add_common_json(screenshot)
+    screenshot.add_argument("--out", help="Write the screenshot to a specific path")
+    screenshot.add_argument("--display", help="Physical display ID for multi-display devices (foldables)")
+    screenshot.set_defaults(func=cmd_screenshot)
+
+    ui = subparsers.add_parser("ui", help="UI hierarchy commands")
+    ui_subparsers = ui.add_subparsers(dest="action")
+    ui_subparsers.required = True
+
+    ui_dump = ui_subparsers.add_parser("dump", help="Dump the current UI tree")
+    add_common_device(ui_dump)
+    add_common_json(ui_dump)
+    ui_dump.add_argument("--raw-xml", action="store_true", help="Also print the raw XML when not using --json")
+    ui_dump.set_defaults(func=cmd_ui_dump)
+
+    ui_find = ui_subparsers.add_parser("find", help="Find UI elements")
+    add_common_device(ui_find)
+    add_common_json(ui_find)
+    ui_find.add_argument("--by", choices=["resource-id", "text", "content-desc", "any"], required=True)
+    ui_find.add_argument("--value", required=True)
+    ui_find.set_defaults(func=cmd_ui_find)
+
+    input_parser = subparsers.add_parser("input", help="Input commands")
+    input_subparsers = input_parser.add_subparsers(dest="action")
+    input_subparsers.required = True
+
+    input_tap = input_subparsers.add_parser("tap", help="Tap at coordinates")
+    add_common_device(input_tap)
+    add_common_json(input_tap)
+    input_tap.add_argument("--x", type=int, required=True)
+    input_tap.add_argument("--y", type=int, required=True)
+    input_tap.set_defaults(func=cmd_input_tap)
+
+    input_text = input_subparsers.add_parser("text", help="Type text into the focused field")
+    add_common_device(input_text)
+    add_common_json(input_text)
+    input_text.add_argument("--text", required=True)
+    input_text.set_defaults(func=cmd_input_text)
+
+    input_key = input_subparsers.add_parser("key", help="Send a key event")
+    add_common_device(input_key)
+    add_common_json(input_key)
+    input_key.add_argument("--key", choices=sorted(KEYCODES.keys()))
+    input_key.add_argument("--code", type=int)
+    input_key.set_defaults(func=cmd_input_key)
+
+    input_swipe = input_subparsers.add_parser("swipe", help="Perform a swipe")
+    add_common_device(input_swipe)
+    add_common_json(input_swipe)
+    input_swipe.add_argument("--x1", type=int, required=True)
+    input_swipe.add_argument("--y1", type=int, required=True)
+    input_swipe.add_argument("--x2", type=int, required=True)
+    input_swipe.add_argument("--y2", type=int, required=True)
+    input_swipe.add_argument("--duration", type=int, default=300)
+    input_swipe.set_defaults(func=cmd_input_swipe)
+
+    input_long_press = input_subparsers.add_parser("long-press", help="Long-press at coordinates")
+    add_common_device(input_long_press)
+    add_common_json(input_long_press)
+    input_long_press.add_argument("--x", type=int, required=True)
+    input_long_press.add_argument("--y", type=int, required=True)
+    input_long_press.add_argument("--duration", type=int, default=600, help="Press duration in milliseconds")
+    input_long_press.set_defaults(func=cmd_input_long_press)
+
+    input_double_tap = input_subparsers.add_parser("double-tap", help="Double-tap at coordinates")
+    add_common_device(input_double_tap)
+    add_common_json(input_double_tap)
+    input_double_tap.add_argument("--x", type=int, required=True)
+    input_double_tap.add_argument("--y", type=int, required=True)
+    input_double_tap.add_argument("--gap", type=int, default=100, help="Delay between taps in milliseconds")
+    input_double_tap.set_defaults(func=cmd_input_double_tap)
+
+    input_tap_element = input_subparsers.add_parser("tap-element", help="Find and tap an element")
+    add_common_device(input_tap_element)
+    add_common_json(input_tap_element)
+    input_tap_element.add_argument("--by", choices=["resource-id", "text", "content-desc", "any"], required=True)
+    input_tap_element.add_argument("--value", required=True)
+    input_tap_element.set_defaults(func=cmd_input_tap_element)
+
+    wait = subparsers.add_parser("wait", help="Wait for UI conditions")
+    wait_subparsers = wait.add_subparsers(dest="action")
+    wait_subparsers.required = True
+
+    wait_element = wait_subparsers.add_parser("element", help="Wait for an element to appear")
+    add_common_device(wait_element)
+    add_common_json(wait_element)
+    wait_element.add_argument("--by", choices=["resource-id", "text", "content-desc", "any"], required=True)
+    wait_element.add_argument("--value", required=True)
+    wait_element.add_argument("--timeout", type=int, default=10000)
+    wait_element.add_argument("--interval", type=int, default=500)
+    wait_element.set_defaults(func=cmd_wait_element)
+
+    scroll = subparsers.add_parser("scroll", help="Scrolling helpers")
+    scroll_subparsers = scroll.add_subparsers(dest="action")
+    scroll_subparsers.required = True
+
+    scroll_find = scroll_subparsers.add_parser("find", help="Scroll until an element is visible")
+    add_common_device(scroll_find)
+    add_common_json(scroll_find)
+    scroll_find.add_argument("--by", choices=["resource-id", "text", "content-desc", "any"], required=True)
+    scroll_find.add_argument("--value", required=True)
+    scroll_find.add_argument("--max-scrolls", type=int, default=10)
+    scroll_find.add_argument("--duration", type=int, default=500)
+    scroll_find.add_argument("--pause", type=int, default=500)
+    scroll_find.set_defaults(func=cmd_scroll_find)
+
+    app = subparsers.add_parser("app", help="App management commands")
+    app_subparsers = app.add_subparsers(dest="action")
+    app_subparsers.required = True
+
+    app_install = app_subparsers.add_parser("install", help="Install an APK")
+    add_common_device(app_install)
+    add_common_json(app_install)
+    app_install.add_argument("--apk", required=True)
+    app_install.add_argument("--package", help="Explicit package name to associate with the APK")
+    app_install.set_defaults(func=cmd_app_install)
+
+    app_launch = app_subparsers.add_parser("launch", help="Launch an app")
+    add_common_device(app_launch)
+    add_common_json(app_launch)
+    app_launch.add_argument("--package", required=True)
+    app_launch.add_argument("--activity")
+    app_launch.set_defaults(func=cmd_app_launch)
+
+    app_current = app_subparsers.add_parser("current", help="Get the foreground activity")
+    add_common_device(app_current)
+    add_common_json(app_current)
+    app_current.set_defaults(func=cmd_app_current)
+
+    app_stop = app_subparsers.add_parser("stop", help="Force-stop an app")
+    add_common_device(app_stop)
+    add_common_json(app_stop)
+    app_stop.add_argument("--package", required=True)
+    app_stop.set_defaults(func=cmd_app_stop)
+
+    app_clear = app_subparsers.add_parser("clear", help="Clear an app's data and force-stop it")
+    add_common_device(app_clear)
+    add_common_json(app_clear)
+    app_clear.add_argument("--package", required=True)
+    app_clear.set_defaults(func=cmd_app_clear)
+
+    debug = subparsers.add_parser("debug", help="Debugging helpers")
+    debug_subparsers = debug.add_subparsers(dest="action")
+    debug_subparsers.required = True
+
+    debug_logs = debug_subparsers.add_parser("logs", help="Read logcat output")
+    add_common_device(debug_logs)
+    add_common_json(debug_logs)
+    debug_logs.add_argument("--package")
+    debug_logs.add_argument("--level", choices=["V", "D", "I", "W", "E", "F"])
+    debug_logs.add_argument("--lines", type=int, default=200)
+    debug_logs.add_argument("--since")
+    debug_logs.set_defaults(func=cmd_debug_logs)
+
+    debug_clear = debug_subparsers.add_parser("clear-logs", help="Clear logcat")
+    add_common_device(debug_clear)
+    add_common_json(debug_clear)
+    debug_clear.set_defaults(func=cmd_debug_clear_logs)
+
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    try:
+        args.func(args)
+    except ToolError as exc:
+        if getattr(args, "json", False):
+            print(json.dumps({"error": str(exc)}, indent=2), file=sys.stderr)
+        else:
+            print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
