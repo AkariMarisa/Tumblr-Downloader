@@ -173,7 +173,8 @@
 
     <!-- Blog full-profile batch download -->
     <string name="blog_url_invalid">无效的 Tumblr 博客链接</string>
-    <string name="blog_job_already_running">“%1$s”已有任务在进行，请先完成或移除该任务</string>
+    <string name="blog_job_already_running">“%1$s”正在下载中——可等待完成，或在其卡片上暂停</string>
+    <string name="blog_job_resumed">继续下载“%1$s”——之前已下载的内容全部保留</string>
     <string name="blog_media_filter_dialog_title">下载内容</string>
     <string name="blog_media_filter_all">图片和视频</string>
     <string name="blog_media_filter_images">仅图片</string>

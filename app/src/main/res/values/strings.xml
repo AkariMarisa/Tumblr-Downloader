@@ -173,7 +173,8 @@
 
     <!-- Blog full-profile batch download -->
     <string name="blog_url_invalid">Not a valid Tumblr blog URL</string>
-    <string name="blog_job_already_running">A job for “%1$s” already exists — remove or finish it first</string>
+    <string name="blog_job_already_running">“%1$s” is already being downloaded — wait for it, or pause it from its card</string>
+    <string name="blog_job_resumed">Resuming “%1$s” — everything it already downloaded is kept</string>
     <string name="blog_media_filter_dialog_title">Download</string>
     <string name="blog_media_filter_all">Images and videos</string>
     <string name="blog_media_filter_images">Images only</string>

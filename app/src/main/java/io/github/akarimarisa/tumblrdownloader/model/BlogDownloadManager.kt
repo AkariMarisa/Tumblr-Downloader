@@ -161,11 +161,21 @@ class BlogDownloadManager private constructor(
 
     /**
      * Start a full-profile scan for a standalone blog URL.
-     * Returns false when the URL is not a blog URL or a non-terminal job
-     * for the same blog already exists.
+     *
+     * **One card per blog.** A job that is still running refuses a second
+     * enqueue (there is nothing to add); any other previous job for the same
+     * blog — finished, cancelled or blocked — has its card *reused*: it moves
+     * back to the top of the list ([BlogDownloadJobEntity.createdAt] is the
+     * sort key), starts a fresh scan for posts published since the last run,
+     * and keeps every item it already tracks. Completed files therefore stay
+     * completed, queued items keep their place and the card's progress bar
+     * continues where it left off — only the new media is downloaded.
+     *
+     * Returns false when the URL is not a blog URL or the same blog is
+     * already being downloaded right now.
      *
      * Suspend on purpose: it waits for the initial card restore so the
-     * duplicate check sees persisted jobs, and it writes the new card inside
+     * duplicate check sees persisted jobs, and it writes the card inside
      * the same [stateMutex] critical section as the in-memory insert — so a
      * cancel/pause landing right after enqueue can never observe an in-memory
      * card with no row on disk (which used to make [markState] a no-op).
@@ -178,17 +188,43 @@ class BlogDownloadManager private constructor(
             }
         restored.await()
         stateMutex.withLock {
+            val now = System.currentTimeMillis()
+
+            // Still scanning: keep the single card and tell the user where to
+            // find it instead of queueing a duplicate.
             if (_jobs.value.any {
                     it.blogName == blogName &&
-                        it.state() != BlogJobState.DONE
+                        it.state() == BlogJobState.RUNNING
                 }
             ) {
                 _events.tryEmit(BlogEvent.Message(localizedString(R.string.blog_job_already_running, blogName)))
                 return false
             }
 
-            val now = System.currentTimeMillis()
-            val job = BlogDownloadJobEntity(
+            // Reuse the previous card for this blog rather than adding a
+            // second one (createdAt doubles as the list's sort key, so
+            // refreshing it brings the card straight back to the top).
+            // Scan counters restart with the new pass, but mediaEnqueued is
+            // kept: it counts the card's items, so it keeps matching the
+            // "downloaded x/y" line instead of dropping back to zero.
+            val previous = _jobs.value
+                .filter { it.blogName == blogName }
+                .maxByOrNull { it.createdAt }
+            if (previous != null) {
+                _events.tryEmit(BlogEvent.Message(localizedString(R.string.blog_job_resumed, blogName)))
+            }
+            val job = previous?.copy(
+                state = BlogJobState.RUNNING.name,
+                resumeLink = null,
+                totalPosts = null,
+                pagesCompleted = 0,
+                postsDiscovered = 0,
+                postsSkipped = 0,
+                postsNoMedia = 0,
+                createdAt = now,
+                updatedAt = now,
+                errorCode = null
+            ) ?: BlogDownloadJobEntity(
                 jobId = UUID.randomUUID().toString(),
                 blogName = blogName,
                 state = BlogJobState.RUNNING.name,
@@ -203,6 +239,12 @@ class BlogDownloadManager private constructor(
                 updatedAt = now,
                 errorCode = null
             )
+
+            // A cancelled card can still carry its cancel flag and a pending
+            // long-blog confirmation from the previous run; both must be
+            // cleared or the relaunched worker would stop (or hang) at once.
+            cancelFlags.remove(job.jobId)
+            confirmGates.remove(job.jobId)
             jobOptions[job.jobId] = options
             // Show the card immediately and persist it before returning.
             _jobs.value = (listOf(job) + _jobs.value.filterNot { it.jobId == job.jobId })

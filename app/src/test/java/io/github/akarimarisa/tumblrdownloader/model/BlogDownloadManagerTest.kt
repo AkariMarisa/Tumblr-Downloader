@@ -204,7 +204,10 @@ class BlogDownloadManagerTest {
     }
 
     /** Drive the virtual worker while leaving real wall-clock room for Room IO. */
-    private suspend fun TestScope.advanceUntil(timeoutMs: Long = 5_000, predicate: () -> Boolean) {
+    private suspend fun TestScope.advanceUntil(
+        timeoutMs: Long = 5_000,
+        predicate: suspend () -> Boolean
+    ) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline && !predicate()) {
             testScheduler.advanceUntilIdle()
@@ -493,5 +496,65 @@ class BlogDownloadManagerTest {
             remaining.size
         )
         assertEquals(DownloadStatus.COMPLETED, remaining.single().status)
+    }
+
+    @Test
+    fun enqueueSameBlogReusesOneCardAtTheTopAndKeepsItsProgress() = runTest(testDispatcher) {
+        DownloadHistoryStore.clear(app)
+        BlogDownloadJobStore.clear(app)
+        val gateway = FakeGateway()
+        val manager = BlogDownloadManager.forTest(app, gateway, stateManager, testDispatcher)
+
+        // First run of the blog under test.
+        assertTrue(manager.enqueueBlog("https://www.tumblr.com/bonesbunns", BlogDownloadOptions(forceLongBlog = true)))
+        advanceUntil {
+            manager.jobs.value.size == 1 &&
+                manager.jobs.value.first().state() == BlogJobState.DONE
+        }
+        val jobId = manager.jobs.value.first().jobId
+        val itemsAfterFirstRun = stateManager.items.value.size
+        assertTrue("first run must enqueue media", itemsAfterFirstRun > 0)
+
+        // Keep one download completed so the second run has progress to preserve.
+        val completed = stateManager.items.value.first()
+        stateManager.serviceProgressListener.onDownloadUpdate(
+            completed.copy(status = DownloadStatus.COMPLETED, progress = 100)
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        // The rescan dedupes against persisted history, so wait for the first
+        // run's source URLs to reach the store (real IO, not on the scheduler).
+        advanceUntil { DownloadHistoryStore.loadSourceUrls(app).isNotEmpty() }
+
+        // A second blog pushed below it, so "back to the top" is observable.
+        assertTrue(manager.enqueueBlog("https://www.tumblr.com/otherblog", BlogDownloadOptions(forceLongBlog = true)))
+        advanceUntil {
+            manager.jobs.value.size == 2 &&
+                manager.jobs.value.first().blogName == "otherblog" &&
+                manager.jobs.value.first().state() == BlogJobState.DONE
+        }
+
+        // Re-download the same blog: one card only, reused and moved up.
+        assertTrue(manager.enqueueBlog("https://www.tumblr.com/bonesbunns", BlogDownloadOptions(forceLongBlog = true)))
+        assertEquals("a blog must never get a second card", 2, manager.jobs.value.size)
+        val reused = manager.jobs.value.first()
+        assertEquals("the existing card is reused, not recreated", jobId, reused.jobId)
+        assertEquals("the card jumps to the top of the list", "bonesbunns", reused.blogName)
+        assertEquals("the other blog's card is pushed down", "otherblog", manager.jobs.value[1].blogName)
+
+        advanceUntil { manager.jobs.value.first().state() == BlogJobState.DONE }
+
+        val kept = stateManager.items.value.first { it.id == completed.id }
+        assertEquals("progress must not reset", DownloadStatus.COMPLETED, kept.status)
+        assertEquals(100, kept.progress)
+        assertEquals(
+            "the rescan must not re-download or duplicate anything",
+            itemsAfterFirstRun,
+            stateManager.items.value.size
+        )
+        assertTrue(
+            "posts downloaded before are skipped by the rescan",
+            manager.jobs.value.first().postsSkipped > 0
+        )
     }
 }
