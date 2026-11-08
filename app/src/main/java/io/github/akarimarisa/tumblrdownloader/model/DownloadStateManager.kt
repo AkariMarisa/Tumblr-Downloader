@@ -69,9 +69,19 @@ class DownloadStateManager private constructor(private val app: Application) {
                 instance ?: DownloadStateManager(app).also { instance = it }
             }
 
-        /** Fresh, isolated instance for unit tests only. */
+        /**
+         * Fresh, isolated instance for unit tests only.
+         *
+         * Persistence is pinned to [Dispatchers.Main], which tests swap for a
+         * `TestDispatcher` via `Dispatchers.setMain`. That keeps every history
+         * write inside `advanceUntilIdle()`: with a real-IO writer, a save
+         * scheduled by one test can land *after* the next test cleared the
+         * Robolectric-backed store the two tests share, and the next test's
+         * scan then skips every post it considers already downloaded.
+         */
         @VisibleForTesting
-        internal fun forTest(app: Application): DownloadStateManager = DownloadStateManager(app)
+        internal fun forTest(app: Application): DownloadStateManager =
+            DownloadStateManager(app).also { it.persistIo = Dispatchers.Main }
 
         /** Minimum interval before a progress event can trigger persistence — a low-frequency snapshot so high-frequency progress cannot starve the disk writes. */
         private const val PERSIST_PROGRESS_INTERVAL_MS = 5_000L
@@ -136,8 +146,10 @@ class DownloadStateManager private constructor(private val app: Application) {
     private val scope = CoroutineScope(Dispatchers.Main)
 
     /**
-     * Dispatcher for history writes. Tests swap this for the test dispatcher
-     * so `advanceUntilIdle` can observe persistence deterministically.
+     * Dispatcher the history-write job runs on (launch target and disk hop).
+     * Tests swap this for the test dispatcher so `advanceUntilIdle` can observe
+     * persistence deterministically; in production it is [Dispatchers.IO], which
+     * is also what keeps the write independent of a busy main thread.
      */
     internal var persistIo: CoroutineDispatcher = Dispatchers.IO
 
@@ -947,10 +959,15 @@ class DownloadStateManager private constructor(private val app: Application) {
         // issue #24) is not silently dropped when no further command arrives.
         persistJob?.let { if (it.isActive) return }
         dirty = false
-        persistJob = scope.launch {
+        // Launched *on* persistIo rather than on the main-confined scope: during
+        // a large blog scan the command loop can keep the main thread busy for
+        // long stretches, and a persist job parked behind it never ran — the
+        // history snapshot froze (measured: 8 238 queued items, only 699
+        // restored after a restart).
+        persistJob = scope.launch(persistIo) {
             try {
                 delay(100)
-                // Counted before the IO hop: the throttle this counter tests is
+                // Counted before the write: the throttle this counter tests is
                 // about scheduling the write, and advanceUntilIdle cannot wait
                 // for a real IO task.
                 persistWriteCount += 1
@@ -962,10 +979,17 @@ class DownloadStateManager private constructor(private val app: Application) {
                 // flight left dirty = true with no scheduled write (the
                 // entry guard above returns while a job is active). Clear the
                 // slot and re-schedule so the latest _items always reach disk.
-                persistJob = null
-                lastPersistAtMillis = SystemClock.elapsedRealtime()
-                if (dirty) {
-                    persistDirty()
+                // Bookkeeping returns to the main thread on purpose: dirty,
+                // persistJob and lastPersistAtMillis belong to the command
+                // loop, and mutations can only originate there — so re-checking
+                // them here stays race-free while the save itself no longer
+                // depends on main being idle.
+                withContext(Dispatchers.Main) {
+                    persistJob = null
+                    lastPersistAtMillis = SystemClock.elapsedRealtime()
+                    if (dirty) {
+                        persistDirty()
+                    }
                 }
             }
         }
