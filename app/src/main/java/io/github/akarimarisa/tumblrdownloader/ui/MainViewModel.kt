@@ -45,7 +45,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ── download state manager (sequential, race-free) ────────────────
     // Process-wide singleton — there must be exactly ONE state owner per
     // process.  MainViewModel is constructed once per hosting Activity
-    // (MainActivity AND SettingsActivity each have their own instance), so
+    // (MainActivity AND SettingsDetailActivity each have their own instance), so
     // a per-instance DownloadStateManager would restore and re-persist its
     // own snapshot on every Settings visit (racing the live one) and
     // reintroduce the registration-order bugs behind issue #24.
@@ -58,7 +58,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Called from MainActivity.onResume() so the visible screen always
      * receives download updates regardless of which ViewModel was
      * constructed first.  Safe to call repeatedly (resume happens on every
-     * return to the screen); SettingsActivity's ViewModel never claims the
+     * return to the screen); SettingsDetailActivity's ViewModel never claims the
      * slot, so the download list stays live even while Settings is on top.
      *
      * The slot is intentionally NEVER released by a ViewModel: the state

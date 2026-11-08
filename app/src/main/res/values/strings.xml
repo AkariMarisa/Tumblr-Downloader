@@ -117,10 +117,15 @@
     <!-- Account -->
     <string name="status_online">Online</string>
 
-    <!-- Settings categories -->
-    <string name="settings_category_system">System</string>
+    <!-- Settings categories: first level of the menu, each opens a sub-screen -->
     <string name="settings_category_download">Download</string>
-    <string name="settings_category_session">Session</string>
+    <string name="settings_category_download_summary">Directory, parallelism, speed limit, clipboard detection</string>
+    <string name="settings_category_quality">Media quality</string>
+    <string name="settings_category_quality_summary">Image and video rendition</string>
+    <string name="settings_category_blog_scan">Blog scan</string>
+    <string name="settings_category_blog_scan_summary">Request interval and long-blog confirmation</string>
+    <string name="settings_category_interface">Interface</string>
+    <string name="settings_category_interface_summary">Language and theme</string>
     <string name="download_directory_title">Download directory</string>
     <string name="pref_max_concurrent_downloads">Max concurrent downloads</string>
     <string name="concurrent_downloads_value">%1$d tasks</string>

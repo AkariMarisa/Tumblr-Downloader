@@ -58,7 +58,7 @@ class DownloadStateManager private constructor(private val app: Application) {
          * Process-wide shared instance.
          *
          * MainViewModel is constructed once per hosting Activity — both
-         * MainActivity and SettingsActivity have their own — and a second
+         * MainActivity and SettingsDetailActivity have their own — and a second
          * live instance would restore and re-persist its OWN snapshot
          * (racing the visible instance's persistence via replaceAll) and
          * reintroduce the registration-order bugs behind issue #24

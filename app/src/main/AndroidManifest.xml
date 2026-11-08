@@ -51,6 +51,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".ui.settings.SettingsDetailActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".ui.OnboardingActivity"
             android:exported="false" />
 

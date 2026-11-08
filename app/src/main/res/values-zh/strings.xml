@@ -117,10 +117,15 @@
     <!-- Account -->
     <string name="status_online">在线</string>
 
-    <!-- Settings categories -->
-    <string name="settings_category_system">系统</string>
+    <!-- Settings categories: first level of the menu, each opens a sub-screen -->
     <string name="settings_category_download">下载</string>
-    <string name="settings_category_session">会话</string>
+    <string name="settings_category_download_summary">目录、并行数、限速、剪贴板识别</string>
+    <string name="settings_category_quality">媒体画质</string>
+    <string name="settings_category_quality_summary">图片与视频清晰度</string>
+    <string name="settings_category_blog_scan">博客扫描</string>
+    <string name="settings_category_blog_scan_summary">请求间隔与长博客确认</string>
+    <string name="settings_category_interface">界面</string>
+    <string name="settings_category_interface_summary">语言与主题</string>
     <string name="download_directory_title">下载目录</string>
     <string name="pref_max_concurrent_downloads">最大并行下载数</string>
     <string name="concurrent_downloads_value">%1$d 个任务</string>
