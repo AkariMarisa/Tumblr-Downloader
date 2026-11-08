@@ -13,6 +13,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import io.github.akarimarisa.tumblrdownloader.utils.CompletedMediaStore
 import io.github.akarimarisa.tumblrdownloader.utils.ParsedTumblrMedia
 
 /**
@@ -36,10 +37,14 @@ class DownloadStateManagerTest {
         Dispatchers.setMain(testDispatcher)
         app = ApplicationProvider.getApplicationContext()
         stateManager = DownloadStateManager.forTest(app)
+        // Keep persistence on the test scheduler so advanceUntilIdle observes
+        // the write (issue #24).
+        stateManager.persistIo = testDispatcher
     }
 
     @After
     fun tearDown() {
+        stateManager.persistIo = Dispatchers.IO
         Dispatchers.resetMain()
     }
 
@@ -679,6 +684,82 @@ class DownloadStateManagerTest {
         // The pre-existing paused rows must have stayed paused.
         assertEquals(DownloadStatus.PAUSED, stateManager.items.value.find { it.id == "d1" }?.status)
         assertEquals(DownloadStatus.PAUSED, stateManager.items.value.find { it.id == "d2" }?.status)
+    }
+
+    // ── issue #24: finished downloads must not read as 0% ─────────────
+
+    @Test
+    fun completedProgress_isPersistedImmediately() = runTest(testDispatcher) {
+        // A download that finishes inside the 5s progress-persist window used
+        // to have its terminal COMPLETED/100 snapshot swallowed by the
+        // throttle: the process then restarted from the last (0%) snapshot.
+        stateManager.restore(listOf(item("c1", status = DownloadStatus.DOWNLOADING)))
+        testDispatcher.scheduler.advanceUntilIdle()
+        val writesAfterRestore = stateManager.persistWriteCount
+
+        // A mid-download progress event inside the throttle window is a
+        // low-frequency snapshot only — it must not force a write.
+        stateManager.serviceProgressListener.onDownloadUpdate(
+            item("c1").copy(status = DownloadStatus.DOWNLOADING, progress = 40)
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertEquals(
+            "progress events inside the throttle window stay a snapshot",
+            writesAfterRestore,
+            stateManager.persistWriteCount
+        )
+
+        // The terminal snapshot, however, must be written right away.
+        stateManager.serviceProgressListener.onDownloadUpdate(
+            item("c1").copy(status = DownloadStatus.COMPLETED, progress = 100)
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(DownloadStatus.COMPLETED, stateManager.items.value.single().status)
+        assertEquals(100, stateManager.items.value.single().progress)
+
+        // DownloadHistoryStore.save hops to Dispatchers.IO internally, so the
+        // write lands on a real thread: drive the test scheduler in bounded
+        // polls until it completes. Without the completion-bypass branch this
+        // count never rises and the assertion fails after the poll budget.
+        var polls = 0
+        while (stateManager.persistWriteCount <= writesAfterRestore && polls < 100) {
+            Thread.sleep(20)
+            testDispatcher.scheduler.advanceUntilIdle()
+            polls++
+        }
+        assertTrue(
+            "COMPLETED must bypass the progress-persist throttle",
+            stateManager.persistWriteCount > writesAfterRestore
+        )
+    }
+
+    @Test
+    fun restore_promotesItemsWhoseFileIsAlreadyOnDisk() = runTest(testDispatcher) {
+        // Issue #24: the terminal COMPLETED callback is dropped when the
+        // service's listener slot is empty during a process/UI rebuild, so the
+        // persisted row keeps an old snapshot (FAILED/0%) while the file is
+        // written.  Restore must trust the disk (CompletedMediaStore).
+        val lost = item("lost", status = DownloadStatus.FAILED)
+        val untouched = item("untouched", status = DownloadStatus.FAILED)
+        CompletedMediaStore.markCompleted(app, lost.mediaUrl)
+
+        stateManager.restore(listOf(lost, untouched))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val restored = stateManager.items.value.associateBy { it.id }
+        assertEquals(
+            "a file already on disk is COMPLETED, whatever the history said",
+            DownloadStatus.COMPLETED,
+            restored["lost"]?.status
+        )
+        assertEquals(100, restored["lost"]?.progress)
+        assertNull(restored["lost"]?.errorMessage)
+        assertEquals(
+            "items without a completed marker are left alone",
+            DownloadStatus.FAILED,
+            restored["untouched"]?.status
+        )
     }
 
     // ── helpers ─────────────────────────────────────────────────────────

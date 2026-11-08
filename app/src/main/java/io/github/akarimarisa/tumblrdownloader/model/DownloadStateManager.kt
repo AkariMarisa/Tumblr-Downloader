@@ -17,6 +17,7 @@ import io.github.akarimarisa.tumblrdownloader.utils.LocaleHelper
 import io.github.akarimarisa.tumblrdownloader.utils.ParsedTumblrMedia
 import io.github.akarimarisa.tumblrdownloader.utils.TumblrParser
 import io.github.akarimarisa.tumblrdownloader.utils.TumblrShareParseResult
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -133,6 +134,12 @@ class DownloadStateManager private constructor(private val app: Application) {
 
     private val cmdCh = Channel<Cmd>(Channel.UNLIMITED)
     private val scope = CoroutineScope(Dispatchers.Main)
+
+    /**
+     * Dispatcher for history writes. Tests swap this for the test dispatcher
+     * so `advanceUntilIdle` can observe persistence deterministically.
+     */
+    internal var persistIo: CoroutineDispatcher = Dispatchers.IO
 
     init {
         scope.launch {
@@ -356,7 +363,14 @@ class DownloadStateManager private constructor(private val app: Application) {
         // progress only gets a low-frequency snapshot (5s), and no new job is
         // scheduled while one is already running (the running job reads the
         // latest _items anyway).
+        // Issue #24: a terminal COMPLETED transition is exempt from the
+        // progress throttle — a download shorter than PERSIST_PROGRESS_INTERVAL_MS
+        // would otherwise never write its final 100% snapshot, so a restart
+        // restored the row at its old (0%) checkpoint while the file was on disk.
         if (cmd !is Cmd.Progress) {
+            persistDirty()
+        } else if (completedPersistPending) {
+            completedPersistPending = false
             persistDirty()
         } else if (SystemClock.elapsedRealtime() - lastPersistAtMillis >= PERSIST_PROGRESS_INTERVAL_MS) {
             persistDirty()
@@ -430,15 +444,41 @@ class DownloadStateManager private constructor(private val app: Application) {
     private fun processRestore(items: List<DownloadItem>) {
         val existing = _items.value
         val existingNormIds = existing.map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }.toSet()
-        val merged = (existing + items.filterNot {
-            DownloadUtils.normalizeMediaIdentity(it.mediaUrl) in existingNormIds
-        }).sortedByDescending { it.createdAt }
+        val merged = (existing + items
+            .filterNot { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) in existingNormIds }
+            .map { reconcileRestoredItemWithDisk(it) }
+        ).sortedByDescending { it.createdAt }
         android.util.Log.d("DownloadSM", "processRestore: ${existing.size} existing + ${items.size} history = ${merged.size} merged")
         _items.value = merged
         dirty = true
         // ponytail: do NOT auto-start restored items — files from the previous
         // session still exist on disk.  Auto-starting would create "(1)" copies
         // via MediaStore's name conflict resolution.  User clicks Start manually.
+    }
+
+    /**
+     * Issue #24: trust the disk over a restored history snapshot.
+     *
+     * The service's terminal COMPLETED callback is dropped when the
+     * progress-listener slot is empty or owned by a dead ViewModel (e.g. the
+     * process/UI was rebuilt while the download finished), so the persisted row
+     * can keep an old checkpoint (0%) or a "restored_state_invalid" FAILED
+     * marker even though the bytes were written.  [CompletedMediaStore] is only
+     * ever set after a file lands in MediaStore, so an existing mark promotes
+     * the row back to COMPLETED/100 instead of showing 0% forever.
+     */
+    private fun reconcileRestoredItemWithDisk(item: DownloadItem): DownloadItem {
+        if (item.status == DownloadStatus.COMPLETED) return item
+        if (!CompletedMediaStore.isCompleted(app, item.mediaUrl)) return item
+        android.util.Log.d(
+            "DownloadSM",
+            "processRestore: ${item.id.take(8)}... was ${item.status}/${item.progress}% but the file is on disk — promoting to COMPLETED"
+        )
+        return item.copy(
+            status = DownloadStatus.COMPLETED,
+            progress = 100,
+            errorMessage = null
+        )
     }
 
     // ── Start / Resume ──────────────────────────────────────────────────
@@ -645,6 +685,11 @@ class DownloadStateManager private constructor(private val app: Application) {
 
     // ── Progress callback (from service) ────────────────────────────────
     private fun processProgress(update: DownloadItem) {
+        // Issue #24: a terminal update must reach disk even inside the
+        // progress-persist throttle window (consumed by the command loop).
+        if (update.status == DownloadStatus.COMPLETED) {
+            completedPersistPending = true
+        }
         android.util.Log.d("DownloadSM", "processProgress: id=${update.id.take(8)}... st=${update.status} prog=${update.progress} dl=${update.downloadedBytes}")
         _items.value = _items.value.map { existing ->
             if (existing.id != update.id) return@map existing
@@ -874,6 +919,15 @@ class DownloadStateManager private constructor(private val app: Application) {
     // ── Persistence ─────────────────────────────────────────────────────
 
     private var dirty = false
+    /**
+     * Issue #24: set when a terminal COMPLETED update arrives so the command
+     * loop can bypass the progress-persist throttle for it.
+     */
+    private var completedPersistPending = false
+
+    /** Completed history writes; exposed for tests (issue #24). */
+    var persistWriteCount: Int = 0
+        private set
     private var persistJob: Job? = null
 
     /** Milliseconds since the last actual disk write — caps how often progress events can trigger persistence. */
@@ -881,20 +935,36 @@ class DownloadStateManager private constructor(private val app: Application) {
 
     /** Debounced persist — coalesces rapid mutations into one disk write. */
     private fun persistDirty() {
-        if (!dirty) return
         // If a write job is already running, let it finish: it saves the
         // _items.value at the time of execution, so there is no need to cancel
         // and restart — cancelling was exactly what caused the starvation.
+        // A write job is already in flight. Do not cancel it (cancelling
+        // caused starvation); instead rely on dirty staying true and the
+        // running job's finally block scheduling the follow-up write, so a
+        // mutation that lands mid-save (e.g. the terminal COMPLETED of
+        // issue #24) is not silently dropped when no further command arrives.
         persistJob?.let { if (it.isActive) return }
         dirty = false
         persistJob = scope.launch {
             try {
                 delay(100)
-                withContext(Dispatchers.IO) {
+                // Counted before the IO hop: the throttle this counter tests is
+                // about scheduling the write, and advanceUntilIdle cannot wait
+                // for a real IO task.
+                persistWriteCount += 1
+                withContext(persistIo) {
                     DownloadHistoryStore.save(app, _items.value)
                 }
             } finally {
+                // Issue #24: mutations that arrived while this job was in
+                // flight left dirty = true with no scheduled write (the
+                // entry guard above returns while a job is active). Clear the
+                // slot and re-schedule so the latest _items always reach disk.
+                persistJob = null
                 lastPersistAtMillis = SystemClock.elapsedRealtime()
+                if (dirty) {
+                    persistDirty()
+                }
             }
         }
     }
