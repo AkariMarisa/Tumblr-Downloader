@@ -52,6 +52,8 @@
 - **内置登录** — WebView 登录流程，可访问私密/受限帖子
 - **Cookie 持久化** — 登录态本地存储，重启后可复用；含安全提示
 - **下载队列** — 顺序下载，支持暂停/继续/重试/限速
+- **批量下载** — 扫描整个博客，每个博客一张可恢复的任务卡片
+- **下载前勾选** — 逐条保留/取消媒体，可按图片/视频/GIF 全选，或全部跳过
 - **历史记录** — 下载记录持久化，重启不丢失
 - **媒体查看** — 在应用内查看已下载的图片和视频
 - **自定义目录** — 通过 Storage Access Framework 选择任意保存位置
@@ -75,30 +77,40 @@
 ```
 app/src/main/java/io/github/akarimarisa/tumblrdownloader/
 ├── TumblrDownloaderApplication.kt      # 应用入口
-├── MainActivity.kt                     # 主 Activity（单 Activity + TabLayout）
+├── MainActivity.kt                     # 主界面：下载/下载列表 Tab、分享入口
 ├── MainViewModel.kt                    # 共享 ViewModel，连接 UI 与状态管理
 ├── model/
 │   ├── DownloadItem.kt                 # 下载项数据类
 │   ├── DownloadStateManager.kt         # 顺序命令处理器，负责下载队列状态
+│   ├── BlogDownloadManager.kt          # 整博客扫描与批量任务编排
+│   ├── MediaPreviewSelection.kt        # 下载前媒体勾选规则
 │   └── MediaType / DownloadStatus      # 枚举
 ├── service/
 │   └── DownloadService.kt              # 前台服务，实际执行下载
 ├── ui/
 │   ├── download/
 │   │   ├── DownloadFragment.kt         # 输入 URL + 触发下载
-│   │   ├── DownloadsFragment.kt        # 下载队列列表
-│   │   └── DownloadsAdapter.kt         # RecyclerView 适配器
+│   │   ├── DownloadsFragment.kt        # 下载队列 + 博客任务卡片
+│   │   ├── DownloadsAdapter.kt         # RecyclerView 适配器（单项媒体）
+│   │   ├── BlogJobAdapter.kt           # 博客批量任务卡片
+│   │   ├── BlogDetailActivity.kt       # 单个博客的下载项详情页
+│   │   ├── MediaPreviewDialog.kt       # 下载前媒体确认/勾选弹窗
+│   │   └── MediaPreviewAdapter.kt      # 带缩略图的勾选行
 │   ├── auth/
 │   │   └── TumblrLoginActivity.kt      # WebView 登录
 │   ├── media/
 │   │   └── MediaViewerActivity.kt      # 查看已下载的图片/视频
 │   ├── settings/
-│   │   └── SettingsActivity.kt         # 下载目录、Cookie、语言等设置
+│   │   ├── SettingsActivity.kt         # 设置分类菜单
+│   │   └── SettingsDetailActivity.kt   # 分类下的具体设置页
 │   ├── about/
 │   │   └── AboutActivity.kt
 │   └── OnboardingActivity.kt           # 首次启动引导
+├── db/                                 # Room 数据库：历史、Cookie、博客任务
 └── utils/
     ├── TumblrParser.kt                 # 解析分享链接 → 媒体 URL
+    ├── BlogFeedParser.kt               # 匿名博客分页接口解析
+    ├── BlogDownloadJobStore.kt         # 持久化博客任务游标/卡片
     ├── TumblrCookieStore.kt            # 持久化/恢复 WebView Cookie
     ├── TumblrAccountStore.kt           # 获取和缓存账户信息
     ├── DownloadUtils.kt                # 文件命名、目录辅助
@@ -111,7 +123,7 @@ app/src/main/java/io/github/akarimarisa/tumblrdownloader/
 
 ## 架构
 
-采用 **单 Activity + Fragment** 模式，配合 **MVVM** 架构。
+采用 **多 Activity + Fragment** 模式，配合 **MVVM** 架构：`MainActivity` 承载下载/下载列表 Tab 与分享、剪贴板入口；登录、媒体查看、设置、博客详情各自使用独立 Activity。
 
 ```
 用户输入 → DownloadFragment
@@ -131,6 +143,8 @@ TumblrParser      DownloadService
 - **顺序命令处理器** (`DownloadStateManager`)：所有状态变更通过单一协程通道处理，消除用户操作与下载回调之间的竞态条件。
 - **两阶段解析**：先尝试 Tumblr 的 oEmbed API（轻量），再回退到完整页面 HTML 解析。JSON 结构化数据采用路径过滤而非脆弱的扩展名匹配。
 - **Cookie 桥接**：WebView 登录后的 Cookie 通过 `CookieManager` 持久化，与解析/下载用的 OkHttp 客户端共享。
+- **批量下载器**：`BlogDownloadManager` 逐页遍历匿名 feed 接口，为每个博客保存断点游标，把媒体打上任务 id，并在再次下载同一博客时复用原卡片。
+- **下载前勾选**：解析出多个新媒体时弹出选择框（缩略图、逐条勾选、按类型全选、全部跳过/全部下载）。剪贴板自动检测保持自动入队；手动输入和分享会先确认。
 
 ---
 
@@ -232,6 +246,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 - [x] **并行下载**：目前仅支持单任务顺序下载，增加可配置的并行下载数（2-3 个）
 - [x] **批量下载**：一键下载整个博客的媒体（遍历分页接口，去重 + 断点续传，支持取消/恢复）。入口：在主界面打开形如 `https://blog.tumblr.com` / `https://www.tumblr.com/blog` 的博客链接直接入队；标签页与帖子合集暂未覆盖
+- [x] **下载前媒体勾选**：多媒帖入队前先预览，逐条保留/取消，按图片/视频/GIF 全选，然后下载所选项或全部跳过。单个媒体的帖子仍直接入队；剪贴板自动检测保持自动。
+- [x] **同一博客单卡片**：再次批量下载同一博客时复用原卡片、置顶并保留已完成进度
 - [x] **视频画质选择**：当存在多个清晰度时，让用户选择 480p / 720p / 1080p
 - [x] **下载速度显示**：在通知栏和下载列表中显示实时速度（KB/s）
 - [ ] **关注博主频道与自动扫描下载**：用户可配置关注的 Tumblr 博主，设置自动扫描间隔（如每小时/每天），应用自动下载最新帖子媒体。需要 AccessibilityService 保活实现持续后台运行（WorkManager 为降级方案）。含新数据表 `followed_blogs`、`scan_config`，需扩展 `DownloadHistoryEntity` 增加 `blogName`/`tags` 字段
@@ -257,8 +273,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - [x] **Gradle wrapper**：添加 `gradlew` 以便无需系统安装 Gradle 即可构建
 - [x] **CI/CD**：配置了 GitHub Actions，每次 push master 自动构建 APK 并发布 Release
 - [x] **包名重命名**：已改为 `io.github.akarimarisa.tumblrdownloader`
-- [x] **Room DAO + 迁移测试**：19 个单元测试覆盖 `DownloadHistoryDao`（7）、`CookieDao`（6）及 SharedPreferences 迁移（6）——为 101 个 JVM 单元测试的一部分（Robolectric + Room in-memory）
-- [x] **引擎/核心单元测试**：已覆盖 `DownloadStateManager`（16）、`DownloadItem`、`MediaQualitySelector`（14）、`ThemeMode`（6）、`DownloadService` 网络/通知/连接性行为（33）、`TumblrLoginTrackerBlocking`（11）
+- [x] **Room DAO + 迁移测试**：覆盖 `DownloadHistoryDao`、`CookieDao`、SharedPreferences 迁移及博客任务数据库迁移（Robolectric + Room in-memory）
+- [x] **引擎/核心单元测试**：168 个 JVM 测试，覆盖 `DownloadStateManager`、博客扫描/解析与任务卡片、下载前勾选规则、`DownloadItem`、`MediaQualitySelector`、`ThemeMode`、`DownloadService` 网络/通知/连接性行为、`TumblrLoginTrackerBlocking`
 - [ ] **其余测试缺口**：`TumblrParser` 单元测试与完整下载流程的 instrumentation 测试仍待补充
 - [x] **贡献指南**：已创建 `CONTRIBUTING.md`/`CONTRIBUTING_zh.md` 与 `CODE_OF_CONDUCT.md`/`CODE_OF_CONDUCT_zh.md`（中英双语）
 - [x] **截图**：在 README 中添加应用截图
@@ -283,8 +299,11 @@ cd Tumblr-Downloader
 # 构建
 ./scripts/build_local.sh
 
-# 运行测试（待补充）
-./gradlew test
+# 运行 JVM 单元测试
+./gradlew testDebugUnitTest
+
+# Lint + Debug 构建
+./gradlew lintDebug assembleDebug
 ```
 
 ---

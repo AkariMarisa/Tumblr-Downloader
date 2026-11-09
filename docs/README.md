@@ -52,6 +52,8 @@ An Android app that downloads images and videos from Tumblr posts. Supports Andr
 - **Login flow**: built-in WebView-based login to access private/restricted posts
 - **Cookie persistence**: login cookies stored locally with security notice; survives app restart
 - **Download queue**: sequential download with pause/resume, retry, and rate limiting
+- **Batch download**: scan a whole blog and keep one resumable job card per blog
+- **Pre-download picker**: keep/drop each media item, select by type (images/videos/GIFs), or skip all
 - **History**: download records survive app restarts
 - **Media viewer**: view downloaded images and videos in-app
 - **Custom download directory**: save to any folder via Storage Access Framework
@@ -72,30 +74,40 @@ An Android app that downloads images and videos from Tumblr posts. Supports Andr
 ```
 app/src/main/java/io/github/akarimarisa/tumblrdownloader/
 ├── TumblrDownloaderApplication.kt      # App entry point
-├── MainActivity.kt                     # Single-activity host with TabLayout
+├── MainActivity.kt                     # Main host: download/downloads tabs, share entry
 ├── MainViewModel.kt                    # Shared ViewModel bridging UI and state
 ├── model/
 │   ├── DownloadItem.kt                 # Data class for a single download
 │   ├── DownloadStateManager.kt         # Sequential command processor for queue
+│   ├── BlogDownloadManager.kt          # Full-blog scan + batch job orchestration
+│   ├── MediaPreviewSelection.kt        # Pre-download picker selection rules
 │   └── MediaType / DownloadStatus      # Enums
 ├── service/
 │   └── DownloadService.kt              # Foreground service for actual downloads
 ├── ui/
 │   ├── download/
 │   │   ├── DownloadFragment.kt         # Input URL + trigger download
-│   │   ├── DownloadsFragment.kt        # Download queue list
-│   │   └── DownloadsAdapter.kt         # RecyclerView adapter
+│   │   ├── DownloadsFragment.kt        # Download queue + blog job cards
+│   │   ├── DownloadsAdapter.kt         # RecyclerView adapter (single media)
+│   │   ├── BlogJobAdapter.kt           # Blog batch job cards
+│   │   ├── BlogDetailActivity.kt       # Per-blog item drill-down
+│   │   ├── MediaPreviewDialog.kt       # Pre-download confirmation picker
+│   │   └── MediaPreviewAdapter.kt      # Picker rows with thumbnails
 │   ├── auth/
 │   │   └── TumblrLoginActivity.kt      # WebView-based Tumblr login
 │   ├── media/
 │   │   └── MediaViewerActivity.kt      # View downloaded images/videos
 │   ├── settings/
-│   │   └── SettingsActivity.kt         # Download dir, cookies, language
+│   │   ├── SettingsActivity.kt         # Settings category menu
+│   │   └── SettingsDetailActivity.kt   # Focused option screens
 │   ├── about/
 │   │   └── AboutActivity.kt
 │   └── OnboardingActivity.kt           # First-launch walkthrough
+├── db/                                 # Room database: history, cookies, blog jobs
 └── utils/
     ├── TumblrParser.kt                 # Parse share URLs → media URLs
+    ├── BlogFeedParser.kt               # Anonymous blog feed pagination
+    ├── BlogDownloadJobStore.kt         # Persist blog job cursors/cards
     ├── TumblrCookieStore.kt            # Persist/restore WebView cookies
     ├── TumblrAccountStore.kt           # Fetch & cache account info
     ├── DownloadUtils.kt                # File naming, directory helpers
@@ -108,7 +120,7 @@ app/src/main/java/io/github/akarimarisa/tumblrdownloader/
 
 ## Architecture
 
-The app follows a **single-activity + fragments** pattern with **MVVM**.
+The app follows a **multi-activity + fragments** pattern with **MVVM**: `MainActivity` hosts the download/downloads tabs and share/clipboard entry, while dedicated activities handle login, media viewing, settings and per-blog details.
 
 ```
 User Input → DownloadFragment
@@ -128,6 +140,8 @@ Key design decisions:
 - **Sequential command processor** (`DownloadStateManager`): All state mutations go through a single coroutine channel, eliminating race conditions between user actions and download progress callbacks.
 - **Two-phase parsing**: First tries Tumblr's oEmbed API (lightweight), then falls back to full page HTML parsing. JSON-structured data uses path-based filtering rather than fragile extension matching.
 - **Cookie bridge**: WebView login cookies are persisted via `CookieManager` and shared with the OkHttp client used for parsing and downloading.
+- **Batch downloader**: `BlogDownloadManager` walks the anonymous feed API page by page, persists a resume cursor per blog, tags every item with its job id, and reuses one card per blog instead of creating duplicates.
+- **Pre-download picker**: parsed posts with more than one fresh media item open a selection dialog (thumbnails, per-item checkboxes, per-type select-all, skip/download-all). Clipboard auto-detect stays automatic; manual input and shares ask first.
 
 ---
 
@@ -227,7 +241,9 @@ For private or restricted posts:
 
 - [ ] **Drawer avatar: navigate to user settings when logged in**: Currently clicking the avatar only opens the login page. When already logged in, the login page shows the dashboard (confusing). Should open user settings or profile instead.
 - [x] **Parallel downloads**: Currently sequential only (one at a time). Allow configurable parallel downloads (2-3).
-- [ ] **Batch download**: Download all media from a blog, tag, or collection of posts.
+- [x] **Batch download**: Download all media from a blog (paged feed API, dedupe + resumable cursor, pause/cancel/resume). Tags and post collections are not covered yet.
+- [x] **Pre-download media picker**: Before queueing a multi-media post, preview each file, keep/drop items individually, select all images/videos/GIFs, then download the selection or skip everything. One-media posts queue directly; clipboard auto-detect remains automatic.
+- [x] **One card per blog**: Batch-downloading the same blog again reuses its existing card, moves it to the top and keeps completed progress.
 - [x] **Video quality selection**: Let users prefer 480p / 720p / 1080p when multiple renditions exist.
 - [x] **Download speed display**: Show real-time speed (KB/s) in notifications and download list.
 - [ ] **Followed blogs & auto-scan download**: Let users follow Tumblr blogs and configure auto-scan intervals (e.g. hourly / daily). App automatically downloads latest post media. Requires AccessibilityService for persistent background execution (WorkManager as fallback). New tables `followed_blogs`, `scan_config`; `DownloadHistoryEntity` extended with `blogName`/`tags` columns
@@ -253,8 +269,8 @@ For private or restricted posts:
 - [x] **Gradle wrapper**: Add `gradlew` so builds don't require a system Gradle installation.
 - [x] **CI/CD**: GitHub Actions for automated build, lint, and test on every PR.
 - [x] **Package name**: 包名已改为 `io.github.akarimarisa.tumblrdownloader`.
-- [x] **Room DAO + migration tests**: 19 unit tests for `DownloadHistoryDao` (7), `CookieDao` (6), and migration from SharedPreferences (6) — part of a 101-test JVM suite (Robolectric + Room in-memory).
-- [x] **Engine/core unit tests**: `DownloadStateManager` (16), `DownloadItem`, `MediaQualitySelector` (14), `ThemeMode` (6), `DownloadService` network/notification/connectivity behavior (33), and `TumblrLoginTrackerBlocking` (11).
+- [x] **Room DAO + migration tests**: `DownloadHistoryDao`, `CookieDao`, SharedPreferences migration and the blog-job database migration (Robolectric + Room in-memory).
+- [x] **Engine/core unit tests**: 168 JVM tests covering `DownloadStateManager`, the blog scan/parser and job cards, the pre-download picker selection rules, `DownloadItem`, `MediaQualitySelector`, `ThemeMode`, `DownloadService` network/notification/connectivity behavior, and `TumblrLoginTrackerBlocking`.
 - [ ] **Remaining test gaps**: `TumblrParser` unit tests and instrumentation tests for the full download flow are still missing.
 - [x] **Contributing guide**: `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` (English + 中文).
 - [x] **Screenshots**: Add app screenshots to README.
@@ -279,8 +295,11 @@ cd Tumblr-Downloader
 # Build
 ./scripts/build_local.sh
 
-# Run tests (when available)
-./gradlew test
+# Run JVM unit tests
+./gradlew testDebugUnitTest
+
+# Lint + debug build
+./gradlew lintDebug assembleDebug
 ```
 
 ---
