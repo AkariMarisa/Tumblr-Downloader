@@ -1,12 +1,20 @@
-Tumblr Downloader is an Android app that lets you download images and videos from Tumblr posts.
+Tumblr Downloader is an Android app that lets you download images and videos from Tumblr posts, or entire blogs.
 
 Features:
 • Download media from Tumblr posts with a single link
+• Pre-download media picker: preview every file of a post, keep or drop items one by one, select all images / videos / GIFs, then download the selection or skip everything
+• Blog batch download: scan a whole blog and download its media, with per-blog progress cards, pause / resume / cancel and a resumable scan cursor
+• Re-downloading the same blog reuses its existing card instead of creating a duplicate
 • Automatic clipboard detection for Tumblr URLs
 • Share from other apps to start downloading
+• Configurable parallel downloads
+• Video quality selection (480p / 720p / 1080p) when several renditions exist
+• Configurable rate limit (speed cap and gap between tasks)
 • Built-in WebView login to access private/restricted posts
 • Persistent cookies for session reuse across restarts
 • Download queue with pause/resume/retry support
+• Download speed shown in the notification and the download list
+• Notification actions: pause or cancel directly from the notification
 • Download history with Room database persistence
 • Built-in media viewer for images and videos
 • Custom save directory via Storage Access Framework
