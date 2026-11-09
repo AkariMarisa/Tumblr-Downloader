@@ -27,6 +27,13 @@ class DownloadsFragment : Fragment() {
     private val binding get() = _binding!!
     private val viewModel: MainViewModel by activityViewModels()
 
+    // Latest data snapshots behind the empty state. The visibility must come
+    // from the data, not from adapter.itemCount: submitList applies its diff
+    // asynchronously, so itemCount is still stale on the very emission that
+    // empties the list — clearing all downloads then hid "暂无下载记录".
+    private var standaloneEmpty = true
+    private var blogCardsEmpty = true
+
     private val adapter = DownloadsAdapter(
         onClick = ::openViewer,
         onStartOrResume = { item -> viewModel.startOrResumeDownload(item.id) },
@@ -73,9 +80,9 @@ class DownloadsFragment : Fragment() {
                     // (BlogDetailActivity) — keep the main queue to standalone
                     // downloads only.
                     val visible = list.filter { it.batchId == null }
+                    standaloneEmpty = visible.isEmpty()
                     adapter.submitList(visible)
-                    binding.tvEmpty.visibility =
-                        if (visible.isEmpty() && blogJobAdapter.itemCount == 0) View.VISIBLE else View.GONE
+                    updateEmptyState()
                 }
             }
         }
@@ -104,11 +111,18 @@ class DownloadsFragment : Fragment() {
                     blogJobAdapter.submitList(cardUi)
                     binding.tvBlogSectionTitle.isVisible = cardUi.isNotEmpty()
                     binding.rvBlogJobs.isVisible = cardUi.isNotEmpty()
-                    binding.tvEmpty.visibility =
-                        if (cardUi.isEmpty() && adapter.itemCount == 0) View.VISIBLE else View.GONE
+                    blogCardsEmpty = cardUi.isEmpty()
+                    updateEmptyState()
                 }
             }
         }
+    }
+
+    /** Shows the empty state only when neither the queue nor the blog cards have rows. */
+    private fun updateEmptyState() {
+        val binding = _binding ?: return
+        binding.tvEmpty.visibility =
+            if (standaloneEmpty && blogCardsEmpty) View.VISIBLE else View.GONE
     }
 
     override fun onResume() {
