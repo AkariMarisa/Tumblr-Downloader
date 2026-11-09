@@ -232,4 +232,20 @@
     <string name="blog_detail_title">博客下载详情</string>
     <string name="blog_detail_empty">该博客任务暂无下载项</string>
     <string name="blog_detail_item_count">该博客共 %1$d 条</string>
+
+    <!-- Pre-download media picker -->
+    <string name="media_preview_title">选择要下载的媒体</string>
+    <string name="media_preview_summary">已选 %1$d/%2$d</string>
+    <string name="media_preview_count">%1$s（%2$d）</string>
+    <string name="media_preview_images">图片</string>
+    <string name="media_preview_videos">视频</string>
+    <string name="media_preview_gifs">GIF</string>
+    <string name="media_preview_select_all">全选</string>
+    <string name="media_preview_select_none">清空</string>
+    <string name="media_preview_download">下载</string>
+    <string name="media_preview_download_selected">下载（%1$d）</string>
+    <string name="media_preview_skip">跳过</string>
+    <string name="media_preview_type_image">图片</string>
+    <string name="media_preview_type_video">视频</string>
+    <string name="media_preview_type_gif">GIF</string>
 </resources>

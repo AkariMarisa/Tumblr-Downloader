@@ -232,4 +232,20 @@
     <string name="blog_detail_title">Blog download details</string>
     <string name="blog_detail_empty">No items for this blog job yet</string>
     <string name="blog_detail_item_count">%1$d items from this blog</string>
+
+    <!-- Pre-download media picker -->
+    <string name="media_preview_title">Choose what to download</string>
+    <string name="media_preview_summary">%1$d of %2$d selected</string>
+    <string name="media_preview_count">%1$s (%2$d)</string>
+    <string name="media_preview_images">Images</string>
+    <string name="media_preview_videos">Videos</string>
+    <string name="media_preview_gifs">GIFs</string>
+    <string name="media_preview_select_all">Select all</string>
+    <string name="media_preview_select_none">Clear</string>
+    <string name="media_preview_download">Download</string>
+    <string name="media_preview_download_selected">Download (%1$d)</string>
+    <string name="media_preview_skip">Skip</string>
+    <string name="media_preview_type_image">Image</string>
+    <string name="media_preview_type_video">Video</string>
+    <string name="media_preview_type_gif">GIF</string>
 </resources>

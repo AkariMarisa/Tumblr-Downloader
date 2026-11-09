@@ -12,7 +12,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import io.github.akarimarisa.tumblrdownloader.R
 import io.github.akarimarisa.tumblrdownloader.databinding.FragmentDownloadBinding
 import io.github.akarimarisa.tumblrdownloader.model.BlogDownloadOptions
@@ -45,6 +47,8 @@ class DownloadFragment : Fragment() {
     private val viewModel: MainViewModel by activityViewModels()
 
     private var loginLaunchPending = false
+    private var previewDialog: AlertDialog? = null
+    private var previewDialogId: String? = null
 
     private fun toastContext() = LocaleHelper.contextForAppLocale(requireContext())
 
@@ -75,7 +79,7 @@ class DownloadFragment : Fragment() {
             if (BlogFeedParser.isBlogUrl(url)) {
                 promptBlogOptions(url)
             } else {
-                val ok = viewModel.enqueueFromUrl(url)
+                val ok = viewModel.enqueueFromUrl(url, review = true)
                 if (!ok) {
                     LocalizedToast.show(toastContext(), R.string.invalid_url, Toast.LENGTH_SHORT)
                 } else {
@@ -132,6 +136,38 @@ class DownloadFragment : Fragment() {
                         showLoading(false)
                         LocalizedToast.show(toastContext(), event.text, Toast.LENGTH_LONG)
                     }
+                }
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.mediaPreview.collect { request ->
+                    // A null request means the picker was confirmed/cancelled
+                    // (possibly from a previous view instance) — close ours.
+                    if (request == null) {
+                        previewDialog?.dismiss()
+                        previewDialog = null
+                        previewDialogId = null
+                        return@collect
+                    }
+                    // Already showing this exact request (e.g. a StateFlow
+                    // re-emission after rotation) — don't stack dialogs.
+                    if (request.id == previewDialogId) return@collect
+
+                    showLoading(false)
+                    previewDialog?.dismiss()
+                    previewDialogId = request.id
+                    previewDialog = MediaPreviewDialog(
+                        requireContext(),
+                        request,
+                        onConfirm = { indices ->
+                            viewModel.confirmMediaPreview(request.id, indices)
+                        },
+                        onCancel = {
+                            viewModel.cancelMediaPreview(request.id)
+                        }
+                    ).show()
                 }
             }
         }
@@ -228,6 +264,11 @@ class DownloadFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        // Do not call cancelMediaPreview here: a rotation recreates the view
+        // and the StateFlow re-delivers the same request so the picker reappears.
+        previewDialog?.dismiss()
+        previewDialog = null
+        previewDialogId = null
         _binding = null
     }
 }

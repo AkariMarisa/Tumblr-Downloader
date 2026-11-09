@@ -322,7 +322,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        if (viewModel.enqueueFromUrl(text)) {
+        if (viewModel.enqueueFromUrl(text, review = true)) {
             viewModel.notifyFromClipboard(text)
             binding.viewPager.currentItem = 0
         }

@@ -75,6 +75,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val downloads: StateFlow<List<DownloadItem>> = stateManager.items
     val parseEvent = stateManager.parseEvent
 
+    /** Pending pre-download picker request (null when nothing to review). */
+    val mediaPreview = stateManager.mediaPreview
+
     // ── blog full-profile batch download manager (process-wide singleton) ──
     val blogManager = BlogDownloadManager.getInstance(appContext)
     val blogJobs: StateFlow<List<BlogDownloadJobEntity>> = blogManager.jobs
@@ -132,7 +135,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ── delegated to stateManager (sequential, race-free) ─────────────
-    fun enqueueFromUrl(rawUrl: String): Boolean = stateManager.enqueueFromUrl(rawUrl)
+    fun enqueueFromUrl(rawUrl: String, review: Boolean = false): Boolean =
+        stateManager.enqueueFromUrl(rawUrl, review)
+
+    fun confirmMediaPreview(previewId: String, selectedIndices: Set<Int>) =
+        stateManager.confirmMediaPreview(previewId, selectedIndices)
+
+    fun cancelMediaPreview(previewId: String) = stateManager.cancelMediaPreview(previewId)
 
     fun startOrResumeDownload(itemId: String) = stateManager.startOrResume(itemId)
 
@@ -172,7 +181,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             if (cookiesReady) {
                 stateManager.markRetryAfterLogin()
-                enqueueFromUrl(url)
+                stateManager.enqueueFromUrl(url, loginRetry = true)
             } else {
                 Log.w(TAG, "retryPendingLoginUrl: cookie sync timeout, URL preserved for manual retry")
                 stateManager.emitParseEvent(

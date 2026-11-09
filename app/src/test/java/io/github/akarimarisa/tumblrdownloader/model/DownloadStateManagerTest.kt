@@ -14,6 +14,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import io.github.akarimarisa.tumblrdownloader.utils.CompletedMediaStore
+import io.github.akarimarisa.tumblrdownloader.utils.DownloadUtils
 import io.github.akarimarisa.tumblrdownloader.utils.ParsedTumblrMedia
 
 /**
@@ -763,6 +764,117 @@ class DownloadStateManagerTest {
     }
 
     // ── helpers ─────────────────────────────────────────────────────────
+
+    // ── pre-download picker ────────────────────────────────────────────
+
+    @Test
+    fun mediaPreview_dedupesExistingAndDuplicateCandidates() = runTest(testDispatcher) {
+        val existingUrl = "https://64.media.tumblr.com/preview-existing.jpg"
+        stateManager.restore(listOf(item("existing", mediaUrl = existingUrl)))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val first = "https://64.media.tumblr.com/preview-first.jpg"
+        val second = "https://64.media.tumblr.com/preview-second.jpg"
+        stateManager.offerMediaPreviewForTest(
+            listOf(
+                media(existingUrl),
+                media(first),
+                media(second),
+                media(first)
+            )
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val request = stateManager.mediaPreview.value
+        assertNotNull("multiple fresh items must open the picker", request)
+        assertEquals(2, request!!.items.size)
+        assertEquals(
+            listOf(first, second).map { DownloadUtils.normalizeMediaIdentity(it) },
+            request.items.map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }
+        )
+    }
+
+    @Test
+    fun mediaPreview_singleFreshItemEnqueuesWithoutPicker() = runTest(testDispatcher) {
+        val url = "https://64.media.tumblr.com/preview-single-${java.util.UUID.randomUUID()}.jpg"
+        stateManager.offerMediaPreviewForTest(listOf(media(url)))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertNull("a single item must not need a confirmation screen", stateManager.mediaPreview.value)
+        assertTrue(
+            "the single item must be queued directly",
+            stateManager.items.value.any {
+                DownloadUtils.normalizeMediaIdentity(it.mediaUrl) ==
+                    DownloadUtils.normalizeMediaIdentity(url)
+            }
+        )
+    }
+
+    @Test
+    fun confirmMediaPreview_enqueuesOnlySelectedIndices() = runTest(testDispatcher) {
+        val urls = (1..3).map {
+            "https://64.media.tumblr.com/preview-confirm-$it-${java.util.UUID.randomUUID()}.jpg"
+        }
+        stateManager.offerMediaPreviewForTest(urls.map(::media))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val request = stateManager.mediaPreview.value!!
+        stateManager.confirmMediaPreview(request.id, setOf(0, 2))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertNull("confirming must close the picker", stateManager.mediaPreview.value)
+        val queued = stateManager.items.value.map {
+            DownloadUtils.normalizeMediaIdentity(it.mediaUrl)
+        }.toSet()
+        assertTrue(queued.contains(DownloadUtils.normalizeMediaIdentity(urls[0])))
+        assertTrue(queued.contains(DownloadUtils.normalizeMediaIdentity(urls[2])))
+        assertFalse(
+            "unselected media must not be queued",
+            queued.contains(DownloadUtils.normalizeMediaIdentity(urls[1]))
+        )
+    }
+
+    @Test
+    fun cancelMediaPreview_queuesNothingAndClosesPicker() = runTest(testDispatcher) {
+        val urls = (1..2).map {
+            "https://64.media.tumblr.com/preview-cancel-$it-${java.util.UUID.randomUUID()}.jpg"
+        }
+        stateManager.offerMediaPreviewForTest(urls.map(::media))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val request = stateManager.mediaPreview.value!!
+        stateManager.cancelMediaPreview(request.id)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertNull(stateManager.mediaPreview.value)
+        assertTrue("skipping must queue nothing", stateManager.items.value.isEmpty())
+    }
+
+    @Test
+    fun cancelMediaPreview_ignoresStaleId() = runTest(testDispatcher) {
+        val urls = (1..2).map {
+            "https://64.media.tumblr.com/preview-stale-$it-${java.util.UUID.randomUUID()}.jpg"
+        }
+        stateManager.offerMediaPreviewForTest(urls.map(::media))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val request = stateManager.mediaPreview.value!!
+        stateManager.cancelMediaPreview("not-the-current-id")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "a stale dialog must not dismiss the live picker",
+            request.id,
+            stateManager.mediaPreview.value?.id
+        )
+    }
+
+    private fun media(mediaUrl: String) = ParsedTumblrMedia(
+        sourceUrl = "https://www.tumblr.com/blog/test/${mediaUrl.hashCode()}",
+        mediaUrl = mediaUrl,
+        title = "Preview",
+        type = MediaType.IMAGE
+    )
 
     private fun item(
         id: String,
