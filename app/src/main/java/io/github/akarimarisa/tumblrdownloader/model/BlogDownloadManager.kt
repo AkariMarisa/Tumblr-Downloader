@@ -191,10 +191,13 @@ class BlogDownloadManager private constructor(
             val now = System.currentTimeMillis()
 
             // Still scanning: keep the single card and tell the user where to
-            // find it instead of queueing a duplicate.
+            // find it instead of queueing a duplicate. Check the live worker map
+            // rather than the persisted state: a process kill leaves a card in
+            // RUNNING with no worker behind it, and such an "interrupted" card
+            // must be re-usable (its Resume button already restarts it).
             if (_jobs.value.any {
                     it.blogName == blogName &&
-                        it.state() == BlogJobState.RUNNING
+                        activeJobs.containsKey(it.jobId)
                 }
             ) {
                 _events.tryEmit(BlogEvent.Message(localizedString(R.string.blog_job_already_running, blogName)))

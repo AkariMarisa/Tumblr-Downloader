@@ -81,7 +81,7 @@
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/start_download"
                 android:src="@android:drawable/ic_media_play"
-                android:tint="@color/blue_500"
+                app:tint="@color/blue_500"
                 android:visibility="gone"
                 android:padding="4dp" />
 
@@ -92,7 +92,7 @@
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/pause_download"
                 android:src="@android:drawable/ic_media_pause"
-                android:tint="@color/gray_500"
+                app:tint="@color/gray_500"
                 android:visibility="gone"
                 android:padding="4dp" />
 
@@ -104,7 +104,7 @@
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/remove_download"
                 android:src="@android:drawable/ic_menu_close_clear_cancel"
-                android:tint="@color/red_500"
+                app:tint="@color/red_500"
                 android:padding="4dp" />
 
         </LinearLayout>

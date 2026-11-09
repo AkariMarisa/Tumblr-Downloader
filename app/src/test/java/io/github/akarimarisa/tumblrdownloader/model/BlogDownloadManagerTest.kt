@@ -2,6 +2,7 @@ package io.github.akarimarisa.tumblrdownloader.model
 
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
+import io.github.akarimarisa.tumblrdownloader.db.BlogDownloadJobEntity
 import io.github.akarimarisa.tumblrdownloader.utils.BlogDownloadJobStore
 import io.github.akarimarisa.tumblrdownloader.utils.BlogFeedParser
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadHistoryStore
@@ -556,5 +557,47 @@ class BlogDownloadManagerTest {
             "posts downloaded before are skipped by the rescan",
             manager.jobs.value.first().postsSkipped > 0
         )
+    }
+
+    @Test
+    fun interruptedRunningCardIsReusedInsteadOfBlockingTheSameBlog() = runTest(testDispatcher) {
+        DownloadHistoryStore.clear(app)
+        BlogDownloadJobStore.clear(app)
+
+        // A process kill leaves the persisted card saying RUNNING even though
+        // no worker exists. Pasting the same blog again must reuse/restart it
+        // rather than report "already running" forever.
+        val now = System.currentTimeMillis()
+        val interrupted = BlogDownloadJobEntity(
+            jobId = "interrupted-job",
+            blogName = "bonesbunns",
+            state = BlogJobState.RUNNING.name,
+            resumeLink = page1Url,
+            totalPosts = 4,
+            pagesCompleted = 1,
+            postsDiscovered = 2,
+            postsSkipped = 0,
+            postsNoMedia = 0,
+            mediaEnqueued = 2,
+            createdAt = now - 1_000,
+            updatedAt = now - 1_000,
+            errorCode = null
+        )
+        BlogDownloadJobStore.upsert(app, interrupted)
+
+        val manager = BlogDownloadManager.forTest(app, FakeGateway(), stateManager, testDispatcher)
+        advanceUntil { manager.jobs.value.any { it.jobId == interrupted.jobId } }
+
+        val accepted = manager.enqueueBlog(
+            "https://www.tumblr.com/bonesbunns",
+            BlogDownloadOptions(forceLongBlog = true)
+        )
+        assertTrue("an interrupted RUNNING card must be reusable", accepted)
+
+        advanceUntil { manager.jobs.value.first().state() == BlogJobState.DONE }
+
+        assertEquals("the interrupted card must be reused, not duplicated", 1, manager.jobs.value.size)
+        assertEquals(interrupted.jobId, manager.jobs.value.first().jobId)
+        assertTrue("the restarted scan must enqueue media", manager.jobs.value.first().mediaEnqueued > 0)
     }
 }
