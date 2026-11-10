@@ -53,7 +53,8 @@
 - **Cookie 持久化** — 登录态本地存储，重启后可复用；含安全提示
 - **下载队列** — 顺序下载，支持暂停/继续/重试/限速
 - **批量下载** — 扫描整个博客，每个博客一张可恢复的任务卡片
-- **下载前勾选** — 逐条保留/取消媒体，可按图片/视频/GIF 全选，或全部跳过
+- **下载前勾选** — 逐条保留/取消媒体，可按图片/视频/GIF 全选，或全部跳过；粘贴、分享、剪贴板识别都会先确认，除非开启「自动下载全部媒体文件」
+- **新手引导** — 首次启动 5 页引导，侧边栏常驻「使用教程」可随时回看
 - **历史记录** — 下载记录持久化，重启不丢失
 - **媒体查看** — 在应用内查看已下载的图片和视频
 - **自定义目录** — 通过 Storage Access Framework 选择任意保存位置
@@ -108,6 +109,7 @@ app/src/main/java/io/github/akarimarisa/tumblrdownloader/
 │   └── OnboardingActivity.kt           # 首次启动引导
 ├── db/                                 # Room 数据库：历史、Cookie、博客任务
 └── utils/
+    ├── AutoDownloadPrefs.kt            # 「自动下载全部媒体文件」开关
     ├── TumblrParser.kt                 # 解析分享链接 → 媒体 URL
     ├── BlogFeedParser.kt               # 匿名博客分页接口解析
     ├── BlogDownloadJobStore.kt         # 持久化博客任务游标/卡片
@@ -144,7 +146,8 @@ TumblrParser      DownloadService
 - **两阶段解析**：先尝试 Tumblr 的 oEmbed API（轻量），再回退到完整页面 HTML 解析。JSON 结构化数据采用路径过滤而非脆弱的扩展名匹配。
 - **Cookie 桥接**：WebView 登录后的 Cookie 通过 `CookieManager` 持久化，与解析/下载用的 OkHttp 客户端共享。
 - **批量下载器**：`BlogDownloadManager` 逐页遍历匿名 feed 接口，为每个博客保存断点游标，把媒体打上任务 id，并在再次下载同一博客时复用原卡片。
-- **下载前勾选**：解析出多个新媒体时弹出选择框（缩略图、逐条勾选、按类型全选、全部跳过/全部下载）。剪贴板自动检测保持自动入队；手动输入和分享会先确认。
+- **下载前勾选**：解析出多个新媒体时弹出选择框（缩略图、逐条勾选、按类型全选、全部跳过/全部下载）。手动输入、分享、剪贴板自动检测与登录后重试统一读取 `AutoDownloadPrefs` 开关（默认关闭），因此剪贴板路径不会再绕过选择器；单个媒体的帖子仍直接入队。博客批量下载保留「全部/仅图片/仅视频」类型选择。把「自动下载全部媒体文件」打开后，任何入口都不再询问。
+- **新手引导 + 教程**：首次启动引导新增「下载前先挑选媒体」「博客下载分组显示」两页，侧边栏「使用教程」可随时重看整套说明。
 
 ---
 
@@ -246,7 +249,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 - [x] **并行下载**：目前仅支持单任务顺序下载，增加可配置的并行下载数（2-3 个）
 - [x] **批量下载**：一键下载整个博客的媒体（遍历分页接口，去重 + 断点续传，支持取消/恢复）。入口：在主界面打开形如 `https://blog.tumblr.com` / `https://www.tumblr.com/blog` 的博客链接直接入队；标签页与帖子合集暂未覆盖
-- [x] **下载前媒体勾选**：多媒帖入队前先预览，逐条保留/取消，按图片/视频/GIF 全选，然后下载所选项或全部跳过。单个媒体的帖子仍直接入队；剪贴板自动检测保持自动。
+- [x] **下载前媒体勾选**：多媒帖入队前先预览，逐条保留/取消，按图片/视频/GIF 全选，然后下载所选项或全部跳过。单个媒体的帖子仍直接入队。由 `AutoDownloadPrefs` 开关统一控制（默认关闭），剪贴板自动检测与登录后重试同样遵守；开关打开后全部直接入队。
 - [x] **同一博客单卡片**：再次批量下载同一博客时复用原卡片、置顶并保留已完成进度
 - [x] **视频画质选择**：当存在多个清晰度时，让用户选择 480p / 720p / 1080p
 - [x] **下载速度显示**：在通知栏和下载列表中显示实时速度（KB/s）
@@ -274,7 +277,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - [x] **CI/CD**：配置了 GitHub Actions，每次 push master 自动构建 APK 并发布 Release
 - [x] **包名重命名**：已改为 `io.github.akarimarisa.tumblrdownloader`
 - [x] **Room DAO + 迁移测试**：覆盖 `DownloadHistoryDao`、`CookieDao`、SharedPreferences 迁移及博客任务数据库迁移（Robolectric + Room in-memory）
-- [x] **引擎/核心单元测试**：168 个 JVM 测试，覆盖 `DownloadStateManager`、博客扫描/解析与任务卡片、下载前勾选规则、`DownloadItem`、`MediaQualitySelector`、`ThemeMode`、`DownloadService` 网络/通知/连接性行为、`TumblrLoginTrackerBlocking`
+- [x] **引擎/核心单元测试**：172 个 JVM 测试，覆盖 `DownloadStateManager`、博客扫描/解析与任务卡片、下载前勾选规则与自动下载开关、`DownloadItem`、`MediaQualitySelector`、`ThemeMode`、`DownloadService` 网络/通知/连接性行为、`TumblrLoginTrackerBlocking`
 - [ ] **其余测试缺口**：`TumblrParser` 单元测试与完整下载流程的 instrumentation 测试仍待补充
 - [x] **贡献指南**：已创建 `CONTRIBUTING.md`/`CONTRIBUTING_zh.md` 与 `CODE_OF_CONDUCT.md`/`CODE_OF_CONDUCT_zh.md`（中英双语）
 - [x] **截图**：在 README 中添加应用截图
