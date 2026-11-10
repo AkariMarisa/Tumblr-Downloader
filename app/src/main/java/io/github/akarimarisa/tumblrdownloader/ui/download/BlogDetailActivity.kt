@@ -79,7 +79,9 @@ class BlogDetailActivity : AppCompatActivity() {
                     val filtered = list.filter { it.batchId == jobId }
                     adapter.submitList(filtered)
                     binding.tvEmpty.isVisible = filtered.isEmpty()
-                    binding.tvDetailSummary.text = getString(R.string.blog_detail_item_count, filtered.size)
+                    binding.tvDetailSummary.text = resources.getQuantityString(
+                        R.plurals.blog_detail_item_count, filtered.size, filtered.size
+                    )
                     // Only offer an action when there is anything it can act on.
                     val anyActive = filtered.any {
                         it.status == io.github.akarimarisa.tumblrdownloader.model.DownloadStatus.DOWNLOADING ||

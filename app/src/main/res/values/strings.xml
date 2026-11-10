@@ -6,23 +6,19 @@
     <string name="download_button">Download Media</string>
     <string name="downloaded_media">Downloaded Media</string>
     <string name="no_downloads">No downloads yet</string>
-    <string name="downloading">Downloading…</string>
-    <string name="completed">Completed</string>
-    <string name="failed">Failed</string>
     <string name="back">Back</string>
     <string name="copied_from_clipboard">Copied from clipboard</string>
     <string name="invalid_url">Invalid Tumblr URL</string>
     <string name="login_hint">Login and return to continue parsing</string>
     <string name="login_done">Done</string>
-    <string name="login_tumblr">Login Tumblr</string>
-    <string name="clipboard_link_detected">Tumblr link detected in clipboard, attempting download</string>
-    <string name="queued_message">%1$d tasks added to download queue</string>
+    <plurals name="queued_message">
+        <item quantity="one">%1$d task added to download queue</item>
+        <item quantity="other">%1$d tasks added to download queue</item>
+    </plurals>
     <string name="parsing_media">Parsing media…</string>
-    <string name="retry_download">Retry</string>
     <string name="start_download">Start download</string>
     <string name="pause_download">Pause download</string>
     <string name="remove_download">Remove download</string>
-    <string name="clear_cookie">Clear login cookie</string>
     <string name="cookie_security_title">Cookie Security Notice</string>
     <string name="cookie_security_message">A Tumblr login cookie has been detected. It is stored locally on this device and used only for parsing. It will never be uploaded. Do not keep it on public devices. You can clear it anytime.</string>
     <string name="login_cookie_saved">Login saved locally. Private content can be parsed automatically.</string>
@@ -54,11 +50,8 @@
     <string name="clear_all_downloads">Clear completed downloads</string>
     <string name="pause_all">Pause All</string>
     <string name="resume_all">Resume All</string>
-    <string name="action_pause">Pause</string>
-    <string name="action_resume">Resume</string>
     <!-- Notification button: pauses every queued/in-flight download at once -->
     <string name="action_stop_all">Stop all</string>
-    <string name="action_cancel">Cancel</string>
 
     <string name="clear_all_confirm_message">All finished downloads will be removed from the list. Paused, failed, and queued items will stay right where they are.</string>
     <string name="remove_confirm_message">Remove this item from the download list? Downloads already completed will not be deleted.</string>
@@ -91,7 +84,10 @@
     <string name="download_waiting">Starting in %1$dms</string>
     <string name="download_server_no_resume">Server does not support resume, starting over</string>
     <string name="download_target_creation_failed">Failed to create download target: %1$s</string>
-    <string name="download_failed_with_retries">Download failed: %1$s. Retried %2$d/%3$d times.</string>
+    <plurals name="download_failed_with_retries">
+        <item quantity="one">Download failed: %1$s. Retried %2$d/%3$d time.</item>
+        <item quantity="other">Download failed: %1$s. Retried %2$d/%3$d times.</item>
+    </plurals>
     <string name="download_retrying">Retry %1$d/%2$d</string>
     <string name="download_channel_name">Tumblr Download</string>
     <string name="download_channel_desc">Download status updates</string>
@@ -100,7 +96,6 @@
     <string name="download_timed_out">Download timed out after 10 minutes, please try again</string>
     <string name="download_waiting_network">Waiting for network…</string>
     <string name="download_speed_notification">%1$d%% — %2$s</string>
-    <string name="download_summary_title">Download summary</string>
     <string name="download_summary_notification">Completed: %1$d, failed: %2$d</string>
     <string name="toast_message_with_app_name">%1$s: %2$s</string>
 
@@ -108,9 +103,7 @@
     <string name="parse_error_generic">Parse failed: %1$s</string>
     <string name="parse_not_valid_url">Invalid Tumblr share link</string>
     <string name="parse_oembed_unavailable">oEmbed unavailable: %1$s</string>
-    <string name="parse_oembed_empty">No downloadable media found</string>
     <string name="parse_login_required">Login required to retry.</string>
-    <string name="parse_page_no_media">No downloadable media in page</string>
     <string name="parse_duplicate_skipped">Media already in download list, duplicates skipped.</string>
     <string name="parse_no_new_media">No downloadable media found</string>
     <string name="parse_page_request_failed">Page request failed, HTTP %1$d</string>
@@ -134,7 +127,10 @@
     <string name="settings_category_interface_summary">Language and theme</string>
     <string name="download_directory_title">Download directory</string>
     <string name="pref_max_concurrent_downloads">Max concurrent downloads</string>
-    <string name="concurrent_downloads_value">%1$d tasks</string>
+    <plurals name="concurrent_downloads_value">
+        <item quantity="one">%1$d task</item>
+        <item quantity="other">%1$d tasks</item>
+    </plurals>
     <string name="concurrent_downloads_dialog_title">Max concurrent downloads</string>
     <string name="pref_image_quality">Image quality</string>
     <string name="image_quality_dialog_title">Image quality</string>
@@ -177,7 +173,6 @@
     <!-- Rate limit -->
     <string name="pref_rate_limit">Download speed limit</string>
     <string name="rate_limit_unlimited">Unlimited</string>
-    <string name="rate_limit_value">%1$s</string>
 
     <!-- Blog full-profile batch download -->
     <string name="blog_url_invalid">Not a valid Tumblr blog URL</string>
@@ -188,29 +183,35 @@
     <string name="blog_media_filter_images">Images only</string>
     <string name="blog_media_filter_videos">Videos only</string>
     <string name="blog_confirm_long_title">Download this blog?</string>
-    <string name="blog_confirm_long_message">“%1$s” has about %2$d posts (%3$d+ page requests). This will take a while and may be rate-limited. Continue?</string>
+    <plurals name="blog_confirm_long_message">
+        <item quantity="one">“%1$s” has about %2$d post (%3$d+ page requests). This will take a while and may be rate-limited. Continue?</item>
+        <item quantity="other">“%1$s” has about %2$d posts (%3$d+ page requests). This will take a while and may be rate-limited. Continue?</item>
+    </plurals>
     <string name="blog_confirm_start">Start download</string>
     <string name="blog_confirm_cancel">Cancel</string>
     <string name="blog_jobs_section_title">Blog downloads</string>
-    <string name="blog_job_state_running">Scanning</string>
     <string name="blog_job_state_done">Completed</string>
-    <string name="blog_job_state_cancelled">Cancelled</string>
     <string name="blog_job_state_blocked">Error</string>
     <string name="blog_job_state_parsing">Parsing…</string>
     <string name="blog_job_state_parsed">Parsed</string>
     <string name="blog_job_state_downloading">Downloading</string>
     <string name="blog_job_state_paused">Paused</string>
     <string name="blog_job_interrupted">Not finished</string>
-    <string name="blog_job_stats">%1$d posts · %2$d media</string>
+    <plurals name="blog_job_stats">
+        <item quantity="one">%1$d post · %2$d media</item>
+        <item quantity="other">%1$d posts · %2$d media</item>
+    </plurals>
     <string name="blog_job_download_progress">Downloaded %1$d/%2$d media</string>
     <string name="blog_job_download_complete">All %1$d media downloaded</string>
     <string name="blog_job_detail">Details</string>
     <string name="blog_job_resume">Start</string>
     <string name="blog_job_cancel">Pause</string>
     <string name="blog_job_remove">Remove</string>
-    <string name="blog_job_cancel_confirm_message">Pause this blog? Its scan and queued downloads pause together. You can resume later from the card.</string>
     <string name="blog_job_remove_confirm_message">Remove this blog job card? Its unfinished downloads are removed from the queue (completed files are kept).</string>
-    <string name="blog_job_scanned_toast">Blog parsed: %1$d posts, %2$d media now downloading</string>
+    <plurals name="blog_job_scanned_toast">
+        <item quantity="one">Blog parsed: %1$d post, %2$d media now downloading</item>
+        <item quantity="other">Blog parsed: %1$d posts, %2$d media now downloading</item>
+    </plurals>
     <string name="blog_job_cancelled_toast">Blog paused — resume later from the card</string>
     <string name="blog_error_not_found">Blog not found (deleted or never existed)</string>
     <string name="blog_error_password_protected">This blog is password-protected and cannot be batch-downloaded</string>
@@ -222,7 +223,6 @@
 
     <!-- Settings for the blog scanner -->
     <string name="pref_blog_scan_interval">Blog scan request interval</string>
-    <string name="pref_blog_scan_interval_summary">Pause between feed page requests. Keep it ≥500 ms to avoid rate limits</string>
     <string name="blog_scan_interval_dialog_title">Blog scan request interval</string>
     <string name="blog_scan_interval_200ms">200 ms (fast, risky)</string>
     <string name="blog_scan_interval_500ms">500 ms (recommended)</string>
@@ -231,15 +231,20 @@
     <string name="blog_scan_interval_5000ms">5 s (slowest)</string>
     <string name="blog_scan_interval_display">%1$d ms</string>
     <string name="pref_blog_long_threshold">Long-blog confirmation threshold</string>
-    <string name="pref_blog_long_threshold_summary">Ask for confirmation when a blog has more posts than this</string>
     <string name="blog_long_threshold_dialog_title">Long-blog confirmation threshold</string>
     <string name="blog_long_threshold_unlimited">Never ask (unlimited)</string>
-    <string name="blog_long_threshold_display">%1$d posts</string>
+    <plurals name="blog_long_threshold_display">
+        <item quantity="one">%1$d post</item>
+        <item quantity="other">%1$d posts</item>
+    </plurals>
 
     <!-- Blog job detail page -->
     <string name="blog_detail_title">Blog download details</string>
     <string name="blog_detail_empty">No items for this blog job yet</string>
-    <string name="blog_detail_item_count">%1$d items from this blog</string>
+    <plurals name="blog_detail_item_count">
+        <item quantity="one">%1$d item from this blog</item>
+        <item quantity="other">%1$d items from this blog</item>
+    </plurals>
 
     <!-- Pre-download media picker -->
     <string name="media_preview_title">Choose what to download</string>

@@ -1077,7 +1077,7 @@ class DownloadService : Service() {
                     emitProgress(
                         current.copy(
                             status = DownloadStatus.FAILED,
-                            errorMessage = getStringSafely(R.string.download_failed_with_retries, e.message ?: resolveString(R.string.download_unknown_error), current.retryCount, current.maxRetries)
+                            errorMessage = getQuantityStringSafely(R.plurals.download_failed_with_retries, current.retryCount, e.message ?: resolveString(R.string.download_unknown_error), current.retryCount, current.maxRetries)
                         )
                     )
                     return
@@ -1737,6 +1737,33 @@ class DownloadService : Service() {
                 LocaleHelper.contextForAppLocale(applicationContext).getString(resId, *formatArgs)
             } catch (_: Exception) {
                 resolveString(resId)
+            }
+        }
+    }
+
+    /**
+     * [getStringSafely] for `<plurals>`: the quantity selects the item, so the
+     * singular/plural wording of the English source is honoured.
+     */
+    private fun getQuantityStringSafely(
+        @androidx.annotation.PluralsRes resId: Int,
+        quantity: Int,
+        vararg formatArgs: Any
+    ): String {
+        return try {
+            LocaleHelper.contextForAppLocale(this).resources
+                .getQuantityString(resId, quantity, *formatArgs)
+        } catch (_: Exception) {
+            try {
+                LocaleHelper.contextForAppLocale(applicationContext).resources
+                    .getQuantityString(resId, quantity, *formatArgs)
+            } catch (_: Exception) {
+                // Mirrors resolveString(): a placeholder beats a crash.
+                try {
+                    resources.getResourceEntryName(resId)
+                } catch (_: Exception) {
+                    ""
+                }
             }
         }
     }

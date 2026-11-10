@@ -6,23 +6,18 @@
     <string name="download_button">下载媒体</string>
     <string name="downloaded_media">已下载媒体</string>
     <string name="no_downloads">暂无下载记录</string>
-    <string name="downloading">下载中…</string>
-    <string name="completed">已完成</string>
-    <string name="failed">失败</string>
     <string name="back">返回</string>
     <string name="copied_from_clipboard">已从剪贴板复制</string>
     <string name="invalid_url">无效的 Tumblr 链接</string>
     <string name="login_hint">登录后返回本页即可继续解析</string>
     <string name="login_done">完成</string>
-    <string name="login_tumblr">登录 Tumblr</string>
-    <string name="clipboard_link_detected">检测到剪贴板中的 Tumblr 链接，正在尝试下载</string>
-    <string name="queued_message">已加入下载队列：%1$d 个任务</string>
+    <plurals name="queued_message">
+        <item quantity="other">已加入下载队列：%1$d 个任务</item>
+    </plurals>
     <string name="parsing_media">正在解析下载内容…</string>
-    <string name="retry_download">重试下载</string>
     <string name="start_download">开始下载</string>
     <string name="pause_download">暂停下载</string>
     <string name="remove_download">移除下载项</string>
-    <string name="clear_cookie">清除登录 Cookie</string>
     <string name="cookie_security_title">Cookie 安全说明</string>
     <string name="cookie_security_message">当前已检测到本地保存的 Tumblr 登录 Cookie，仅用于当前设备内访问解析，不会上传到任何服务器；请勿在公共设备长期保留，并可随时点击"清除登录 Cookie"移除。</string>
     <string name="login_cookie_saved">登录状态已保存到本地，解析私密内容可直接复用。</string>
@@ -54,11 +49,8 @@
     <string name="clear_all_downloads">清空已完成下载</string>
     <string name="pause_all">全部暂停</string>
     <string name="resume_all">全部开始</string>
-    <string name="action_pause">暂停</string>
-    <string name="action_resume">继续</string>
     <!-- 通知栏按钮：一键暂停所有排队/进行中的下载 -->
     <string name="action_stop_all">全部停止</string>
-    <string name="action_cancel">取消</string>
 
     <string name="clear_all_confirm_message">已完成的项目将被清出列表，暂停、失败和排队中的项目会保留不动。</string>
     <string name="remove_confirm_message">从列表中移除该项？已经下载好的文件不会被删除，放心～</string>
@@ -91,7 +83,9 @@
     <string name="download_waiting">等待 %1$dms 后开始下载</string>
     <string name="download_server_no_resume">服务器不支持断点续传，从头开始</string>
     <string name="download_target_creation_failed">下载目标创建失败：%1$s</string>
-    <string name="download_failed_with_retries">下载失败：%1$s。已重试 %2$d/%3$d 次。可手动重试。</string>
+    <plurals name="download_failed_with_retries">
+        <item quantity="other">下载失败：%1$s。已重试 %2$d/%3$d 次。可手动重试。</item>
+    </plurals>
     <string name="download_retrying">第 %1$d/%2$d 次重试中</string>
     <string name="download_channel_name">Tumblr 下载</string>
     <string name="download_channel_desc">下载状态更新</string>
@@ -100,7 +94,6 @@
     <string name="download_timed_out">下载超时（10 分钟），请重试</string>
     <string name="download_waiting_network">等待网络连接…</string>
     <string name="download_speed_notification">%1$d%% — %2$s</string>
-    <string name="download_summary_title">下载统计</string>
     <string name="download_summary_notification">成功：%1$d，失败：%2$d</string>
     <string name="toast_message_with_app_name">%1$s：%2$s</string>
 
@@ -108,9 +101,7 @@
     <string name="parse_error_generic">解析失败：%1$s</string>
     <string name="parse_not_valid_url">不是有效的 Tumblr 分享链接</string>
     <string name="parse_oembed_unavailable">oEmbed 不可用：%1$s</string>
-    <string name="parse_oembed_empty">未识别到可下载媒体</string>
     <string name="parse_login_required">登录后可重试。</string>
-    <string name="parse_page_no_media">页面未返回可下载媒体</string>
     <string name="parse_duplicate_skipped">该链接中的媒体已在下载列表中，已跳过重复项。</string>
     <string name="parse_no_new_media">该链接未识别到可下载媒体</string>
     <string name="parse_page_request_failed">页面请求失败，HTTP %1$d</string>
@@ -134,7 +125,9 @@
     <string name="settings_category_interface_summary">语言与主题</string>
     <string name="download_directory_title">下载目录</string>
     <string name="pref_max_concurrent_downloads">最大并行下载数</string>
-    <string name="concurrent_downloads_value">%1$d 个任务</string>
+    <plurals name="concurrent_downloads_value">
+        <item quantity="other">%1$d 个任务</item>
+    </plurals>
     <string name="concurrent_downloads_dialog_title">最大并行下载数</string>
     <string name="pref_image_quality">图片清晰度</string>
     <string name="image_quality_dialog_title">图片清晰度</string>
@@ -177,7 +170,6 @@
     <!-- Rate limit -->
     <string name="pref_rate_limit">下载速度限制</string>
     <string name="rate_limit_unlimited">不限速</string>
-    <string name="rate_limit_value">%1$s</string>
 
     <!-- Blog full-profile batch download -->
     <string name="blog_url_invalid">无效的 Tumblr 博客链接</string>
@@ -188,29 +180,32 @@
     <string name="blog_media_filter_images">仅图片</string>
     <string name="blog_media_filter_videos">仅视频</string>
     <string name="blog_confirm_long_title">确定要下载该博客？</string>
-    <string name="blog_confirm_long_message">“%1$s”约有 %2$d 篇帖子（预计 %3$d 页以上请求）。这需要较长时间，并可能触发频率限制。是否继续？</string>
+    <plurals name="blog_confirm_long_message">
+        <item quantity="other">“%1$s”约有 %2$d 篇帖子（预计 %3$d 页以上请求）。这需要较长时间，并可能触发频率限制。是否继续？</item>
+    </plurals>
     <string name="blog_confirm_start">开始下载</string>
     <string name="blog_confirm_cancel">取消</string>
     <string name="blog_jobs_section_title">博客下载</string>
-    <string name="blog_job_state_running">扫描中</string>
     <string name="blog_job_state_done">已完成</string>
-    <string name="blog_job_state_cancelled">已取消</string>
     <string name="blog_job_state_blocked">出错</string>
     <string name="blog_job_state_parsing">解析中…</string>
     <string name="blog_job_state_parsed">已解析</string>
     <string name="blog_job_state_downloading">下载中</string>
     <string name="blog_job_state_paused">已暂停</string>
     <string name="blog_job_interrupted">未完成</string>
-    <string name="blog_job_stats">%1$d 帖 · %2$d 个媒体</string>
+    <plurals name="blog_job_stats">
+        <item quantity="other">%1$d 帖 · %2$d 个媒体</item>
+    </plurals>
     <string name="blog_job_download_progress">已下载 %1$d/%2$d 个媒体</string>
     <string name="blog_job_download_complete">全部 %1$d 个媒体已下载</string>
     <string name="blog_job_detail">详情</string>
     <string name="blog_job_resume">开始</string>
     <string name="blog_job_cancel">暂停</string>
     <string name="blog_job_remove">移除</string>
-    <string name="blog_job_cancel_confirm_message">暂停该博客？扫描和该博客的下载任务会一并暂停，之后可随时从任务卡片重新开始。</string>
     <string name="blog_job_remove_confirm_message">移除该博客任务卡片？该博客未完成的下载项会从队列中移除（已完成的文件保留）。</string>
-    <string name="blog_job_scanned_toast">博客已解析：%1$d 帖，%2$d 个媒体开始下载</string>
+    <plurals name="blog_job_scanned_toast">
+        <item quantity="other">博客已解析：%1$d 帖，%2$d 个媒体开始下载</item>
+    </plurals>
     <string name="blog_job_cancelled_toast">博客已暂停 — 可从任务卡片重新开始</string>
     <string name="blog_error_not_found">未找到该博客（可能已删除或不存在）</string>
     <string name="blog_error_password_protected">该博客受密码保护，无法批量下载</string>
@@ -222,7 +217,6 @@
 
     <!-- Settings for the blog scanner -->
     <string name="pref_blog_scan_interval">博客扫描请求间隔</string>
-    <string name="pref_blog_scan_interval_summary">每页请求之间的间隔，建议 ≥500ms 以避免被限流</string>
     <string name="blog_scan_interval_dialog_title">博客扫描请求间隔</string>
     <string name="blog_scan_interval_200ms">200 毫秒（快，有风险）</string>
     <string name="blog_scan_interval_500ms">500 毫秒（推荐）</string>
@@ -231,15 +225,18 @@
     <string name="blog_scan_interval_5000ms">5 秒（最慢）</string>
     <string name="blog_scan_interval_display">%1$d 毫秒</string>
     <string name="pref_blog_long_threshold">超长博客确认阈值</string>
-    <string name="pref_blog_long_threshold_summary">博客帖子数超过该值时先弹出确认对话框</string>
     <string name="blog_long_threshold_dialog_title">超长博客确认阈值</string>
     <string name="blog_long_threshold_unlimited">永不确认（不限）</string>
-    <string name="blog_long_threshold_display">%1$d 帖</string>
+    <plurals name="blog_long_threshold_display">
+        <item quantity="other">%1$d 帖</item>
+    </plurals>
 
     <!-- Blog job detail page -->
     <string name="blog_detail_title">博客下载详情</string>
     <string name="blog_detail_empty">该博客任务暂无下载项</string>
-    <string name="blog_detail_item_count">该博客共 %1$d 条</string>
+    <plurals name="blog_detail_item_count">
+        <item quantity="other">该博客共 %1$d 条</item>
+    </plurals>
 
     <!-- Pre-download media picker -->
     <string name="media_preview_title">选择要下载的媒体</string>

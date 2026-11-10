@@ -87,7 +87,9 @@ class BlogJobAdapter(
             )
 
             val posts = job.postsDiscovered + job.postsSkipped + job.postsNoMedia
-            binding.tvStats.text = ctx.getString(R.string.blog_job_stats, posts, job.mediaEnqueued)
+            binding.tvStats.text = ctx.resources.getQuantityString(
+                R.plurals.blog_job_stats, posts, posts, job.mediaEnqueued
+            )
 
             // Progress bar:
             //  - parsing → posts-seen progress (capped at 99)

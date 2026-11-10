@@ -368,13 +368,16 @@ class SettingsDetailActivity : AppCompatActivity() {
 
     private fun updateConcurrencyDisplay() {
         val current = prefs.getInt(PREF_MAX_CONCURRENT, 1).coerceIn(1, 4)
-        binding.tvConcurrentDownloads.text = getString(R.string.concurrent_downloads_value, current)
+        binding.tvConcurrentDownloads.text =
+            resources.getQuantityString(R.plurals.concurrent_downloads_value, current, current)
     }
 
     private fun showConcurrencyDialog() {
         val current = prefs.getInt(PREF_MAX_CONCURRENT, 1).coerceIn(1, 4)
         val options = arrayOf(1, 2, 3, 4)
-        val labels = options.map { getString(R.string.concurrent_downloads_value, it) }.toTypedArray()
+        val labels = options.map {
+            resources.getQuantityString(R.plurals.concurrent_downloads_value, it, it)
+        }.toTypedArray()
         val checkedIndex = options.indexOf(current).coerceAtLeast(0)
 
         android.app.AlertDialog.Builder(this)
@@ -471,7 +474,7 @@ class SettingsDetailActivity : AppCompatActivity() {
         binding.tvBlogLongThreshold.text = if (threshold == BLOG_LONG_UNLIMITED) {
             getString(R.string.blog_long_threshold_unlimited)
         } else {
-            getString(R.string.blog_long_threshold_display, threshold)
+            resources.getQuantityString(R.plurals.blog_long_threshold_display, threshold, threshold)
         }
     }
 
@@ -480,7 +483,7 @@ class SettingsDetailActivity : AppCompatActivity() {
         val current = BlogPrefs.longThreshold(this)
         val labels = options.map {
             if (it == BLOG_LONG_UNLIMITED) getString(R.string.blog_long_threshold_unlimited)
-            else getString(R.string.blog_long_threshold_display, it)
+            else resources.getQuantityString(R.plurals.blog_long_threshold_display, it, it)
         }.toTypedArray()
         val checkedIndex = options.indexOf(current).coerceAtLeast(0)
 

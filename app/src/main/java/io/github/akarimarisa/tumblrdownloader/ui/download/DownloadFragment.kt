@@ -126,7 +126,7 @@ class DownloadFragment : Fragment() {
 
                     is ParseEvent.Queued -> {
                         binding.etUrl.text?.clear()
-                        LocalizedToast.show(toastContext(), toastContext().getString(R.string.queued_message, event.count), Toast.LENGTH_SHORT)
+                        LocalizedToast.show(toastContext(), toastContext().resources.getQuantityString(R.plurals.queued_message, event.count, event.count), Toast.LENGTH_SHORT)
                         (requireActivity() as? MainActivity)?.showDownloadsTab()
                         binding.loadingOverlay.post {
                             showLoading(false)
@@ -196,8 +196,9 @@ class DownloadFragment : Fragment() {
         if (job != null) {
             LocalizedToast.show(
                 toastContext(),
-                toastContext().getString(
-                    R.string.blog_job_scanned_toast,
+                toastContext().resources.getQuantityString(
+                    R.plurals.blog_job_scanned_toast,
+                    job.postsDiscovered + job.postsSkipped + job.postsNoMedia,
                     job.postsDiscovered + job.postsSkipped + job.postsNoMedia,
                     job.mediaEnqueued
                 ),
@@ -250,8 +251,9 @@ class DownloadFragment : Fragment() {
         AlertDialog.Builder(t)
             .setTitle(R.string.blog_confirm_long_title)
             .setMessage(
-                t.getString(
-                    R.string.blog_confirm_long_message,
+                t.resources.getQuantityString(
+                    R.plurals.blog_confirm_long_message,
+                    event.totalPosts,
                     event.blogName,
                     event.totalPosts,
                     event.estimatedRequests
