@@ -24,6 +24,7 @@ import io.github.akarimarisa.tumblrdownloader.ui.MainActivity
 import io.github.akarimarisa.tumblrdownloader.ui.MainViewModel
 import io.github.akarimarisa.tumblrdownloader.model.ParseEvent
 import io.github.akarimarisa.tumblrdownloader.ui.auth.TumblrLoginActivity
+import io.github.akarimarisa.tumblrdownloader.utils.AutoDownloadPrefs
 import io.github.akarimarisa.tumblrdownloader.utils.BlogFeedParser
 import io.github.akarimarisa.tumblrdownloader.utils.LocaleHelper
 import io.github.akarimarisa.tumblrdownloader.utils.LocalizedToast
@@ -79,7 +80,7 @@ class DownloadFragment : Fragment() {
             if (BlogFeedParser.isBlogUrl(url)) {
                 promptBlogOptions(url)
             } else {
-                val ok = viewModel.enqueueFromUrl(url, review = true)
+                val ok = viewModel.enqueueFromUrl(url)
                 if (!ok) {
                     LocalizedToast.show(toastContext(), R.string.invalid_url, Toast.LENGTH_SHORT)
                 } else {
@@ -206,6 +207,12 @@ class DownloadFragment : Fragment() {
     }
 
     private fun promptBlogOptions(url: String) {
+        // "自动下载全部媒体文件" enabled → no dialog at all, scan the whole
+        // blog and take every image and video it finds.
+        if (AutoDownloadPrefs.read(requireContext())) {
+            startBlogDownload(url, BlogMediaFilter.ALL)
+            return
+        }
         val t = toastContext()
         AlertDialog.Builder(t)
             .setTitle(R.string.blog_media_filter_dialog_title)
@@ -216,22 +223,26 @@ class DownloadFragment : Fragment() {
                     t.getString(R.string.blog_media_filter_videos)
                 )
             ) { _, which ->
-                // enqueueBlogUrl suspends (card restore + first disk write),
-                // so it must not run on the dialog's click thread directly.
-                lifecycleScope.launch {
-                    val ok = viewModel.enqueueBlogUrl(
-                        url,
-                        BlogDownloadOptions(mediaFilter = mediaFilterChoices[which])
-                    )
-                    if (ok && _binding != null) {
-                        binding.etUrl.text?.clear()
-                        showLoading(false)
-                        (requireActivity() as? MainActivity)?.showDownloadsTab()
-                    }
-                }
+                startBlogDownload(url, mediaFilterChoices[which])
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    private fun startBlogDownload(url: String, filter: BlogMediaFilter) {
+        // enqueueBlogUrl suspends (card restore + first disk write),
+        // so it must not run on the dialog's click thread directly.
+        lifecycleScope.launch {
+            val ok = viewModel.enqueueBlogUrl(
+                url,
+                BlogDownloadOptions(mediaFilter = filter)
+            )
+            if (ok && _binding != null) {
+                binding.etUrl.text?.clear()
+                showLoading(false)
+                (requireActivity() as? MainActivity)?.showDownloadsTab()
+            }
+        }
     }
 
     private fun promptConfirmLong(event: BlogEvent.ConfirmLongBlog) {

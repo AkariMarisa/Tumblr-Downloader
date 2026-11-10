@@ -29,6 +29,7 @@ import io.github.akarimarisa.tumblrdownloader.model.ThemeModePrefs
 import io.github.akarimarisa.tumblrdownloader.model.VideoQualityTier
 import io.github.akarimarisa.tumblrdownloader.ui.MainActivity
 import io.github.akarimarisa.tumblrdownloader.ui.MainViewModel
+import io.github.akarimarisa.tumblrdownloader.utils.AutoDownloadPrefs
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadUtils
 import io.github.akarimarisa.tumblrdownloader.utils.LocaleHelper
 import io.github.akarimarisa.tumblrdownloader.utils.LocalizedToast
@@ -86,6 +87,7 @@ class SettingsDetailActivity : AppCompatActivity() {
         binding.cardTheme,
         binding.cardDownloadDir,
         binding.cardClipboard,
+        binding.cardAutoDownloadAll,
         binding.cardConcurrent,
         binding.cardRateLimit,
         binding.cardImageQuality,
@@ -101,6 +103,7 @@ class SettingsDetailActivity : AppCompatActivity() {
             binding.cardConcurrent,
             binding.cardRateLimit,
             binding.cardClipboard,
+            binding.cardAutoDownloadAll,
             binding.cardClearCache
         )
         SettingsCategory.QUALITY -> listOf(
@@ -189,6 +192,12 @@ class SettingsDetailActivity : AppCompatActivity() {
         binding.switchClipboardAutoDetect.isChecked = prefs.getBoolean(PREF_CLIPBOARD_AUTO_DETECT, true)
         binding.switchClipboardAutoDetect.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit().putBoolean(PREF_CLIPBOARD_AUTO_DETECT, isChecked).apply()
+        }
+
+        // ── Auto-download all media (disables the pre-download picker) ──
+        binding.switchAutoDownloadAll.isChecked = AutoDownloadPrefs.read(this)
+        binding.switchAutoDownloadAll.setOnCheckedChangeListener { _, isChecked ->
+            AutoDownloadPrefs.write(this, isChecked)
         }
 
         // ── Clear auto-detect cache ──

@@ -135,8 +135,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ── delegated to stateManager (sequential, race-free) ─────────────
-    fun enqueueFromUrl(rawUrl: String, review: Boolean = false): Boolean =
-        stateManager.enqueueFromUrl(rawUrl, review)
+    /** The pre-download picker is decided by [AutoDownloadPrefs], not per call. */
+    fun enqueueFromUrl(rawUrl: String): Boolean =
+        stateManager.enqueueFromUrl(rawUrl)
 
     fun confirmMediaPreview(previewId: String, selectedIndices: Set<Int>) =
         stateManager.confirmMediaPreview(previewId, selectedIndices)

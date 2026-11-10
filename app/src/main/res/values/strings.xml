@@ -40,6 +40,7 @@
     <string name="open_download_directory_failed">Cannot open download directory. Please open it manually in your file manager.</string>
     <string name="menu_settings">Settings</string>
     <string name="menu_logout">Logout</string>
+    <string name="menu_tutorial">How to use</string>
     <string name="menu_about">About</string>
     <string name="navigation_drawer_open">Open navigation menu</string>
     <string name="navigation_drawer_close">Close navigation menu</string>
@@ -72,6 +73,11 @@
     <string name="onboarding_desc_2">Log in to your Tumblr account to download private content. Tap the avatar in the sidebar to log in. The app will save your login for future use.</string>
     <string name="onboarding_title_3">Manage downloads</string>
     <string name="onboarding_desc_3">Check progress, pause or retry tasks in the Downloads tab. Completed files can be opened directly.</string>
+    <string name="onboarding_title_4">Pick what to download</string>
+    <string name="onboarding_desc_4">When a post has several images or videos, a preview opens first: tick or untick each file, select all images / videos / GIFs, then download the selection or skip everything. Clipboard links behave the same way. Turn on "Auto-download all media" in Settings → Download to skip the picker entirely.</string>
+    <string name="onboarding_title_5">Blog downloads are grouped</string>
+    <string name="onboarding_desc_5">Downloading a whole blog shows up as one card in the Downloads tab. Pause, resume or cancel the scan, and open the card to follow every file. Before the scan starts you can choose all media, images only or videos only.</string>
+    <string name="onboarding_close">Close</string>
 
     <!-- Download statuses -->
     <string name="status_queued">Queued</string>
@@ -160,6 +166,8 @@
     <!-- Clipboard -->
     <string name="pref_clipboard_auto_detect">Auto-detect clipboard</string>
     <string name="pref_clipboard_auto_detect_summary">Automatically parse Tumblr links when switching back to the app</string>
+    <string name="pref_auto_download_all">Auto-download all media</string>
+    <string name="pref_auto_download_all_summary">On: queue everything right away, no prompts. Off (default): a post with several files opens the picker first, and a blog asks which types to take.</string>
 
     <!-- Cache -->
     <string name="pref_clear_cache">Clear auto-detect cache</string>

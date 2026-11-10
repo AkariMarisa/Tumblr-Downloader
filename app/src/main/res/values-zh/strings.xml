@@ -40,6 +40,7 @@
     <string name="open_download_directory_failed">无法打开下载目录，请前往文件管理器手动查看下载目录。</string>
     <string name="menu_settings">设置</string>
     <string name="menu_logout">退出登录</string>
+    <string name="menu_tutorial">使用教程</string>
     <string name="menu_about">关于</string>
     <string name="navigation_drawer_open">打开导航菜单</string>
     <string name="navigation_drawer_close">关闭导航菜单</string>
@@ -72,6 +73,11 @@
     <string name="onboarding_desc_2">登录 Tumblr 账号后可下载非公开内容。在侧边栏点击头像即可登录，应用会保存登录状态供后续使用。</string>
     <string name="onboarding_title_3">管理下载任务</string>
     <string name="onboarding_desc_3">在「下载列表」标签页查看进度、暂停或重试任务，完成的文件可直接打开查看。</string>
+    <string name="onboarding_title_4">下载前先挑选媒体</string>
+    <string name="onboarding_desc_4">文章里有多张图片或视频时，会先弹出预览：逐张勾选或取消，也可按类型全选图片、视频、GIF，然后下载所选内容或全部跳过。剪贴板识别到的链接同样如此。想全部直接下载，可在「设置 → 下载」中开启「自动下载全部媒体文件」。</string>
+    <string name="onboarding_title_5">博客下载分组显示</string>
+    <string name="onboarding_desc_5">下载整个博客时，任务会在「下载列表」里显示为一张分组卡片，可暂停、继续或取消，点进详情可查看每个文件的进度。开始扫描前可以先选择要图片、视频还是全部。</string>
+    <string name="onboarding_close">关闭</string>
 
     <!-- Download statuses -->
     <string name="status_queued">排队中</string>
@@ -160,6 +166,8 @@
     <!-- Clipboard -->
     <string name="pref_clipboard_auto_detect">自动检测剪切板</string>
     <string name="pref_clipboard_auto_detect_summary">切换回本 app 时自动解析剪贴板中的 Tumblr 链接</string>
+    <string name="pref_auto_download_all">自动下载全部媒体文件</string>
+    <string name="pref_auto_download_all_summary">开启后直接全部下载、不再询问；关闭（默认）时，多图文章会先弹出选择器，博客则先选择要下载的类型。</string>
 
     <!-- Cache -->
     <string name="pref_clear_cache">清空自动检测缓存</string>

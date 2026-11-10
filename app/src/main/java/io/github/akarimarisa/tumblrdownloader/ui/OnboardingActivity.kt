@@ -1,6 +1,7 @@
 package io.github.akarimarisa.tumblrdownloader.ui
 
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -19,6 +20,7 @@ class OnboardingActivity : AppCompatActivity() {
     companion object {
         private const val PREFS_NAME = "onboarding_prefs"
         private const val KEY_DONE = "onboarding_done"
+        private const val EXTRA_TUTORIAL = "tutorial_mode"
 
         fun isDone(context: Context): Boolean =
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -28,10 +30,22 @@ class OnboardingActivity : AppCompatActivity() {
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().putBoolean(KEY_DONE, true).apply()
         }
+
+        /**
+         * Read-only replay of the guide from the sidebar's "How to use" entry.
+         * Same pages, but leaving it never re-marks the first-run flow.
+         */
+        fun newTutorialIntent(context: Context): Intent =
+            Intent(context, OnboardingActivity::class.java).putExtra(EXTRA_TUTORIAL, true)
     }
 
     lateinit var pages: List<OnboardingPage>
         private set
+
+    /** True when opened from the sidebar instead of the first-run flow. */
+    private val tutorialMode: Boolean by lazy {
+        intent?.getBooleanExtra(EXTRA_TUTORIAL, false) == true
+    }
 
     private lateinit var binding: ActivityOnboardingBinding
 
@@ -47,7 +61,9 @@ class OnboardingActivity : AppCompatActivity() {
         pages = listOf(
             OnboardingPage("📋", getString(R.string.onboarding_title_1), getString(R.string.onboarding_desc_1)),
             OnboardingPage("🔐", getString(R.string.onboarding_title_2), getString(R.string.onboarding_desc_2)),
-            OnboardingPage("📥", getString(R.string.onboarding_title_3), getString(R.string.onboarding_desc_3))
+            OnboardingPage("📥", getString(R.string.onboarding_title_3), getString(R.string.onboarding_desc_3)),
+            OnboardingPage("☑️", getString(R.string.onboarding_title_4), getString(R.string.onboarding_desc_4)),
+            OnboardingPage("🗂", getString(R.string.onboarding_title_5), getString(R.string.onboarding_desc_5))
         )
 
         setupViewPager()
@@ -64,7 +80,10 @@ class OnboardingActivity : AppCompatActivity() {
         binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
                 updateDots(position)
-                binding.btnGetStarted.isVisible = (position == pages.size - 1)
+                // The tutorial replay has no "Get started" step: leaving is
+                // always available through the Skip slot.
+                binding.btnGetStarted.isVisible =
+                    !tutorialMode && position == pages.size - 1
             }
         })
     }
@@ -97,6 +116,13 @@ class OnboardingActivity : AppCompatActivity() {
     }
 
     private fun setupButtons() {
+        if (tutorialMode) {
+            // Replay: the "Skip" slot becomes the only way out and must not
+            // re-run (or re-mark) the first-run flow.
+            binding.btnSkip.setText(R.string.onboarding_close)
+            binding.btnSkip.setOnClickListener { finish() }
+            return
+        }
         binding.btnSkip.setOnClickListener { finishOnboarding() }
         binding.btnGetStarted.setOnClickListener { finishOnboarding() }
     }

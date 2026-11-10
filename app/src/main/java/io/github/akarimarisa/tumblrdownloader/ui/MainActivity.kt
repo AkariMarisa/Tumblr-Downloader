@@ -188,6 +188,9 @@ class MainActivity : AppCompatActivity() {
                 viewModel.clearSavedCookies()
                 LocalizedToast.show(LocaleHelper.contextForAppLocale(this), R.string.cookies_cleared_toast, android.widget.Toast.LENGTH_SHORT)
             }
+            R.id.menu_tutorial -> startActivity(
+                OnboardingActivity.newTutorialIntent(this)
+            )
             R.id.menu_about -> startActivity(Intent(this, AboutActivity::class.java))
         }
         binding.drawerLayout.closeDrawer(GravityCompat.START)
@@ -322,7 +325,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        if (viewModel.enqueueFromUrl(text, review = true)) {
+        if (viewModel.enqueueFromUrl(text)) {
             viewModel.notifyFromClipboard(text)
             binding.viewPager.currentItem = 0
         }

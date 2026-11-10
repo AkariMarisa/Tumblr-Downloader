@@ -10,6 +10,7 @@ import androidx.annotation.VisibleForTesting
 import io.github.akarimarisa.tumblrdownloader.R
 import io.github.akarimarisa.tumblrdownloader.service.DownloadService
 import io.github.akarimarisa.tumblrdownloader.model.MediaQualityPrefs
+import io.github.akarimarisa.tumblrdownloader.utils.AutoDownloadPrefs
 import io.github.akarimarisa.tumblrdownloader.utils.CompletedMediaStore
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadHistoryStore
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadUtils
@@ -119,10 +120,6 @@ class DownloadStateManager private constructor(private val app: Application) {
 
     private var pendingLoginUrl: String? = null
     private var retryAfterLogin = false
-    /** Review the media picker was requested for [pendingLoginUrl]. */
-    private var reviewAfterLogin = false
-    /** Review flag captured by [beginLoginRetry] for the retry parse. */
-    private var reviewNextParse = false
     /**
      * Set when [retryPendingLoginUrl] is in progress (has consumed the
      * pending URL but hasn't called [enqueueFromUrl] yet).  Prevents
@@ -213,14 +210,17 @@ class DownloadStateManager private constructor(private val app: Application) {
      * Parse and queue items from a Tumblr share URL.  Returns false if
      * invalid, already parsing, or the URL was already queued/succeeded.
      *
-     * @param review show the media picker instead of enqueueing every parsed
-     *   item immediately. One-media posts still queue directly (a picker for a
-     *   single row is just an extra tap).
+     * Whether the parsed media goes through the pre-download picker is
+     * decided by the `auto download all media` preference (see
+     * [isAutoDownloadAll]) — every entry point (manual input, share intent,
+     * clipboard auto-detect, login retry) reads the same switch, so there is
+     * no path that bypasses the picker behind the user's back.
+     *
      * @param loginRetry set by [MainViewModel.retryPendingLoginUrl]; bypasses
      *   the login-retry slot guard for this one call. Other enqueues (e.g.
      *   clipboard auto-detect) are still rejected while the slot is reserved.
      */
-    fun enqueueFromUrl(rawUrl: String, review: Boolean = false, loginRetry: Boolean = false): Boolean {
+    fun enqueueFromUrl(rawUrl: String, loginRetry: Boolean = false): Boolean {
         if (isParsing) {
             android.util.Log.w("DownloadSM", "enqueueFromUrl: already parsing, rejecting $rawUrl")
             return false
@@ -229,7 +229,7 @@ class DownloadStateManager private constructor(private val app: Application) {
         // parse hasn't started yet), reject clipboard-auto-detect attempts.
         if (!loginRetry && retryUrlPending != null) return false
         val url = TumblrParser.firstTumblrUrl(rawUrl.trim()) ?: return false
-        val shouldReview = review || (loginRetry && reviewNextParse)
+        val autoDownloadAll = AutoDownloadPrefs.read(app)
 
         isParsing = true
         scope.launch(Dispatchers.IO) {
@@ -239,18 +239,12 @@ class DownloadStateManager private constructor(private val app: Application) {
                     when (result) {
                         is TumblrShareParseResult.Success -> {
                             retryAfterLogin = false
-                            reviewAfterLogin = false
                             android.util.Log.d("DownloadSM", "enqueueFromUrl: ${result.media.size} candidates")
-                            if (shouldReview) {
-                                offerMediaPreview(result.media)
-                            } else {
-                                cmdCh.trySend(Cmd.Append(result.media))
-                            }
+                            routeParsedMedia(result.media, autoDownloadAll)
                         }
                         is TumblrShareParseResult.LoginRequired -> {
                             if (retryAfterLogin) {
                                 retryAfterLogin = false
-                                reviewAfterLogin = false
                                 android.util.Log.w("DownloadSM", "LoginRequired after login retry — giving up")
                                 _parseEvent.tryEmit(
                                     ParseEvent.CookieSecurityNotice(
@@ -259,7 +253,6 @@ class DownloadStateManager private constructor(private val app: Application) {
                                 )
                             } else {
                                 pendingLoginUrl = result.url.ifBlank { url }
-                                reviewAfterLogin = shouldReview
                                 _parseEvent.tryEmit(
                                     ParseEvent.LoginRequired(
                                         url = result.url.ifBlank { url },
@@ -270,12 +263,10 @@ class DownloadStateManager private constructor(private val app: Application) {
                         }
                         is TumblrShareParseResult.Error -> {
                             retryAfterLogin = false
-                            reviewAfterLogin = false
                             _parseEvent.tryEmit(ParseEvent.Message(localizeError(result.message)))
                         }
                         is TumblrShareParseResult.Empty -> {
                             retryAfterLogin = false
-                            reviewAfterLogin = false
                             _parseEvent.tryEmit(ParseEvent.Message(localizeError(result.message)))
                         }
                     }
@@ -287,6 +278,19 @@ class DownloadStateManager private constructor(private val app: Application) {
             }
         }
         return true
+    }
+
+    /**
+     * Send freshly parsed media either to the picker or straight to the
+     * queue. Split out of [enqueueFromUrl] so the routing rule — and the
+     * preference that drives it — can be unit-tested without a network parse.
+     */
+    internal fun routeParsedMedia(candidates: List<ParsedTumblrMedia>, autoDownloadAll: Boolean) {
+        if (autoDownloadAll) {
+            cmdCh.trySend(Cmd.Append(candidates))
+        } else {
+            offerMediaPreview(candidates)
+        }
     }
 
     /**
@@ -406,8 +410,6 @@ class DownloadStateManager private constructor(private val app: Application) {
         pendingLoginUrl = null
         if (url != null) {
             retryUrlPending = url
-            // Carry the "show the picker" intent across the login detour.
-            reviewNextParse = reviewAfterLogin
         }
         return url
     }
@@ -418,7 +420,6 @@ class DownloadStateManager private constructor(private val app: Application) {
      */
     fun endLoginRetry() {
         retryUrlPending = null
-        reviewNextParse = false
     }
 
     /** Emit a one-shot parse event from outside (e.g. cookie sync notice). */

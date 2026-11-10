@@ -869,6 +869,47 @@ class DownloadStateManagerTest {
         )
     }
 
+    // ── auto-download-all switch ───────────────────────────────────────
+
+    @Test
+    fun routeParsedMedia_pickerEnabledOpensPickerAndQueuesNothing() = runTest(testDispatcher) {
+        val urls = (1..2).map {
+            "https://64.media.tumblr.com/preview-route-$it-${java.util.UUID.randomUUID()}.jpg"
+        }
+
+        stateManager.routeParsedMedia(urls.map(::media), autoDownloadAll = false)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertNotNull(
+            "with auto-download off the user must confirm first",
+            stateManager.mediaPreview.value
+        )
+        assertTrue(
+            "nothing may reach the queue before confirmation",
+            stateManager.items.value.isEmpty()
+        )
+    }
+
+    @Test
+    fun routeParsedMedia_autoDownloadAllQueuesEverythingWithoutPicker() = runTest(testDispatcher) {
+        val urls = (1..2).map {
+            "https://64.media.tumblr.com/preview-auto-$it-${java.util.UUID.randomUUID()}.jpg"
+        }
+
+        stateManager.routeParsedMedia(urls.map(::media), autoDownloadAll = true)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertNull(
+            "auto-download must never open the picker",
+            stateManager.mediaPreview.value
+        )
+        assertEquals(
+            "every parsed file must be queued",
+            2,
+            stateManager.items.value.size
+        )
+    }
+
     private fun media(mediaUrl: String) = ParsedTumblrMedia(
         sourceUrl = "https://www.tumblr.com/blog/test/${mediaUrl.hashCode()}",
         mediaUrl = mediaUrl,
