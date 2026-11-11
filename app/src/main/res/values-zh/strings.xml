@@ -237,6 +237,7 @@
     <plurals name="blog_detail_item_count">
         <item quantity="other">该博客共 %1$d 条</item>
     </plurals>
+    <string name="blog_detail_wait_for_parse">博客仍在解析中，请稍后再进入详情</string>
 
     <!-- Pre-download media picker -->
     <string name="media_preview_title">选择要下载的媒体</string>

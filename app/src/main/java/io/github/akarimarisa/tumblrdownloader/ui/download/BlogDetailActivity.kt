@@ -76,7 +76,9 @@ class BlogDetailActivity : AppCompatActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.downloads.collect { list ->
-                    val filtered = list.filter { it.batchId == jobId }
+                    // Blog-wide predicate, same as the card (#10).
+                    val blogName = intent.getStringExtra(EXTRA_BLOG_NAME)?.ifBlank { null }
+                    val filtered = blogBatchOf(list, jobId, blogName)
                     adapter.submitList(filtered)
                     binding.tvEmpty.isVisible = filtered.isEmpty()
                     binding.tvDetailSummary.text = resources.getQuantityString(

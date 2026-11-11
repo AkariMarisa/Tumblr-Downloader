@@ -14,6 +14,7 @@ import io.github.akarimarisa.tumblrdownloader.R
 import io.github.akarimarisa.tumblrdownloader.databinding.ItemBlogJobBinding
 import io.github.akarimarisa.tumblrdownloader.db.BlogDownloadJobEntity
 import io.github.akarimarisa.tumblrdownloader.model.BlogJobState
+import io.github.akarimarisa.tumblrdownloader.model.DownloadItem
 
 /**
  * UI state for one blog-job card: the durable [BlogDownloadJobEntity] plus
@@ -39,6 +40,57 @@ data class BlogCardUi(
     val done: Boolean get() = job.state() == BlogJobState.DONE
     /** No batch items (everything already downloaded → nothing left) or every item completed. */
     val completedAll: Boolean get() = done && (total == 0 || completed >= total)
+}
+
+/** Percent (−1 = indeterminate) for the card's progress bar. */
+data class BlogCardProgress(val percent: Int, val indeterminate: Boolean)
+
+/**
+ * Progress for a card: media (completed/total) wins as soon as there is
+ * anything to count.
+ *
+ * While the scan runs, the posts-seen percent sits at 0 for a large blog —
+ * `totalPosts` is an API upper bound and integer division quantizes to 0 — so
+ * preferring it made the bar look frozen until Pause flipped the card out of
+ * the "active" branch (#8). Media progress is capped at 99 until the job is
+ * done, so the bar never claims completion while the scan is still running.
+ */
+fun blogCardProgress(ui: BlogCardUi, postsSeen: Int): BlogCardProgress {
+    val mediaPct = if (ui.total > 0) ui.completed * 100 / ui.total else -1
+    val percent = when {
+        mediaPct >= 0 && ui.active -> mediaPct.coerceIn(0, 99)
+        mediaPct >= 0 -> if (ui.completedAll) 100 else mediaPct.coerceIn(0, 99)
+        ui.active -> scanProgressPercent(ui.job, postsSeen)
+        ui.job.state() == BlogJobState.DONE -> 100
+        else -> scanProgressPercent(ui.job, postsSeen)
+    }
+    return BlogCardProgress(percent, percent < 0)
+}
+
+/** Posts-seen progress, or −1 while `totalPosts` is still unknown. */
+fun scanProgressPercent(job: BlogDownloadJobEntity, postsSeen: Int): Int =
+    if (job.totalPosts != null && job.totalPosts > 0) {
+        (postsSeen * 100 / job.totalPosts).coerceIn(0, 99)
+    } else {
+        -1
+    }
+
+/**
+ * Rows that back this blog card: its own batch plus leftovers from an earlier
+ * card of the same blog.
+ *
+ * Removing a card keeps its completed rows (they are what the files on disk
+ * are counted against) under the old `batchId`, and re-adding the blog mints a
+ * fresh `jobId` — a job-scoped filter hid all of them, so the card reported
+ * 46 completed while 86 files existed (#10).
+ */
+fun blogBatchOf(
+    items: List<DownloadItem>,
+    jobId: String,
+    blogName: String?
+): List<DownloadItem> = items.filter {
+    it.batchId == jobId ||
+        (blogName != null && it.batchId != null && it.blogName == blogName)
 }
 
 class BlogJobAdapter(
@@ -91,33 +143,10 @@ class BlogJobAdapter(
                 R.plurals.blog_job_stats, posts, posts, job.mediaEnqueued
             )
 
-            // Progress bar:
-            //  - parsing → posts-seen progress (capped at 99)
-            //  - downloads tracked → completed/total media; the bar only
-            //    reaches 100 when every media file is downloaded.
-            val progress: Int
-            val indeterminate: Boolean
-            when {
-                ui.active -> {
-                    progress = scanProgress(job, posts)
-                    indeterminate = progress < 0
-                }
-                ui.total > 0 -> {
-                    val pct = ui.completed * 100 / ui.total
-                    progress = if (ui.completedAll) 100 else pct.coerceIn(0, 99)
-                    indeterminate = false
-                }
-                state == BlogJobState.DONE -> {
-                    progress = 100
-                    indeterminate = false
-                }
-                else -> {
-                    progress = scanProgress(job, posts)
-                    indeterminate = progress < 0
-                }
-            }
-            binding.pbProgress.isIndeterminate = indeterminate
-            if (progress >= 0) binding.pbProgress.progress = progress
+            // Progress bar — see [blogCardProgress] for the precedence rules.
+            val progress = blogCardProgress(ui, posts)
+            binding.pbProgress.isIndeterminate = progress.indeterminate
+            if (progress.percent >= 0) binding.pbProgress.progress = progress.percent
 
             // Download summary line under the bar (media done / media total).
             binding.tvSummary.isVisible = false
@@ -126,11 +155,13 @@ class BlogJobAdapter(
                     text = ctx.getString(R.string.blog_job_download_complete, ui.total)
                     isVisible = true
                 }
-                (ui.done || state == BlogJobState.CANCELLED) && ui.total > 0 ->
-                    binding.tvSummary.apply {
-                        text = ctx.getString(R.string.blog_job_download_progress, ui.completed, ui.total)
-                        isVisible = true
-                    }
+                // Shown for every state — including while the scan is still
+                // running — so the numbers are readable instead of appearing
+                // only after a pause (#8).
+                ui.total > 0 -> binding.tvSummary.apply {
+                    text = ctx.getString(R.string.blog_job_download_progress, ui.completed, ui.total)
+                    isVisible = true
+                }
             }
 
             binding.tvError.isVisible = job.errorCode != null && state == BlogJobState.BLOCKED
@@ -154,16 +185,14 @@ class BlogJobAdapter(
             }
             binding.btnResume.isVisible = canResume
             binding.btnResume.setOnClickListener { onResume(job) }
-            binding.btnRemove.isVisible = !ui.active && !ui.running
+            // Remove stays available in every state: the manager cancels the
+            // scan, finishes a pending confirmation and keeps completed rows
+            // (a confirm dialog guards the action), so hiding it while the job
+            // was running only made it look like the button was broken (#9).
+            binding.btnRemove.isVisible = true
             binding.btnRemove.setOnClickListener { onRemove(job) }
         }
 
-        private fun scanProgress(job: BlogDownloadJobEntity, posts: Int): Int =
-            if (job.totalPosts != null && job.totalPosts > 0) {
-                (posts * 100 / job.totalPosts).coerceIn(0, 99)
-            } else {
-                -1
-            }
     }
 
     companion object {

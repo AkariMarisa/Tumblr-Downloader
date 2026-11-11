@@ -245,6 +245,7 @@
         <item quantity="one">%1$d item from this blog</item>
         <item quantity="other">%1$d items from this blog</item>
     </plurals>
+    <string name="blog_detail_wait_for_parse">This blog is still being parsed — try the details in a moment</string>
 
     <!-- Pre-download media picker -->
     <string name="media_preview_title">Choose what to download</string>

@@ -314,7 +314,9 @@ class DownloadStateManager private constructor(private val app: Application) {
             fresh.isEmpty() -> _parseEvent.tryEmit(
                 ParseEvent.Message(localizedString(R.string.parse_duplicate_skipped))
             )
-            fresh.size == 1 -> cmdCh.trySend(Cmd.Append(fresh))
+            // Even a single fresh file goes through the picker: with the
+            // "auto-download all media" switch off the user asked to choose,
+            // and "skip" is a valid choice for a one-file post too.
             else -> _mediaPreview.value = MediaPreviewRequest(
                 id = java.util.UUID.randomUUID().toString(),
                 items = fresh
@@ -1115,17 +1117,8 @@ class DownloadStateManager private constructor(private val app: Application) {
         return fallback.substringBeforeLast('.').ifBlank { "media" }
     }
 
-    private fun inferExtension(mediaUrl: String): String {
-        val path = runCatching { Uri.parse(mediaUrl).lastPathSegment.orEmpty() }.getOrDefault("")
-        val rawExt = path.substringAfterLast('.', "").lowercase(java.util.Locale.getDefault())
-        // Map non-standard Tumblr extensions to standard ones so saved files are
-        // recognizable by gallery apps and file managers.
-        val mapped = when (rawExt) {
-            "pnj" -> "png"
-            else -> rawExt
-        }
-        return if (mapped in setOf("jpg", "jpeg", "png", "gif", "webp", "avif", "mp4", "m3u8", "mov", "webm")) mapped else "bin"
-    }
+    /** Delegates to [DownloadUtils.inferExtension] — the shared, tested copy. */
+    private fun inferExtension(mediaUrl: String): String = DownloadUtils.inferExtension(mediaUrl)
 
     /** Map known English parser error messages to localized strings. */
     private fun localizeError(msg: String): String {

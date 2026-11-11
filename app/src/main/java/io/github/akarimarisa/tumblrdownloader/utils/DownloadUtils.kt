@@ -25,6 +25,71 @@ object DownloadUtils {
             .ifBlank { fallback }
     }
 
+    /** Extensions this app is willing to save a file under. */
+    private val KNOWN_EXTENSIONS =
+        setOf("jpg", "jpeg", "png", "gif", "webp", "avif", "mp4", "m3u8", "mov", "webm")
+
+    /**
+     * Best-effort file extension for a media URL — the single source of truth
+     * for both the saved file name and the queue title (this logic used to
+     * live in two copies that could drift apart).
+     *
+     * Why the URL alone is not enough: Tumblr serves plenty of media from
+     * extensionless `media.tumblr.com/...` paths, and the query string can
+     * carry the type instead (`?format=gif`). Everything else — including
+     * `.gifv`, which the picker counts as a GIF — is normalised here so the
+     * picker and the file on disk agree. `bin` stays as the last resort; the
+     * download then renames the file from the response Content-Type.
+     */
+    fun inferExtension(mediaUrl: String): String {
+        val uri = runCatching { Uri.parse(mediaUrl) }.getOrNull() ?: return "bin"
+        val pathExt = uri.lastPathSegment.orEmpty()
+            .substringAfterLast('.', "")
+            .lowercase(Locale.ROOT)
+            .takeIf { it.isNotEmpty() && it.all { c -> c.isLetterOrDigit() } }
+        val formatExt = uri.getQueryParameter("format")?.lowercase(Locale.ROOT)
+        return listOfNotNull(pathExt, formatExt)
+            .firstNotNullOfOrNull { standardizeExtension(it) } ?: "bin"
+    }
+
+    private fun standardizeExtension(ext: String): String? = when (ext) {
+        // Non-standard Tumblr extensions → standard ones, so gallery apps and
+        // file managers recognise the file.
+        "pnj" -> "png"
+        "gifv" -> "gif"
+        else -> ext.takeIf { it in KNOWN_EXTENSIONS }
+    }
+
+    /** MIME type for a known extension; unknown → binary (matches `bin`). */
+    fun inferMimeType(ext: String): String = when (ext.lowercase(Locale.ROOT)) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "png" -> "image/png"
+        "gif" -> "image/gif"
+        "webp" -> "image/webp"
+        "avif" -> "image/avif"
+        "mp4" -> "video/mp4"
+        "m3u8" -> "application/vnd.apple.mpegurl"
+        "mov" -> "video/quicktime"
+        "webm" -> "video/webm"
+        else -> "application/octet-stream"
+    }
+
+    /** Extension for a response `Content-Type`, or null when it says nothing useful. */
+    fun extensionForMimeType(mimeType: String?): String? {
+        val mime = mimeType?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT) ?: return null
+        return when (mime) {
+            "image/jpeg" -> "jpg"
+            "image/png" -> "png"
+            "image/gif" -> "gif"
+            "image/webp" -> "webp"
+            "image/avif" -> "avif"
+            "video/mp4" -> "mp4"
+            "video/webm" -> "webm"
+            "video/quicktime" -> "mov"
+            else -> null
+        }
+    }
+
     /**
      * Default download folder name: fixed to English so that Chinese
      * characters/spaces are not garbled after sanitization. The fixed name

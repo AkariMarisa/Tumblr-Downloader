@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -94,6 +95,15 @@ class BlogDownloadManager private constructor(
             ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO
         ): BlogDownloadManager =
             BlogDownloadManager(app, gateway, stateManager, ioDispatcher)
+
+        /** Queue rows a scan may leave behind before it waits for downloads to catch up (#12). */
+        private const val MAX_QUEUE_ROWS = 3_000
+
+        /** Poll interval while waiting for the queue to drain. */
+        private const val QUEUE_DRAIN_POLL_MS = 1_000L
+
+        /** Cap on that wait (30 min) so a permanently stuck queue can't pin a worker forever. */
+        private const val MAX_QUEUE_DRAIN_STEPS = 1_800
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -103,6 +113,24 @@ class BlogDownloadManager private constructor(
     private val activeJobs = ConcurrentHashMap<String, Job>()
     private val cancelFlags = ConcurrentHashMap<String, Boolean>()
     private val confirmGates = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+
+    /**
+     * Jobs whose long-blog confirmation is not decided yet — from worker start
+     * until the gate is answered (or passed).
+     *
+     * The Download list uses it to hold the user on the list while the
+     * "确定要下载该博客" dialog is pending: that dialog is attached to
+     * MainActivity, so opening the detail screen first would leave it hidden
+     * behind the detail activity and it would only pop up on the way back.
+     */
+    private val _confirmPending = MutableStateFlow<Set<String>>(emptySet())
+    val confirmPending: StateFlow<Set<String>> = _confirmPending.asStateFlow()
+
+    private fun setConfirmPending(jobId: String, pending: Boolean) {
+        _confirmPending.update { current ->
+            if (pending) current + jobId else current - jobId
+        }
+    }
     private val jobOptions = ConcurrentHashMap<String, BlogDownloadOptions>()
     private val stateMutex = Mutex()
     private val _activeJobIds = MutableStateFlow<Set<String>>(emptySet())
@@ -388,6 +416,9 @@ class BlogDownloadManager private constructor(
             } finally {
                 activeJobs.remove(jobId)
                 untrackActive(jobId)
+                // Safety net: a worker that died before reaching the gate
+                // must not leave the list locked out of the detail screen.
+                setConfirmPending(jobId, false)
             }
             val reason = blocked
             if (reason != null) {
@@ -402,8 +433,27 @@ class BlogDownloadManager private constructor(
         trackActive(jobId)
     }
 
+    /**
+     * Waits until the queue drops below [MAX_QUEUE_ROWS], the job is paused or
+     * removed (its cancel flag), or [MAX_QUEUE_DRAIN_STEPS] polls elapse.
+     */
+    private suspend fun awaitQueueCapacity(jobId: String) {
+        var steps = 0
+        while (
+            stateManager.items.value.size > MAX_QUEUE_ROWS &&
+            !cancelFlags.containsKey(jobId) &&
+            steps < MAX_QUEUE_DRAIN_STEPS
+        ) {
+            delay(QUEUE_DRAIN_POLL_MS)
+            steps++
+        }
+    }
+
     private suspend fun runWorker(initialJob: BlogDownloadJobEntity) {
         val jobId = initialJob.jobId
+        // Until the long-blog gate is answered (or passed) the list must not
+        // navigate away: the confirm dialog belongs to MainActivity.
+        setConfirmPending(jobId, true)
         var job = initialJob
         val blogName = job.blogName
         val opts = jobOptions[jobId] ?: BlogDownloadOptions()
@@ -462,6 +512,13 @@ class BlogDownloadManager private constructor(
                     } else {
                         discovered++
                         enqueued += batch.size
+                        // Back-pressure: a blog with tens of thousands of media
+                        // must not pile rows up faster than the queue drains.
+                        // Every append re-normalises the whole queue on the main
+                        // thread, and each row is kept in RAM and serialised on
+                        // every persistence tick — a 4.7k-post blog saturated the
+                        // CPU and ANR'd the app (#12).
+                        awaitQueueCapacity(jobId)
                         stateManager.enqueueBlogAfterParse(batch, jobId, blogName)
                     }
                 }
@@ -521,6 +578,8 @@ class BlogDownloadManager private constructor(
                     break
                 }
             }
+            // Gate decision known (not needed / accepted): detail is safe again.
+            setConfirmPending(jobId, false)
 
             if (cancelFlags.containsKey(jobId)) {
                 break

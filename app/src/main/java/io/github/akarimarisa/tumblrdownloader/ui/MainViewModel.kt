@@ -83,6 +83,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val blogJobs: StateFlow<List<BlogDownloadJobEntity>> = blogManager.jobs
     val blogEvents = blogManager.events
 
+    /** Blog jobs whose long-blog confirmation has not been answered yet. */
+    val blogConfirmPending = blogManager.confirmPending
+
     fun blogIsActive(jobId: String): Boolean = blogManager.isActive(jobId)
     val blogActiveJobIds = blogManager.activeJobIds
     /** Suspends until the card restore has finished and the job card is on disk. */
@@ -99,6 +102,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ── non-download VM state ─────────────────────────────────────────
     private val _autoPasteUrl = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val autoPasteUrl = _autoPasteUrl.asSharedFlow()
+
+    /**
+     * A blog URL waiting for the type dialog (or for a direct start when
+     * "auto download all media" is on).
+     *
+     * A StateFlow rather than a SharedFlow: the DownloadFragment may be
+     * stopped when the clipboard/share hands the URL over (the user is on the
+     * other tab), and the prompt must still arrive once it is visible again —
+     * then it is consumed so it never pops twice.
+     */
+    private val _blogPrompt = MutableStateFlow<String?>(null)
+    val blogPrompt: StateFlow<String?> = _blogPrompt
 
     private val _downloadDirectoryLabel = MutableStateFlow(DownloadUtils.getDownloadDirectoryLabel(appContext))
     val downloadDirectoryLabel: StateFlow<String> = _downloadDirectoryLabel.asStateFlow()
@@ -213,6 +228,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun notifyFromClipboard(url: String) {
         viewModelScope.launch { _autoPasteUrl.emit(url) }
+    }
+
+    /** Ask the Download tab to run a blog URL through [promptBlogOptions]. */
+    fun promptBlogOptions(url: String) {
+        _blogPrompt.value = url
+    }
+
+    /** The Download tab took the prompt — don't show it again. */
+    fun consumeBlogPrompt() {
+        _blogPrompt.value = null
     }
 
     fun setTumblrAccount(username: String) {

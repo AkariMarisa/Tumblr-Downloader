@@ -103,6 +103,23 @@ class DownloadFragment : Fragment() {
             }
         }
 
+        // Blog URL handed over by the clipboard auto-detect or a share: run it
+        // through the type dialog (which starts the scan outright when
+        // "auto download all media" is on). StateFlow + STARTED, so a prompt
+        // raised while this tab was in the background still shows up here.
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.blogPrompt.collect { url ->
+                    if (url.isNullOrBlank()) return@collect
+                    viewModel.consumeBlogPrompt()
+                    if (_binding == null) return@collect
+                    binding.etUrl.setText(url)
+                    binding.etUrl.setSelection(url.length)
+                    promptBlogOptions(url)
+                }
+            }
+        }
+
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.parseEvent.collect { event ->
                 when (event) {

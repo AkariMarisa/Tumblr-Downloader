@@ -45,11 +45,12 @@ import kotlinx.coroutines.sync.Semaphore
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import android.provider.MediaStore
+import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import java.io.IOException
 import java.io.OutputStream
 import java.util.Collections
 import java.util.Locale
-import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
@@ -942,7 +943,7 @@ class DownloadService : Service() {
 
             // ── download ───────────────────────────────────────────────────
             try {
-                downloadWithRateLimit(
+                val contentType = downloadWithRateLimit(
                     mediaUrl = current.mediaUrl,
                     outputStream = output.outputStream,
                     offsetBytes = if (isResume) current.downloadedBytes else 0L
@@ -962,8 +963,20 @@ class DownloadService : Service() {
                     )
                 }
                 output.onSuccess()
+                // Extensionless URLs were saved as `.bin`; the response knows
+                // the real type, so rename the file (and the queue title).
+                val (finalUri, finalTitle) = applyDetectedExtension(output.uri, contentType, current)
+                if (finalUri != output.uri) downloadTargetMap[current.id] = finalUri
                 CompletedMediaStore.markCompleted(this@DownloadService, current.mediaUrl)
-                emitProgress(current.copy(status = DownloadStatus.COMPLETED, progress = 100, errorMessage = null))
+                emitProgress(
+                    current.copy(
+                        status = DownloadStatus.COMPLETED,
+                        progress = 100,
+                        errorMessage = null,
+                        title = finalTitle,
+                        downloadFileUri = finalUri.toString()
+                    )
+                )
                 return
             } catch (e: CancellationException) {
                 // ── pause ── save state so we can resume from this position
@@ -1135,7 +1148,7 @@ class DownloadService : Service() {
         outputStream: OutputStream,
         offsetBytes: Long = 0L,
         onProgress: (downloaded: Long, total: Long, speedBytesPerSecond: Long) -> Unit
-    ) {
+    ): String? {
         val requestBuilder = Request.Builder()
             .url(mediaUrl)
             .get()
@@ -1152,7 +1165,11 @@ class DownloadService : Service() {
         val request = requestBuilder.build()
         val response = client.newCall(request).execute()
         android.util.Log.d("DownloadSvc", "downloadWithRateLimit: response code=${response.code}, len=${response.body?.contentLength()}")
+        // Handed back to the caller so an extensionless URL can be renamed to
+        // what the server actually served (`.bin` → `.gif`, see #7).
+        var contentType: String? = null
         response.use { safeResponse ->
+            contentType = safeResponse.header("Content-Type")
             // ponytail: when we sent a Range header but the server returned 200
             // (full content) instead of 206 (partial), the server doesn't support
             // resumable downloads.  Also handle 416 (Range Not Satisfiable).
@@ -1226,6 +1243,7 @@ class DownloadService : Service() {
                 }
             }
         }
+        return contentType
     }
 
     private suspend fun enforceRateLimit(downloadedBytesThisSession: Long, startTimeMs: Long) {
@@ -1374,8 +1392,22 @@ class DownloadService : Service() {
         val rootDir = runCatching { DocumentFile.fromTreeUri(this, rootUri) }.getOrNull() ?: return null
         if (!rootDir.isDirectory || !rootDir.canWrite()) return null
 
-        val availableName = resolveUniqueName(rootDir, fileName)
-        val file = rootDir.createFile(mimeType, availableName) ?: return null
+        // Re-download overwrites the file that is already there instead of
+        // spawning a copy: the row can leave the list (red X / clear history)
+        // while the bytes stay on disk, and a second file with "_1"/"(1)"
+        // appended is exactly what users reported (#4).
+        val existing = runCatching { rootDir.findFile(fileName) }.getOrNull()
+        if (existing != null && existing.isFile) {
+            val overwrite = contentResolver.openOutputStream(existing.uri, "wt") ?: return null
+            return DownloadTarget(
+                uri = existing.uri,
+                outputStream = overwrite,
+                onSuccess = { /* already visible in the custom dir */ },
+                onFailure = { /* the next attempt overwrites again */ }
+            )
+        }
+
+        val file = rootDir.createFile(mimeType, fileName) ?: return null
         val output = contentResolver.openOutputStream(file.uri) ?: return null
         return DownloadTarget(
             uri = file.uri,
@@ -1401,14 +1433,27 @@ class DownloadService : Service() {
 
         val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/$folderName"
 
-        // Let MediaStore handle naming conflicts naturally — it appends "(1)",
-        // "(2)", etc. when the DISPLAY_NAME already exists in its database.
-        // We no longer delete stale files/rows so re-downloads won't overwrite
-        // previously saved files.
+        // Re-download overwrites the row that is already there instead of
+        // letting MediaStore append "(1)": the row can leave the list (red X /
+        // clear history) while the bytes stay on disk, and a second file with
+        // a numeric suffix is exactly what users reported (#4).
+        findExistingDownload(fileName, relativePath)?.let { existing ->
+            val overwrite = contentResolver.openOutputStream(existing, "wt")
+                ?: throw IOException("Cannot overwrite existing file: $fileName")
+            return DownloadTarget(
+                uri = existing,
+                outputStream = overwrite,
+                onSuccess = {
+                    // The row is already published (IS_PENDING=0) — nothing to flip.
+                },
+                onFailure = { /* the next attempt overwrites again */ }
+            )
+        }
+
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
             put(MediaStore.Downloads.MIME_TYPE, mimeType)
-            put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$folderName")
+            put(MediaStore.Downloads.RELATIVE_PATH, relativePath)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(MediaStore.Downloads.IS_PENDING, 1)
             }
@@ -1434,54 +1479,93 @@ class DownloadService : Service() {
         )
     }
 
-    private fun resolveUniqueName(directory: DocumentFile, fileName: String): String {
-        val lastDot = fileName.lastIndexOf('.')
-        val baseName = if (lastDot > 0) fileName.substring(0, lastDot) else fileName
-        val extension = if (lastDot > 0) fileName.substring(lastDot) else ""
-
-        if (directory.findFile(fileName) == null) {
-            return fileName
-        }
-
-        var index = 1
-        while (index <= 99) {
-            val candidate = "${baseName}_${index}$extension"
-            if (directory.findFile(candidate) == null) {
-                return candidate
+    /**
+     * An already-published MediaStore row with this display name in the
+     * download folder — the file a re-download must overwrite instead of
+     * duplicating (#4). Prefers a published row over a stale pending one so a
+     * fresh download never appends to somebody else's partial file.
+     */
+    private fun findExistingDownload(fileName: String, relativePath: String): Uri? {
+        // minSdk 30 → always the Q+ collection.
+        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val projection = arrayOf(MediaStore.Downloads._ID, MediaStore.Downloads.IS_PENDING)
+        val selection =
+            "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.RELATIVE_PATH} LIKE ?"
+        return runCatching {
+            contentResolver.query(
+                collection,
+                projection,
+                selection,
+                arrayOf(fileName, "$relativePath%"),
+                null
+            )?.use { cursor ->
+                var stalePending: Uri? = null
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID))
+                    val pending = cursor.getInt(
+                        cursor.getColumnIndexOrThrow(MediaStore.Downloads.IS_PENDING)
+                    ) == 1
+                    val uri = ContentUris.withAppendedId(collection, id)
+                    if (!pending) return@use uri
+                    if (stalePending == null) stalePending = uri
+                }
+                stalePending
             }
-            index++
-        }
-
-        val uuidSuffix = UUID.randomUUID().toString().take(4)
-        return "${baseName}_${uuidSuffix}$extension"
+        }.getOrNull()
     }
 
-    private fun inferExtension(mediaUrl: String): String {
-        val path = runCatching { Uri.parse(mediaUrl).lastPathSegment.orEmpty() }.getOrDefault("")
-        val rawExt = path.substringAfterLast('.', "").lowercase(Locale.getDefault())
-        // Map non-standard Tumblr extensions to standard ones so saved files are
-        // recognizable by gallery apps and file managers.
-        val mapped = when (rawExt) {
-            "pnj" -> "png"
-            else -> rawExt
+    /** Delegates to [DownloadUtils.inferExtension] — the shared, tested copy. */
+    private fun inferExtension(mediaUrl: String): String = DownloadUtils.inferExtension(mediaUrl)
+
+    /** Delegates to [DownloadUtils.inferMimeType] — the shared, tested copy. */
+    private fun inferMimeType(ext: String): String = DownloadUtils.inferMimeType(ext)
+
+    /**
+     * Renames a file whose extension had to fall back to `bin` using the
+     * response `Content-Type`.
+     *
+     * Tumblr serves a lot of media (notably GIFs) from extensionless
+     * `media.tumblr.com/...` paths, so URL-based inference cannot know the
+     * type — but the server does. MediaStore rows are renamed in place; SAF
+     * documents get `DocumentsContract.renameDocument`, which returns a new
+     * uri. Returns the final uri and the matching queue title.
+     */
+    private fun applyDetectedExtension(
+        uri: Uri,
+        contentType: String?,
+        item: DownloadItem
+    ): Pair<Uri, String> {
+        if (inferExtension(item.mediaUrl) != "bin") return uri to item.title
+        val ext = DownloadUtils.extensionForMimeType(contentType) ?: return uri to item.title
+        val name = displayNameOf(uri) ?: return uri to item.title
+        val base = name.substringBeforeLast('.', name)
+        if (base.isEmpty()) return uri to item.title
+        val newName = "$base.$ext"
+
+        val finalUri = if (uri.authority == MediaStore.AUTHORITY) {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, newName)
+                put(MediaStore.Downloads.MIME_TYPE, DownloadUtils.inferMimeType(ext))
+            }
+            runCatching { contentResolver.update(uri, values, null, null) }
+                .getOrNull()?.takeIf { it > 0 } ?: return uri to item.title
+            uri
+        } else {
+            runCatching { DocumentsContract.renameDocument(contentResolver, uri, newName) }
+                .getOrNull() ?: return uri to item.title
         }
-        return if (mapped in setOf("jpg", "jpeg", "png", "gif", "webp", "avif", "mp4", "m3u8", "mov", "webm")) mapped else "bin"
+
+        val titleBase = item.title.substringBeforeLast('.', item.title)
+        return finalUri to "$titleBase.$ext"
     }
 
-    private fun inferMimeType(ext: String): String {
-        return when (ext.lowercase(Locale.getDefault())) {
-            "jpg", "jpeg" -> "image/jpeg"
-            "png" -> "image/png"
-            "gif" -> "image/gif"
-            "webp" -> "image/webp"
-            "avif" -> "image/avif"
-            "mp4" -> "video/mp4"
-            "m3u8" -> "application/vnd.apple.mpegurl"
-            "mov" -> "video/quicktime"
-            "webm" -> "video/webm"
-            else -> "application/octet-stream"
-        }
-    }
+    /** Display name of a MediaStore row or a SAF document, whatever the uri points at. */
+    private fun displayNameOf(uri: Uri): String? = runCatching {
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+    }.getOrNull()
 
     private fun emitProgress(item: DownloadItem) {
         when (item.status) {

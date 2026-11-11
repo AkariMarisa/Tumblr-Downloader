@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
@@ -18,6 +19,8 @@ import io.github.akarimarisa.tumblrdownloader.model.DownloadItem
 import io.github.akarimarisa.tumblrdownloader.model.DownloadStatus
 import io.github.akarimarisa.tumblrdownloader.ui.MainViewModel
 import io.github.akarimarisa.tumblrdownloader.ui.media.MediaViewerActivity
+import io.github.akarimarisa.tumblrdownloader.utils.LocaleHelper
+import io.github.akarimarisa.tumblrdownloader.utils.LocalizedToast
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
@@ -43,9 +46,21 @@ class DownloadsFragment : Fragment() {
 
     private val blogJobAdapter = BlogJobAdapter(
         onDetail = { job ->
-            startActivity(
-                BlogDetailActivity.newIntent(requireContext(), job.jobId, job.blogName)
-            )
+            // The long-blog confirmation dialog belongs to MainActivity, so
+            // entering the detail screen first would park it behind that
+            // activity — it would only pop up on the way back (#6). Hold the
+            // user on the list until the gate decision is known.
+            if (viewModel.blogConfirmPending.value.contains(job.jobId)) {
+                LocalizedToast.show(
+                    toastContext(),
+                    R.string.blog_detail_wait_for_parse,
+                    Toast.LENGTH_SHORT
+                )
+            } else {
+                startActivity(
+                    BlogDetailActivity.newIntent(requireContext(), job.jobId, job.blogName)
+                )
+            }
         },
         onResume = { job -> viewModel.resumeBlogJob(job.jobId) },
         onPause = { job -> viewModel.pauseBlogCard(job.jobId) },
@@ -94,7 +109,9 @@ class DownloadsFragment : Fragment() {
                     viewModel.blogActiveJobIds
                 ) { (jobs, items), activeIds ->
                     jobs.map { job ->
-                        val batch = items.filter { it.batchId == job.jobId }
+                        // Blog-wide (not job-scoped) so files kept from an
+                        // earlier card still count — see [blogBatchOf] (#10).
+                        val batch = blogBatchOf(items, job.jobId, job.blogName)
                         BlogCardUi(
                             job = job,
                             active = job.jobId in activeIds,
@@ -124,6 +141,8 @@ class DownloadsFragment : Fragment() {
         binding.tvEmpty.visibility =
             if (standaloneEmpty && blogCardsEmpty) View.VISIBLE else View.GONE
     }
+
+    private fun toastContext() = LocaleHelper.contextForAppLocale(requireContext())
 
     override fun onResume() {
         super.onResume()

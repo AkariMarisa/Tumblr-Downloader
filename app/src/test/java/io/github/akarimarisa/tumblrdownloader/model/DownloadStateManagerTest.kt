@@ -795,18 +795,20 @@ class DownloadStateManagerTest {
     }
 
     @Test
-    fun mediaPreview_singleFreshItemEnqueuesWithoutPicker() = runTest(testDispatcher) {
+    fun mediaPreview_singleFreshItemStillOpensPicker() = runTest(testDispatcher) {
         val url = "https://64.media.tumblr.com/preview-single-${java.util.UUID.randomUUID()}.jpg"
         stateManager.offerMediaPreviewForTest(listOf(media(url)))
         testDispatcher.scheduler.advanceUntilIdle()
 
-        assertNull("a single item must not need a confirmation screen", stateManager.mediaPreview.value)
+        val request = stateManager.mediaPreview.value
+        assertNotNull(
+            "with auto-download off a single file must still be reviewable",
+            request
+        )
+        assertEquals(1, request!!.items.size)
         assertTrue(
-            "the single item must be queued directly",
-            stateManager.items.value.any {
-                DownloadUtils.normalizeMediaIdentity(it.mediaUrl) ==
-                    DownloadUtils.normalizeMediaIdentity(url)
-            }
+            "nothing may reach the queue before confirmation",
+            stateManager.items.value.isEmpty()
         )
     }
 
