@@ -52,6 +52,13 @@ class DownloadStateManager private constructor(private val app: Application) {
         private const val PREFS_NAME = "tumblr_downloader"
         private const val PREF_MAX_CONCURRENT = "max_concurrent_downloads"
 
+        /**
+         * Rows per PAUSE/REMOVE intent. Small enough to stay far below the
+         * binder transaction limit, large enough that a whole card costs a
+         * handful of calls (#13).
+         */
+        private const val ITEM_IDS_PER_INTENT = 500
+
         @Volatile
         private var instance: DownloadStateManager? = null
 
@@ -149,6 +156,7 @@ class DownloadStateManager private constructor(private val app: Application) {
         data class PauseBatch(val batchId: String) : Cmd()
         data class ResumeBatch(val batchId: String) : Cmd()
         data class RemoveBatch(val batchId: String) : Cmd()
+        data class AdoptBatch(val blogName: String, val jobId: String) : Cmd()
     }
 
     private val cmdCh = Channel<Cmd>(Channel.UNLIMITED)
@@ -397,6 +405,15 @@ class DownloadStateManager private constructor(private val app: Application) {
      */
     fun removeBatch(batchId: String) { cmdCh.trySend(Cmd.RemoveBatch(batchId)) }
 
+    /**
+     * Give [jobId] ownership of every row of [blogName] that another card
+     * (possibly one that no longer exists) had tagged. See
+     * [processAdoptBatch] for why a card must inherit them.
+     */
+    fun adoptBatchItems(blogName: String, jobId: String) {
+        cmdCh.trySend(Cmd.AdoptBatch(blogName, jobId))
+    }
+
     fun peekPendingLoginUrl(): String? = pendingLoginUrl
 
     /** Mark the next parse attempt as a post-login retry. */
@@ -450,6 +467,7 @@ class DownloadStateManager private constructor(private val app: Application) {
             is Cmd.PauseBatch -> processPauseBatch(cmd.batchId)
             is Cmd.ResumeBatch -> processResumeBatch(cmd.batchId)
             is Cmd.RemoveBatch -> processRemoveBatch(cmd.batchId)
+            is Cmd.AdoptBatch -> processAdoptBatch(cmd.blogName, cmd.jobId)
             is Cmd.Progress -> processProgress(cmd.item)
         }
         // persistDirty() used to be called unconditionally for every command: the
@@ -738,8 +756,10 @@ class DownloadStateManager private constructor(private val app: Application) {
         // Tell the service to cancel the batch's in-flight download jobs.
         // Paused-while-queued rows aren't in the service yet, so their
         // ACTION_PAUSE is simply consumed and ignored there.
-        _items.value.filter { it.batchId == batchId && it.status == DownloadStatus.PAUSED }
-            .forEach { sendPauseIntent(it.id) }
+        sendPauseBatchIntent(
+            _items.value.filter { it.batchId == batchId && it.status == DownloadStatus.PAUSED }
+                .map { it.id }
+        )
     }
 
     private fun processResumeBatch(batchId: String) {
@@ -767,6 +787,28 @@ class DownloadStateManager private constructor(private val app: Application) {
         startNextIfSlotAvailable(explicitResume = true)
     }
 
+    /**
+     * Re-tags every row of [blogName] that belongs to another (or vanished)
+     * card onto [jobId].
+     *
+     * Removing a card deletes the card row, but a crash mid-remove — or a
+     * process that dies before the batch purge is persisted — leaves its rows
+     * behind: they then belong to no card, so they show up in no screen yet
+     * are still counted by the next card of that blog, and `removeBatch` can
+     * never reach them again. Adopting them when a card is created makes them
+     * visible, pausable and removable once more (#13 aftermath).
+     */
+    private fun processAdoptBatch(blogName: String, jobId: String) {
+        var changed = false
+        _items.value = _items.value.map { item ->
+            if (item.batchId != null && item.batchId != jobId && item.blogName == blogName) {
+                changed = true
+                item.copy(batchId = jobId)
+            } else item
+        }
+        if (changed) dirty = true
+    }
+
     private fun processRemoveBatch(batchId: String) {
         val toRemove = _items.value.filter {
             it.batchId == batchId && it.status != DownloadStatus.COMPLETED
@@ -776,8 +818,11 @@ class DownloadStateManager private constructor(private val app: Application) {
             item.batchId == batchId && item.status != DownloadStatus.COMPLETED
         }
         dirty = true
-        // Cancel any in-flight service jobs for the batch's unfinished items.
-        toRemove.forEach { sendRemoveIntent(it.id) }
+        // Cancel any in-flight service jobs for the batch's unfinished items —
+        // as ONE intent per chunk, not one startService() per row: a
+        // ten-thousand-row card used to fire ten thousand binder transactions
+        // in a tight loop, which took system_server down with it (#13).
+        sendRemoveBatchIntent(toRemove.map { it.id })
     }
 
     // ── Progress callback (from service) ────────────────────────────────
@@ -992,6 +1037,31 @@ class DownloadStateManager private constructor(private val app: Application) {
             putExtra(DownloadService.EXTRA_ITEM_ID, itemId)
         }
         app.startService(intent)
+    }
+
+    private fun sendRemoveBatchIntent(itemIds: List<String>) =
+        sendItemListIntent(DownloadService.ACTION_REMOVE, itemIds)
+
+    private fun sendPauseBatchIntent(itemIds: List<String>) =
+        sendItemListIntent(DownloadService.ACTION_PAUSE, itemIds)
+
+    /**
+     * One intent per [ITEM_IDS_PER_INTENT] rows instead of one per row.
+     *
+     * Removing or pausing a blog card used to call `startService()` in a tight
+     * loop — one binder transaction into system_server per row. With a
+     * ten-thousand-row card that overloaded the system server and the whole
+     * framework died, taking the app with it (#13).
+     */
+    private fun sendItemListIntent(action: String, itemIds: List<String>) {
+        if (itemIds.isEmpty()) return
+        itemIds.chunked(ITEM_IDS_PER_INTENT).forEach { chunk ->
+            val intent = Intent(app, DownloadService::class.java).apply {
+                this.action = action
+                putStringArrayListExtra(DownloadService.EXTRA_ITEM_IDS, ArrayList(chunk))
+            }
+            app.startService(intent)
+        }
     }
 
     private fun sendClearAllIntent() {

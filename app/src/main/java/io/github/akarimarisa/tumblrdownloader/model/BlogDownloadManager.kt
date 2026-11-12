@@ -277,6 +277,10 @@ class BlogDownloadManager private constructor(
             cancelFlags.remove(job.jobId)
             confirmGates.remove(job.jobId)
             jobOptions[job.jobId] = options
+            // Inherit rows an earlier card of this blog left behind — a crash
+            // mid-remove orphans them with no card left to show or purge them,
+            // so the next card has to adopt them (#13 aftermath).
+            stateManager.adoptBatchItems(blogName, job.jobId)
             // Show the card immediately and persist it before returning.
             _jobs.value = (listOf(job) + _jobs.value.filterNot { it.jobId == job.jobId })
                 .sortedByDescending { it.createdAt }

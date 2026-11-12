@@ -125,6 +125,8 @@ class DownloadService : Service() {
         const val ACTION_RESUME_ALL = "io.github.akarimarisa.tumblrdownloader.action.RESUME_ALL"
 
         const val EXTRA_ITEM_ID = "extra_item_id"
+        /** Batch variant of [EXTRA_ITEM_ID]: one intent for many rows (#13). */
+        const val EXTRA_ITEM_IDS = "extra_item_ids"
         const val EXTRA_SOURCE_URL = "extra_source_url"
         const val EXTRA_MEDIA_URL = "extra_media_url"
         const val EXTRA_TYPE = "extra_type"
@@ -462,12 +464,12 @@ class DownloadService : Service() {
             }
 
             ACTION_PAUSE -> {
-                pauseDownload(intent?.getStringExtra(EXTRA_ITEM_ID))
+                pauseItems(intent.itemIds())
                 return START_STICKY
             }
 
             ACTION_REMOVE -> {
-                removeDownload(intent?.getStringExtra(EXTRA_ITEM_ID))
+                removeItems(intent.itemIds())
                 return START_STICKY
             }
 
@@ -565,37 +567,46 @@ class DownloadService : Service() {
         return START_STICKY
     }
 
-    private fun pauseDownload(itemId: String?) {
-        val id = itemId?.trim().orEmpty()
-        if (id.isBlank()) return
-
-        suspendedItemIds.add(id)
-        queuedItemIds.remove(id)
-        notificationItems[id]?.let { item ->
-            notificationItems[id] = item.copy(status = DownloadStatus.PAUSED)
-        }
-        refreshDownloadNotification()
-        // Cancel the active job if this item is currently downloading
-        val job = activeJobs.remove(id)
-        if (job != null) {
-            job.cancel(CancellationException("Paused by user"))
-        }
+    /**
+     * Ids carried by a PAUSE/REMOVE intent: the batch extra (one intent for a
+     * whole card) or the classic single-id extra.
+     */
+    private fun Intent?.itemIds(): List<String> {
+        val batch = this?.getStringArrayListExtra(EXTRA_ITEM_IDS).orEmpty()
+        val single = this?.getStringExtra(EXTRA_ITEM_ID)?.trim().orEmpty()
+        return (batch + single).filter { it.isNotBlank() }
     }
 
-    private fun removeDownload(itemId: String?) {
-        val id = itemId?.trim().orEmpty()
-        if (id.isBlank()) return
+    private fun pauseItems(itemIds: List<String>) {
+        if (itemIds.isEmpty()) return
+        itemIds.forEach { id ->
+            suspendedItemIds.add(id)
+            queuedItemIds.remove(id)
+            notificationItems[id]?.let { item ->
+                notificationItems[id] = item.copy(status = DownloadStatus.PAUSED)
+            }
+            // Cancel the active job if this item is currently downloading
+            val job = activeJobs.remove(id)
+            if (job != null) {
+                job.cancel(CancellationException("Paused by user"))
+            }
+        }
+        refreshDownloadNotification()
+    }
 
-        removedItemIds.add(id)
-        suspendedItemIds.remove(id)
-        queuedItemIds.remove(id)
-        pauseStateMap.remove(id)
-        downloadTargetMap.remove(id)
-        notificationItems.remove(id)
-        // Cancel the active job if this item is currently downloading
-        val job = activeJobs.remove(id)
-        if (job != null) {
-            job.cancel(CancellationException("Removed by user"))
+    private fun removeItems(itemIds: List<String>) {
+        itemIds.forEach { id ->
+            removedItemIds.add(id)
+            suspendedItemIds.remove(id)
+            queuedItemIds.remove(id)
+            pauseStateMap.remove(id)
+            downloadTargetMap.remove(id)
+            notificationItems.remove(id)
+            // Cancel the active job if this item is currently downloading
+            val job = activeJobs.remove(id)
+            if (job != null) {
+                job.cancel(CancellationException("Removed by user"))
+            }
         }
     }
 

@@ -13,6 +13,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import io.github.akarimarisa.tumblrdownloader.service.DownloadService
 import io.github.akarimarisa.tumblrdownloader.utils.CompletedMediaStore
 import io.github.akarimarisa.tumblrdownloader.utils.DownloadUtils
 import io.github.akarimarisa.tumblrdownloader.utils.ParsedTumblrMedia
@@ -760,6 +761,84 @@ class DownloadStateManagerTest {
             "items without a completed marker are left alone",
             DownloadStatus.FAILED,
             restored["untouched"]?.status
+        )
+    }
+
+    // ── batch service intents (#13) ───────────────────────────────────────
+
+    @Test
+    fun removeBatch_sendsChunkedIntentsInsteadOfOnePerRow() = runTest(testDispatcher) {
+        val rows = (1..1_200).map {
+            item("rm-$it", status = DownloadStatus.QUEUED, batchId = "batch-rm")
+        }
+        stateManager.restore(rows)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.removeBatch("batch-rm")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val started = org.robolectric.Shadows.shadowOf(app).allStartedServices
+            .filter { it.action == DownloadService.ACTION_REMOVE }
+        assertEquals(
+            "one startService() per row would take system_server down (#13)",
+            3,
+            started.size
+        )
+        val ids = started.flatMap {
+            it.getStringArrayListExtra(DownloadService.EXTRA_ITEM_IDS).orEmpty()
+        }
+        assertEquals(1_200, ids.toSet().size)
+        assertTrue(
+            "unfinished rows must be gone",
+            stateManager.items.value.none { it.batchId == "batch-rm" }
+        )
+    }
+
+    @Test
+    fun pauseBatch_sendsChunkedIntentsInsteadOfOnePerRow() = runTest(testDispatcher) {
+        val rows = (1..700).map {
+            item("ps-$it", status = DownloadStatus.QUEUED, batchId = "batch-ps")
+        }
+        stateManager.restore(rows)
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.pauseBatch("batch-ps")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val started = org.robolectric.Shadows.shadowOf(app).allStartedServices
+            .filter { it.action == DownloadService.ACTION_PAUSE }
+        assertEquals(2, started.size)
+        assertEquals(
+            DownloadStatus.PAUSED,
+            stateManager.items.value.first { it.id == "ps-1" }.status
+        )
+    }
+
+    @Test
+    fun adoptBatchItems_takesOverRowsLeftBehindByAVanishedCard() = runTest(testDispatcher) {
+        stateManager.restore(
+            listOf(
+                item("orphan", batchId = "dead-job", blogName = "kthingz"),
+                item("mine", batchId = "new-job", blogName = "kthingz"),
+                item("other-blog", batchId = "dead-other", blogName = "someone-else")
+            )
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.adoptBatchItems("kthingz", "new-job")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val items = stateManager.items.value.associateBy { it.id }
+        assertEquals(
+            "rows of a card that no longer exists must be owned again (#13)",
+            "new-job",
+            items.getValue("orphan").batchId
+        )
+        assertEquals("new-job", items.getValue("mine").batchId)
+        assertEquals(
+            "another blog's rows must stay untouched",
+            "dead-other",
+            items.getValue("other-blog").batchId
         )
     }
 

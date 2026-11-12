@@ -104,9 +104,13 @@ class MigrationTest {
     @Test
     fun migrate_history_empty_legacy_is_noop() = runTest {
         legacyHistoryPrefs().edit().clear().commit()
+        val db = AppDatabase.getInstance(context)
+        // The suites share one Robolectric database, so another test's pending
+        // history write can land after @Before cleared the table. Re-clear here
+        // — this case only asserts that *this* migration adds nothing.
+        db.downloadHistoryDao().deleteAll()
         DownloadHistoryStore.migrateFromSharedPrefs(context)
 
-        val db = AppDatabase.getInstance(context)
         assertTrue(db.downloadHistoryDao().getAll().isEmpty())
     }
 
