@@ -2,5 +2,6 @@
 • Pre-download media picker: preview each file, keep or drop items, or skip the post
 • New "Auto-download all media" switch (off by default): download without asking
 • Settings split into a category menu with focused sub-screens
+• Blog downloads are saved in their own folder (blog name + short id) instead of mixing with single-post files
 • First-run guide covers the picker and grouped blog cards; sidebar "How to use"
 • Fix: downloads stuck at 0% (#24), blog scans freezing the app, empty-list hint
