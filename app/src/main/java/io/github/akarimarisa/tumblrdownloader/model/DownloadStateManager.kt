@@ -520,7 +520,7 @@ class DownloadStateManager private constructor(private val app: Application) {
                 DownloadItem(
                     sourceUrl = media.sourceUrl,
                     mediaUrl = media.mediaUrl,
-                    title = displayFileName(media.sourceUrl, media.mediaUrl),
+                    title = displayFileName(media.sourceUrl, media.mediaUrl, cmd.blogName),
                     type = media.type,
                     createdAt = baseTime + index,
                     batchId = cmd.batchId,
@@ -1015,6 +1015,11 @@ class DownloadStateManager private constructor(private val app: Application) {
             if (!item.downloadFileUri.isNullOrBlank()) {
                 putExtra(DownloadService.EXTRA_FILE_URI, item.downloadFileUri)
             }
+            // Batch metadata: the service needs it to route blog files into
+            // their own folder (#14) — its rebuilt item would otherwise look
+            // like a standalone download.
+            item.batchId?.let { putExtra(DownloadService.EXTRA_BATCH_ID, it) }
+            item.blogName?.let { putExtra(DownloadService.EXTRA_BLOG_NAME, it) }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             app.startForegroundService(intent)
@@ -1152,39 +1157,16 @@ class DownloadStateManager private constructor(private val app: Application) {
 
     // ── Display helpers ─────────────────────────────────────────────────
 
-    private fun displayFileName(sourceUrl: String, mediaUrl: String): String {
-        val author = sourceAuthor(sourceUrl)
-        val mediaId = mediaIdFromUrl(mediaUrl)
+    private fun displayFileName(sourceUrl: String, mediaUrl: String, blogName: String? = null): String {
+        // Batch rows are named after their blog, so the queue title matches the
+        // file on disk — a `www.tumblr.com/post/<id>` permalink used to turn
+        // into a meaningless `post-` prefix in one place and a numeric id in
+        // the other (#14).
+        val author = blogName?.takeIf { it.isNotBlank() }
+            ?: DownloadUtils.authorFromSourceUrl(sourceUrl)
+        val mediaId = DownloadUtils.mediaIdFromUrl(mediaUrl)
         val ext = inferExtension(mediaUrl)
-        return "${DownloadUtils.sanitizeFileName("${author}-${mediaId}")}.${ext}"
-    }
-
-    private fun sourceAuthor(sourceUrl: String): String {
-        val uri = runCatching { Uri.parse(sourceUrl) }.getOrNull()
-        val host = uri?.host?.lowercase() ?: ""
-        // bonesbunns.tumblr.com/post/... → "bonesbunns"
-        if (host.endsWith(".tumblr.com") && !host.startsWith("www.")) {
-            return host.removeSuffix(".tumblr.com")
-        }
-        val path = uri?.path?.trim('/')?.split('/') ?: emptyList()
-        // www.tumblr.com/bonesbunns/828871589032558592/... → "bonesbunns"
-        return path.firstOrNull()
-            ?.takeIf { it.isNotBlank() && it != "post" }
-            ?: path.getOrNull(1)?.takeIf { it.isNotBlank() }
-            ?: "tumblr"
-    }
-
-    private fun mediaIdFromUrl(mediaUrl: String): String {
-        val uri = runCatching { Uri.parse(mediaUrl) }.getOrNull() ?: return "media"
-        val lastSegment = uri.lastPathSegment
-            ?.substringBefore('?')
-            ?.let(Uri::decode)
-            ?: ""
-        if (lastSegment.isNotBlank()) {
-            return lastSegment.substringBeforeLast('.').ifBlank { lastSegment }
-        }
-        val fallback = uri.toString().substringAfterLast('/', "media").substringBefore('?')
-        return fallback.substringBeforeLast('.').ifBlank { "media" }
+        return "${DownloadUtils.sanitizeFileName("$author-$mediaId")}.$ext"
     }
 
     /** Delegates to [DownloadUtils.inferExtension] — the shared, tested copy. */

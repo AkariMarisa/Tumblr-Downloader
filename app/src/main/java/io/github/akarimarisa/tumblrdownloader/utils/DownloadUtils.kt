@@ -7,6 +7,7 @@ import android.provider.DocumentsContract
 import io.github.akarimarisa.tumblrdownloader.R
 import java.util.Collections
 import java.util.Locale
+import java.security.MessageDigest
 
 object DownloadUtils {
 
@@ -58,6 +59,66 @@ object DownloadUtils {
         "pnj" -> "png"
         "gifv" -> "gif"
         else -> ext.takeIf { it in KNOWN_EXTENSIONS }
+    }
+
+    /**
+     * Media id segment of a media URL — the middle part of every file name.
+     * Shared by the queue title and the saved file so they cannot drift apart.
+     */
+    fun mediaIdFromUrl(mediaUrl: String): String {
+        val uri = runCatching { Uri.parse(mediaUrl) }.getOrNull() ?: return "media"
+        val scheme = uri.scheme?.lowercase(Locale.ROOT)
+        if (scheme != "http" && scheme != "https") return "media"
+        val lastSegment = runCatching {
+            uri.lastPathSegment?.substringBefore('?')?.let(Uri::decode) ?: ""
+        }.getOrDefault("")
+        if (lastSegment.isNotBlank()) {
+            return lastSegment.substringBeforeLast('.').ifBlank { lastSegment }
+        }
+        val fallback = uri.toString().substringAfterLast('/', "media").substringBefore('?')
+        return fallback.substringBeforeLast('.').ifBlank { "media" }
+    }
+
+    /**
+     * Sub-folder that owns every file of a blog's batch download:
+     * `kthingz-3f2a9c1d` (sanitised blog name + a short hash of it).
+     *
+     * The hash makes the folder stable across runs — re-downloading the same
+     * blog lands in the same place instead of spawning a new folder per card —
+     * while still keeping blogs apart from single-post downloads, which stay
+     * in the root folder.
+     */
+    fun blogFolderName(blogName: String): String {
+        val slug = sanitizeFileName(blogName.trim().lowercase(Locale.ROOT))
+            .trim('.').ifBlank { "blog" }
+        val digest = MessageDigest.getInstance("SHA-1")
+            .digest(blogName.trim().lowercase(Locale.ROOT).toByteArray(Charsets.UTF_8))
+        val hash = digest.take(4).joinToString("") { "%02x".format(it) }
+        return "$slug-$hash"
+    }
+
+    /**
+     * Author/blog segment of a post URL — the file-name prefix shared by the
+     * saved file and the queue title (they used to disagree: one of them
+     * turned `www.tumblr.com/post/<id>` permalinks into a `post-` prefix).
+     */
+    fun authorFromSourceUrl(sourceUrl: String): String {
+        val uri = runCatching { Uri.parse(sourceUrl) }.getOrNull() ?: return "tumblr"
+        val scheme = uri.scheme?.lowercase(Locale.ROOT)
+        if (scheme != "http" && scheme != "https") return "tumblr"
+        val host = uri.host?.lowercase(Locale.ROOT) ?: ""
+        // bonesbunns.tumblr.com/post/... → "bonesbunns"
+        if (host.endsWith(".tumblr.com") && !host.startsWith("www.")) {
+            return host.removeSuffix(".tumblr.com")
+        }
+        val segments = uri.path?.trim('/')?.split('/')?.filter { it.isNotBlank() }.orEmpty()
+        val first = segments.firstOrNull() ?: return "tumblr"
+        // www.tumblr.com/post/<id> carries no blog name in the path; don't
+        // let the literal "post" become the file prefix.
+        if (first.equals("post", ignoreCase = true)) {
+            return segments.getOrNull(1)?.takeIf { !it.all(Char::isDigit) } ?: "tumblr"
+        }
+        return first
     }
 
     /** MIME type for a known extension; unknown → binary (matches `bin`). */

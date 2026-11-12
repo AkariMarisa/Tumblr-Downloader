@@ -127,6 +127,14 @@ class DownloadService : Service() {
         const val EXTRA_ITEM_ID = "extra_item_id"
         /** Batch variant of [EXTRA_ITEM_ID]: one intent for many rows (#13). */
         const val EXTRA_ITEM_IDS = "extra_item_ids"
+        /**
+         * Batch metadata for [ACTION_START]: the service rebuilds its
+         * [DownloadItem] from these extras, and without them it cannot tell a
+         * blog's file from a single post's — every blog download would land in
+         * the root folder (#14).
+         */
+        const val EXTRA_BATCH_ID = "extra_batch_id"
+        const val EXTRA_BLOG_NAME = "extra_blog_name"
         const val EXTRA_SOURCE_URL = "extra_source_url"
         const val EXTRA_MEDIA_URL = "extra_media_url"
         const val EXTRA_TYPE = "extra_type"
@@ -1296,10 +1304,21 @@ class DownloadService : Service() {
         val fileName = targetFileName(item)
         val mimeType = inferMimeType(inferExtension(item.mediaUrl))
 
-        val custom = createCustomDirTarget(fileName, mimeType)
+        val custom = createCustomDirTarget(item, fileName, mimeType)
         if (custom != null) return custom
 
-        return createMediaStoreTarget(fileName, mimeType)
+        return createMediaStoreTarget(item, fileName, mimeType)
+    }
+
+    /**
+     * Relative path (below `Download/`) this item's file belongs to: the app
+     * root for single posts, `TumblrDownloader/<blog>-<hash>/` for a blog's
+     * batch so those files don't mix with everything else (#14).
+     */
+    private fun targetRelativePath(item: DownloadItem): String {
+        val root = "${Environment.DIRECTORY_DOWNLOADS}/${DownloadUtils.getDefaultDownloadFolderName(this)}"
+        val blog = item.blogName?.takeIf { item.batchId != null && it.isNotBlank() } ?: return root
+        return "$root/${DownloadUtils.blogFolderName(blog)}"
     }
 
     /** Derives the output file name (with extension) for [item]. Shared by
@@ -1307,7 +1326,12 @@ class DownloadService : Service() {
      * exact same display name. */
     private fun targetFileName(item: DownloadItem): String {
         val ext = inferExtension(item.mediaUrl)
-        return "${DownloadUtils.sanitizeFileName("${authorFromSource(item.sourceUrl)}-${mediaIdFromUrl(item.mediaUrl)}")}.${ext}"
+        // Batch rows are named after their blog (the URL alone can be a
+        // `www.tumblr.com/post/<id>` permalink, which used to yield a
+        // meaningless `post-` prefix) — matching the queue title.
+        val author = item.blogName?.takeIf { item.batchId != null && it.isNotBlank() }
+            ?: authorFromSource(item.sourceUrl)
+        return "${DownloadUtils.sanitizeFileName("$author-${mediaIdFromUrl(item.mediaUrl)}")}.$ext"
     }
 
     /**
@@ -1326,25 +1350,24 @@ class DownloadService : Service() {
             if (size > 0L) return cached to size
         }
 
-        // 2) MediaStore re-query by the exact display name.  Prefer pending
-        //    rows (the app's own in-flight files are IS_PENDING=1 on Q+) so we
-        //    don't append to a previously completed same-named row.  Only pick
-        //    rows that still have bytes on disk (trust a stat query over the
-        //    metadata SIZE column, which can be stale/0 for pending rows).
+        // 2) MediaStore re-query by the exact display name, scoped to the
+        //    item's own folder (a blog file must not resume into a same-named
+        //    root file, #14). Prefer pending rows — the app's own in-flight
+        //    files are IS_PENDING=1 — so we don't append to a previously
+        //    completed same-named row, and only pick rows that still have
+        //    bytes on disk (trust a stat query over the metadata SIZE column,
+        //    which can be stale/0 for pending rows).
         val fileName = targetFileName(item)
-        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        } else {
-            MediaStore.Downloads.EXTERNAL_CONTENT_URI
-        }
+        val relativePath = targetRelativePath(item)
+        // minSdk 30 → the Q+ collection and RELATIVE_PATH always exist.
+        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         val projection = arrayOf(MediaStore.Downloads._ID)
-        val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.IS_PENDING} = 1"
-        } else {
-            "${MediaStore.Downloads.DISPLAY_NAME} = ?"
-        }
+        val selection = "${MediaStore.Downloads.DISPLAY_NAME} = ? AND " +
+            "${MediaStore.Downloads.RELATIVE_PATH} LIKE ? AND " +
+            "${MediaStore.Downloads.IS_PENDING} = 1"
+        val args = arrayOf(fileName, "$relativePath%")
         runCatching {
-            contentResolver.query(collection, projection, selection, arrayOf(fileName), null)?.use { cursor ->
+            contentResolver.query(collection, projection, selection, args, null)?.use { cursor ->
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID))
                     val uri = ContentUris.withAppendedId(collection, id)
@@ -1360,7 +1383,7 @@ class DownloadService : Service() {
             val rootUri = DownloadUtils.getCustomDownloadDirectory(this) ?: return@runCatching null
             val rootDir = DocumentFile.fromTreeUri(this, rootUri) ?: return@runCatching null
             if (!rootDir.isDirectory || !rootDir.canWrite()) return@runCatching null
-            rootDir.findFile(fileName)?.let { file ->
+            blogSubDir(rootDir, item).findFile(fileName)?.let { file ->
                 val size = statSizeOf(file.uri)
                 if (size > 0L) file.uri to size else null
             }
@@ -1375,39 +1398,23 @@ class DownloadService : Service() {
         0L
     }
 
-    private fun authorFromSource(sourceUrl: String): String {
-        val segments = runCatching { Uri.parse(sourceUrl).path?.trim('/')?.split('/') ?: emptyList<String>() }
-            .getOrDefault(emptyList<String>())
-        return segments.firstOrNull()?.takeIf { it.isNotBlank() } ?: "tumblr"
-    }
+    private fun authorFromSource(sourceUrl: String): String = DownloadUtils.authorFromSourceUrl(sourceUrl)
 
-    private fun mediaIdFromUrl(mediaUrl: String): String {
-        val uri = runCatching { Uri.parse(mediaUrl) }.getOrNull() ?: return "media"
-        val lastSegment = runCatching {
-            uri.lastPathSegment
-                ?.substringBefore('?')
-                ?.let(Uri::decode)
-                ?: ""
-        }.getOrDefault("")
+    private fun mediaIdFromUrl(mediaUrl: String): String = DownloadUtils.mediaIdFromUrl(mediaUrl)
 
-        if (lastSegment.isNotBlank()) {
-            return lastSegment.substringBeforeLast('.').ifBlank { lastSegment }
-        }
-
-        val fallback = uri.toString().substringAfterLast('/', "media").substringBefore('?')
-        return fallback.substringBeforeLast('.').ifBlank { "media" }
-    }
-
-    private fun createCustomDirTarget(fileName: String, mimeType: String): DownloadTarget? {
+    private fun createCustomDirTarget(item: DownloadItem, fileName: String, mimeType: String): DownloadTarget? {
         val rootUri = DownloadUtils.getCustomDownloadDirectory(this) ?: return null
         val rootDir = runCatching { DocumentFile.fromTreeUri(this, rootUri) }.getOrNull() ?: return null
         if (!rootDir.isDirectory || !rootDir.canWrite()) return null
+
+        // Blog batches live in their own sub-folder (#14).
+        val targetDir = blogSubDir(rootDir, item)
 
         // Re-download overwrites the file that is already there instead of
         // spawning a copy: the row can leave the list (red X / clear history)
         // while the bytes stay on disk, and a second file with "_1"/"(1)"
         // appended is exactly what users reported (#4).
-        val existing = runCatching { rootDir.findFile(fileName) }.getOrNull()
+        val existing = runCatching { targetDir.findFile(fileName) }.getOrNull()
         if (existing != null && existing.isFile) {
             val overwrite = contentResolver.openOutputStream(existing.uri, "wt") ?: return null
             return DownloadTarget(
@@ -1418,7 +1425,7 @@ class DownloadService : Service() {
             )
         }
 
-        val file = rootDir.createFile(mimeType, fileName) ?: return null
+        val file = targetDir.createFile(mimeType, fileName) ?: return null
         val output = contentResolver.openOutputStream(file.uri) ?: return null
         return DownloadTarget(
             uri = file.uri,
@@ -1433,16 +1440,28 @@ class DownloadService : Service() {
         )
     }
 
-    private fun createMediaStoreTarget(fileName: String, mimeType: String): DownloadTarget {
+    /**
+     * The blog sub-folder of [root] for a batch item (created on first use),
+     * or [root] itself for single-post downloads.
+     */
+    private fun blogSubDir(root: DocumentFile, item: DownloadItem): DocumentFile {
+        val blog = item.blogName?.takeIf { item.batchId != null && it.isNotBlank() } ?: return root
+        val name = DownloadUtils.blogFolderName(blog)
+        val dir = runCatching { root.findFile(name) }.getOrNull()
+            ?: runCatching { root.createDirectory(name) }.getOrNull()
+        // If the directory can't be created, keep the file in the chosen
+        // folder rather than switching storage behind the user's back.
+        return dir?.takeIf { it.isDirectory } ?: root
+    }
+
+    private fun createMediaStoreTarget(item: DownloadItem, fileName: String, mimeType: String): DownloadTarget {
         val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         } else {
             MediaStore.Downloads.EXTERNAL_CONTENT_URI
         }
 
-        val folderName = DownloadUtils.getDefaultDownloadFolderName(this@DownloadService)
-
-        val relativePath = "${Environment.DIRECTORY_DOWNLOADS}/$folderName"
+        val relativePath = targetRelativePath(item)
 
         // Re-download overwrites the row that is already there instead of
         // letting MediaStore append "(1)": the row can leave the list (red X /
@@ -1499,9 +1518,14 @@ class DownloadService : Service() {
     private fun findExistingDownload(fileName: String, relativePath: String): Uri? {
         // minSdk 30 → always the Q+ collection.
         val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val projection = arrayOf(MediaStore.Downloads._ID, MediaStore.Downloads.IS_PENDING)
+        val projection = arrayOf(
+            MediaStore.Downloads._ID,
+            MediaStore.Downloads.IS_PENDING,
+            MediaStore.Downloads.RELATIVE_PATH
+        )
         val selection =
             "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.RELATIVE_PATH} LIKE ?"
+        val wantedPath = relativePath.trimEnd('/')
         return runCatching {
             contentResolver.query(
                 collection,
@@ -1511,7 +1535,11 @@ class DownloadService : Service() {
                 null
             )?.use { cursor ->
                 var stalePending: Uri? = null
+                val pathIndex = cursor.getColumnIndexOrThrow(MediaStore.Downloads.RELATIVE_PATH)
                 while (cursor.moveToNext()) {
+                    // LIKE also matches sub-folders of the root path, so confirm
+                    // the row really sits in *this* folder (#14).
+                    if (cursor.getString(pathIndex).orEmpty().trimEnd('/') != wantedPath) continue
                     val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID))
                     val pending = cursor.getInt(
                         cursor.getColumnIndexOrThrow(MediaStore.Downloads.IS_PENDING)
@@ -1772,6 +1800,8 @@ class DownloadService : Service() {
         val downloadedBytes = safeIntent.getLongExtra(EXTRA_DOWNLOADED_BYTES, 0L)
         val downloadFileUri = safeIntent.getStringExtra(EXTRA_FILE_URI)
         val progress = safeIntent.getIntExtra(EXTRA_PROGRESS, 0).coerceIn(0, 100)
+        val batchId = safeIntent.getStringExtra(EXTRA_BATCH_ID)
+        val blogName = safeIntent.getStringExtra(EXTRA_BLOG_NAME)
 
         return DownloadItem(
             id = id,
@@ -1785,7 +1815,9 @@ class DownloadService : Service() {
             retryCount = retryCount,
             maxRetries = maxRetries,
             downloadedBytes = downloadedBytes,
-            downloadFileUri = downloadFileUri?.takeIf { it.isNotBlank() }
+            downloadFileUri = downloadFileUri?.takeIf { it.isNotBlank() },
+            batchId = batchId?.takeIf { it.isNotBlank() },
+            blogName = blogName?.takeIf { it.isNotBlank() }
         )
     }
 
@@ -1893,7 +1925,16 @@ class DownloadService : Service() {
         testConnectivityManagerConnected = connected
     }
 
-    /** Test-only hook: whether an ACTION_START intent was accepted into the queue. */
+    /**
+     * Test-only hook: whether an ACTION_START intent was accepted.
+     *
+     * Checks the whole life-cycle (queued → handed to a worker → active)
+     * because the worker can dequeue the row between `onStartCommand` and the
+     * assertion — asserting only on `queuedItemIds` was flaky.
+     */
     @VisibleForTesting
-    internal fun hasQueuedItemForTest(itemId: String): Boolean = queuedItemIds.contains(itemId)
+    internal fun hasQueuedItemForTest(itemId: String): Boolean =
+        queuedItemIds.contains(itemId) ||
+            inHandItemIds.contains(itemId) ||
+            activeJobs.containsKey(itemId)
 }
