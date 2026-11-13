@@ -311,6 +311,13 @@ cd Tumblr-Downloader
 
 ---
 
+## Testing
+
+* JVM suite + lint: `./gradlew testDebugUnitTest lintDebug assembleDebug` (199 tests)
+* Full manual/device checklist — every flow of the app with its current status: [docs/test-plan.md](test-plan.md)
+
+---
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](../LICENSE) file for details.
