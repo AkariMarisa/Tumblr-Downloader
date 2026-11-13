@@ -95,7 +95,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelBlogJob(jobId: String) = blogManager.cancel(jobId)
     fun removeBlogJob(jobId: String) = blogManager.remove(jobId)
 
-    /** Card-level pause: pauses the blog's downloads, halting the scan too if it is still running. */
     fun pauseBlogCard(jobId: String) = blogManager.pause(jobId)
     fun respondBlogLong(jobId: String, proceed: Boolean) = blogManager.respondLongBlog(jobId, proceed)
 
@@ -178,12 +177,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun pauseAllDownloads() = stateManager.pauseAll()
 
     fun resumeAllDownloads() = stateManager.resumeAll()
-
-    /** Pause every unfinished item of one blog batch (used from the detail page). */
-    fun pauseBlogBatch(batchId: String) = stateManager.pauseBatch(batchId)
-
-    /** Resume every paused item of one blog batch (used from the detail page). */
-    fun resumeBlogBatch(batchId: String) = stateManager.resumeBatch(batchId)
 
     fun retryPendingLoginUrl() {
         // beginLoginRetry consumes the pending URL AND sets a guard so

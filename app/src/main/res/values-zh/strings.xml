@@ -103,6 +103,7 @@
     <string name="parse_oembed_unavailable">oEmbed 不可用：%1$s</string>
     <string name="parse_login_required">登录后可重试。</string>
     <string name="parse_duplicate_skipped">该链接中的媒体已在下载列表中，已跳过重复项。</string>
+    <string name="parse_duplicate_in_blog">已在下载列表中：位于博客「%1$s」的卡片下</string>
     <string name="parse_no_new_media">该链接未识别到可下载媒体</string>
     <string name="parse_page_request_failed">页面请求失败，HTTP %1$d</string>
     <string name="parse_private_not_supported">暂不支持下载私密帖子。</string>
@@ -194,7 +195,10 @@
     <string name="blog_job_state_paused">已暂停</string>
     <string name="blog_job_interrupted">未完成</string>
     <plurals name="blog_job_stats">
-        <item quantity="other">%1$d 帖 · %2$d 个媒体</item>
+        <item quantity="other">已扫描 %1$d/%2$d 帖 · %3$d 个媒体</item>
+    </plurals>
+    <plurals name="blog_job_stats_open">
+        <item quantity="other">已扫描 %1$d 帖 · %2$d 个媒体</item>
     </plurals>
     <string name="blog_job_download_progress">已下载 %1$d/%2$d 个媒体</string>
     <string name="blog_job_download_complete">全部 %1$d 个媒体已下载</string>

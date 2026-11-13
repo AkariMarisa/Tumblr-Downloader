@@ -320,7 +320,7 @@ class DownloadStateManager private constructor(private val app: Application) {
 
         when {
             fresh.isEmpty() -> _parseEvent.tryEmit(
-                ParseEvent.Message(localizedString(R.string.parse_duplicate_skipped))
+                ParseEvent.Message(duplicateMessage(candidates))
             )
             // Even a single fresh file goes through the picker: with the
             // "auto-download all media" switch off the user asked to choose,
@@ -332,7 +332,29 @@ class DownloadStateManager private constructor(private val app: Application) {
         }
     }
 
-    /** Enqueue the media the user kept in the picker. */
+    /**
+     * "Already in the list" must say *where*: blog batch rows live behind
+     * their card, so a post that belongs to a blog download is not visible in
+     * the main list — users reported "the link says it exists but the list is
+     * empty" (#18).
+     */
+    private fun duplicateMessage(candidates: List<ParsedTumblrMedia>): String {
+        val keys = candidates.map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }.toSet()
+        val owner = _items.value
+            .filter { it.status != DownloadStatus.FAILED }
+            .firstOrNull {
+                it.blogName != null &&
+                    DownloadUtils.normalizeMediaIdentity(it.mediaUrl) in keys
+            }?.blogName
+        return if (owner != null) {
+            localizedString(R.string.parse_duplicate_in_blog, owner)
+        } else {
+            localizedString(R.string.parse_duplicate_skipped)
+        }
+    }
+
+    /**
+     * Enqueue the media the user kept in the picker. */
     fun confirmMediaPreview(previewId: String, selectedIndices: Set<Int>) {
         val request = _mediaPreview.value?.takeIf { it.id == previewId } ?: return
         _mediaPreview.value = null
@@ -534,7 +556,7 @@ class DownloadStateManager private constructor(private val app: Application) {
 
         if (added.isEmpty()) {
             if (cmd.emitQueuedEvent) {
-                _parseEvent.tryEmit(ParseEvent.Message(localizedString(R.string.parse_duplicate_skipped)))
+                _parseEvent.tryEmit(ParseEvent.Message(duplicateMessage(candidates)))
             }
             return
         }

@@ -90,11 +90,14 @@ class DownloadsFragment : Fragment() {
             // the foreground; otherwise the UI would not refresh after background
             // downloads finish when switching back to the app.
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.downloads.collect { list ->
-                    // Blog batch items belong behind their blog card
-                    // (BlogDetailActivity) — keep the main queue to standalone
-                    // downloads only.
-                    val visible = list.filter { it.batchId == null }
+                combine(viewModel.downloads, viewModel.blogJobs) { list, jobs ->
+                    val liveBlogs = jobs.map { it.blogName }.toSet()
+                    // Blog batch items belong behind their blog card — except
+                    // orphans: a row whose card is gone would be shown by no
+                    // screen at all, which is why "already in the list" pointed
+                    // at rows nobody could see (#18).
+                    list.filter { it.batchId == null || it.blogName !in liveBlogs }
+                }.collect { visible ->
                     standaloneEmpty = visible.isEmpty()
                     adapter.submitList(visible)
                     updateEmptyState()

@@ -1,5 +1,6 @@
 package io.github.akarimarisa.tumblrdownloader.ui.download
 
+import android.content.Context
 import android.content.res.ColorStateList
 import android.view.LayoutInflater
 import android.view.View
@@ -93,6 +94,21 @@ fun blogBatchOf(
         (blogName != null && it.batchId != null && it.blogName == blogName)
 }
 
+/**
+ * The card's stats line: total posts, scanned posts and enqueued media (#17).
+ * Falls back to the total-less wording while the feed hasn't reported a post
+ * count yet (fresh job, first page still loading).
+ */
+fun blogCardStatsLabel(ctx: Context, job: BlogDownloadJobEntity, postsSeen: Int): CharSequence {
+    val media = job.mediaEnqueued
+    val total = job.totalPosts?.takeIf { it > 0 }
+    return if (total != null) {
+        ctx.resources.getQuantityString(R.plurals.blog_job_stats, postsSeen, postsSeen, total, media)
+    } else {
+        ctx.resources.getQuantityString(R.plurals.blog_job_stats_open, postsSeen, postsSeen, media)
+    }
+}
+
 class BlogJobAdapter(
     private val onDetail: (BlogDownloadJobEntity) -> Unit,
     private val onResume: (BlogDownloadJobEntity) -> Unit,
@@ -139,9 +155,7 @@ class BlogJobAdapter(
             )
 
             val posts = job.postsDiscovered + job.postsSkipped + job.postsNoMedia
-            binding.tvStats.text = ctx.resources.getQuantityString(
-                R.plurals.blog_job_stats, posts, posts, job.mediaEnqueued
-            )
+            binding.tvStats.text = blogCardStatsLabel(ctx, job, posts)
 
             // Progress bar — see [blogCardProgress] for the precedence rules.
             val progress = blogCardProgress(ui, posts)

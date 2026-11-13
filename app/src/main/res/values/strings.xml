@@ -105,6 +105,7 @@
     <string name="parse_oembed_unavailable">oEmbed unavailable: %1$s</string>
     <string name="parse_login_required">Login required to retry.</string>
     <string name="parse_duplicate_skipped">Media already in download list, duplicates skipped.</string>
+    <string name="parse_duplicate_in_blog">Already in the download list — under the %1$s blog card</string>
     <string name="parse_no_new_media">No downloadable media found</string>
     <string name="parse_page_request_failed">Page request failed, HTTP %1$d</string>
     <string name="parse_private_not_supported">Private Tumblr posts are not supported yet.</string>
@@ -198,8 +199,12 @@
     <string name="blog_job_state_paused">Paused</string>
     <string name="blog_job_interrupted">Not finished</string>
     <plurals name="blog_job_stats">
-        <item quantity="one">%1$d post · %2$d media</item>
-        <item quantity="other">%1$d posts · %2$d media</item>
+        <item quantity="one">%1$d/%2$d post scanned · %3$d media</item>
+        <item quantity="other">%1$d/%2$d posts scanned · %3$d media</item>
+    </plurals>
+    <plurals name="blog_job_stats_open">
+        <item quantity="one">%1$d post scanned · %2$d media</item>
+        <item quantity="other">%1$d posts scanned · %2$d media</item>
     </plurals>
     <string name="blog_job_download_progress">Downloaded %1$d/%2$d media</string>
     <string name="blog_job_download_complete">All %1$d media downloaded</string>

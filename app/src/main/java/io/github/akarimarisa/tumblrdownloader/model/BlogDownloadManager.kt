@@ -471,7 +471,14 @@ class BlogDownloadManager private constructor(
         val token = boot.apiToken
         var posts = if (fresh) boot.posts else emptyList()
         var nextLink = if (fresh) boot.nextLink else job.resumeLink
-        var total = job.totalPosts
+        // The bootstrap already reports the blog's post count, so a fresh job
+        // can decide about the long-blog gate before it queues anything.
+        var total = job.totalPosts ?: boot.info.numberOfPosts
+        // …but when it doesn't, the count only arrives with the first feed
+        // page: hold the bootstrap posts until then so the gate can still ask
+        // before anything is queued (#15).
+        var heldPosts: List<JSONObject> = emptyList()
+        var heldForCount = false
 
         var pages = job.pagesCompleted
         var discovered = job.postsDiscovered
@@ -487,6 +494,41 @@ class BlogDownloadManager private constructor(
         while (true) {
             if (cancelFlags.containsKey(jobId)) {
                 break
+            }
+
+            // Long-blog gate — ask BEFORE this pass queues anything. It used
+            // to run after the enqueue block, so downloads were already
+            // running by the time the dialog appeared (#15). The bootstrap's
+            // post count lets a fresh job decide before its first page is
+            // processed; a job that learns `total` later gates at the top of
+            // the following pass instead.
+            if (!gated && !opts.forceLongBlog && total != null && total >= longThreshold) {
+                gated = true
+                _events.tryEmit(
+                    BlogEvent.ConfirmLongBlog(
+                        jobId = jobId,
+                        blogName = blogName,
+                        totalPosts = total,
+                        estimatedRequests = (total / 20).coerceAtLeast(pages),
+                        mediaFilter = opts.mediaFilter
+                    )
+                )
+                val proceed = confirmGates.getOrPut(jobId) { CompletableDeferred() }.await()
+                if (!proceed) {
+                    break
+                }
+            }
+
+            if (posts.isNotEmpty()) {
+                // Hold the very first batch of a fresh job when the post count
+                // is still unknown *and* a next page exists to learn it from:
+                // the long-blog gate must be able to ask first (#15). With no
+                // next page there is nothing to learn, so queue right away.
+                if (!heldForCount && total == null && nextLink != null) {
+                    heldForCount = true
+                    heldPosts = posts
+                    posts = emptyList()
+                }
             }
             if (posts.isNotEmpty()) {
                 val snapshot = knownSources ?: DownloadHistoryStore.loadSourceUrls(app)
@@ -565,25 +607,12 @@ class BlogDownloadManager private constructor(
             )
             persistAndPublish(job)
 
-            // Long-blog gate — ask once, before pulling the next page.
-            if (!gated && !opts.forceLongBlog && total != null && total >= longThreshold) {
-                gated = true
-                _events.tryEmit(
-                    BlogEvent.ConfirmLongBlog(
-                        jobId = jobId,
-                        blogName = blogName,
-                        totalPosts = total,
-                        estimatedRequests = (total / 20).coerceAtLeast(pages),
-                        mediaFilter = opts.mediaFilter
-                    )
-                )
-                val proceed = confirmGates.getOrPut(jobId) { CompletableDeferred() }.await()
-                if (!proceed) {
-                    break
-                }
-            }
-            // Gate decision known (not needed / accepted): detail is safe again.
-            setConfirmPending(jobId, false)
+            // The gate decision is known once `total` is — or once we stopped
+            // waiting for it (first page fetched and the feed reported no
+            // count, so no dialog can come). A worker suspended in the gate
+            // never reaches this line, so the detail screen stays locked until
+            // the user decides.
+            if (total != null || heldForCount) setConfirmPending(jobId, false)
 
             if (cancelFlags.containsKey(jobId)) {
                 break
@@ -593,7 +622,8 @@ class BlogDownloadManager private constructor(
 
             val feed = fetchFeedPage(nextToFetch, token)
             if (total == null) total = feed.totalPosts
-            posts = feed.posts
+            posts = heldPosts + feed.posts
+            heldPosts = emptyList()
             nextLink = feed.nextLink
             pages++
         }

@@ -79,10 +79,13 @@ class MainActivity : AppCompatActivity() {
 
     private val clipboardChangedListener =
         android.content.ClipboardManager.OnPrimaryClipChangedListener {
-            primaryClipChanged = true
-            // A link copied while this window is already focused never goes
-            // through onWindowFocusChanged, so schedule the check ourselves.
-            if (hasWindowFocus()) scheduleClipboardCheck()
+            // A copy made while our window is focused comes from our own URL
+            // field (long-press → copy): re-parsing it would be the false
+            // trigger reported as #2. Copies made in other apps arrive while
+            // we are backgrounded — those are the ones worth reacting to (#4).
+            if (!hasWindowFocus()) {
+                primaryClipChanged = true
+            }
         }
     private lateinit var toggle: ActionBarDrawerToggle
     private var clearAllMenu: MenuItem? = null

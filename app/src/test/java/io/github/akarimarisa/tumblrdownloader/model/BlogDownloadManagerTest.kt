@@ -10,6 +10,7 @@ import io.github.akarimarisa.tumblrdownloader.utils.DownloadUtils
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.resetMain
@@ -220,6 +221,40 @@ class BlogDownloadManagerTest {
     }
 
     // ── tests ────────────────────────────────────────────────────────
+
+    @Test
+    fun longBlogGateAsksBeforeAnythingIsQueued() = runTest(testDispatcher) {
+        DownloadHistoryStore.clear(app)
+        BlogDownloadJobStore.clear(app)
+        // Small enough for the fake feed's totalPosts (4) to count as "long".
+        BlogPrefs.prefs(app).edit().putInt(BlogPrefs.PREF_LONG_THRESHOLD, 2).commit()
+
+        val gateway = FakeGateway()
+        val manager = BlogDownloadManager.forTest(app, gateway, stateManager, testDispatcher)
+        val events = mutableListOf<BlogEvent>()
+        val collector = launch { manager.events.collect { events += it } }
+
+        assertTrue(manager.enqueueBlog("https://www.tumblr.com/bonesbunns", BlogDownloadOptions()))
+        advanceUntil { events.any { it is BlogEvent.ConfirmLongBlog } }
+
+        val confirm = events.filterIsInstance<BlogEvent.ConfirmLongBlog>().single()
+        assertEquals(
+            "no media may be queued before the long-blog confirm is answered (#15)",
+            0,
+            stateManager.items.value.size
+        )
+
+        manager.respondLongBlog(confirm.jobId, true)
+        advanceUntil { manager.jobs.value.any { it.state() == BlogJobState.DONE } }
+        assertTrue(
+            "answering yes must queue the blog's media",
+            stateManager.items.value.isNotEmpty()
+        )
+
+        collector.cancel()
+        BlogDownloadJobStore.clear(app)
+        DownloadHistoryStore.clear(app)
+    }
 
     @Test
     fun enqueue_blog_runs_scan_and_enqueues_items_with_batch_tag() = runTest(testDispatcher) {
