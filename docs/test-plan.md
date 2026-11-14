@@ -98,7 +98,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 6.1 | Row 暂停/继续 | Status and progress switch; partial file resumes | ⬜ |
 | 6.2 | Row 删除 (red ✕) | Row removed, file kept; re-adding the link does not create a `(1)` copy (#4) | 📱 |
 | 6.3 | 全部暂停 / 全部继续 (toolbar) | Whole queue pauses/resumes | ⬜ |
-| 6.4 | 清空已完成 | Only completed standalone rows are removed; empty state returns (#5 earlier fix) | 📱 |
+| 6.4 | Clear completed | Completed standalone **and orphan** rows are removed; a live card's rows stay; empty state returns | 📱 |
 | 6.5 | Failed row → 续 | Retries from scratch without removing it first | ⬜ |
 | 6.6 | WiFi drops mid-download | Active rows fail after 3 retries, queued rows pause, no auto-resume | ⬜ |
 | 6.7 | Concurrency setting (1–4) | At most N rows download at once | ⬜ |
@@ -174,3 +174,4 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | R18 | "Already in list" but nothing visible | Orphans visible + named toast | ✅ 📱 |
 | R19 | Copying the field's own URL re-triggered detection | Ignore focused copies | ⬜ |
 | R20 | Stale clipboard restarted a removed blog | Deleting a row / clearing history no longer resets the clipboard dedupe key (only 设置 → 清空自动检测缓存 does) | ✅ |
+| R21 | Clear-all did nothing while orphan rows were listed | Clear-all now also takes completed orphans; a live card's rows stay | ✅ 📱 |

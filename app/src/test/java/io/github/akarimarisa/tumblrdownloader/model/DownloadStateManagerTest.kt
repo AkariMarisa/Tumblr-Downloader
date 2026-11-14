@@ -255,7 +255,7 @@ class DownloadStateManagerTest {
         ))
         testDispatcher.scheduler.advanceUntilIdle()
 
-        stateManager.clearAll()
+        stateManager.clearAll(emptySet())
         testDispatcher.scheduler.advanceUntilIdle()
 
         val remaining = stateManager.items.value
@@ -276,13 +276,32 @@ class DownloadStateManagerTest {
         ))
         testDispatcher.scheduler.advanceUntilIdle()
 
-        stateManager.clearAll()
+        stateManager.clearAll(setOf("b1"))
         testDispatcher.scheduler.advanceUntilIdle()
 
         val remaining = stateManager.items.value
         assertFalse("standalone completed item should be removed", remaining.any { it.id == "solo" })
         assertTrue("completed batch item must be kept", remaining.any { it.id == "batchDone" })
         assertTrue("paused batch item must be kept", remaining.any { it.id == "batchPaused" })
+    }
+
+    @Test
+    fun clearAll_removesCompletedOrphansOfRemovedCards() = runTest(testDispatcher) {
+        // Removing a card keeps its completed rows, which are listed in the
+        // main queue — "clear completed" has to take them, otherwise the
+        // button looks dead while orphan rows sit there (#21).
+        stateManager.restore(listOf(
+            item("orphan", status = DownloadStatus.COMPLETED, batchId = "dead-job", blogName = "gone-blog"),
+            item("live", status = DownloadStatus.COMPLETED, batchId = "live-job", blogName = "live-blog")
+        ))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.clearAll(setOf("live-blog"))
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        val remaining = stateManager.items.value.map { it.id }
+        assertFalse("orphan row must be cleared", remaining.contains("orphan"))
+        assertTrue("a live card's rows must stay", remaining.contains("live"))
     }
 
     // ── restore ─────────────────────────────────────────────────────────

@@ -175,8 +175,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearAllDownloads() {
         // Same as removeDownload: clearing history is unrelated to the
-        // clipboard dedupe key (see #20).
-        stateManager.clearAll()
+        // clipboard dedupe key (see #20). Rows of a live blog card stay —
+        // only standalone downloads and orphans are cleared (#21).
+        stateManager.clearAll(blogJobs.value.map { it.blogName }.toSet())
     }
 
     fun pauseAllDownloads() = stateManager.pauseAll()
