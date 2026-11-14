@@ -429,6 +429,20 @@ class MainActivity : AppCompatActivity() {
         // The listener flag only — the description and the last URL are
         // combined by [ClipboardDedupe] below.
         val clipChanged = TumblrDownloaderApplication.consumeClipChange()
+        val selfCopyDescription = TumblrDownloaderApplication.consumeSelfCopyDescription()
+
+        // Our own copy from the URL field: adopt its description as the new
+        // snapshot (so the description signal stays quiet) and skip — the
+        // link is already in the field, re-parsing it is the #19 regression.
+        // An external copy made afterwards carries a different description,
+        // so it falls through to the normal signals below.
+        if (ClipboardDedupe.isOwnFieldCopy(clipChanged, selfCopyDescription, clipDescription)) {
+            clipDescription?.let {
+                prefs.edit().putString(PREF_LAST_CLIP_DESC, it).apply()
+            }
+            Log.d(TAG, "Copy made in our own input field — ignoring")
+            return
+        }
 
         val isPostUrl = TumblrParser.isTumblrShareUrl(clipText)
         val isBlogUrl = !isPostUrl && BlogFeedParser.isBlogUrl(clipText)

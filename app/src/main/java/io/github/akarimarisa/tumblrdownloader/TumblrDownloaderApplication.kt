@@ -58,6 +58,18 @@ class TumblrDownloaderApplication : Application() {
         @Volatile
         private var windowFocused = false
 
+        /**
+         * Description of the last copy made **by us** (long-press → copy in
+         * the URL field while our window holds focus).
+         *
+         * Our own copy changes the clip description too, so without this the
+         * description signal would treat it as an external copy on the next
+         * focus-gained check and re-trigger detection for a link that is
+         * already in the field (#19). Consumed by that check.
+         */
+        @Volatile
+        private var selfCopyDescription: String? = null
+
         private var clipListener: android.content.ClipboardManager.OnPrimaryClipChangedListener? = null
 
         /** Registers the listener once per process. */
@@ -73,7 +85,20 @@ class TumblrDownloaderApplication : Application() {
                 // false trigger reported as #2. Everything else — another app,
                 // or our Activity having been destroyed — is worth reacting
                 // to (#1).
-                if (!focused) primaryClipChanged = true
+                if (!focused) {
+                    primaryClipChanged = true
+                } else {
+                    // Remember which description our own copy produced so the
+                    // next check can tell it apart from a copy made in another
+                    // app (#19). Reading is safe here: we hold focus.
+                    selfCopyDescription = try {
+                        manager.primaryClipDescription?.toString()
+                    } catch (e: SecurityException) {
+                        android.util.Log.w("TumblrApp", "self-copy desc read blocked: ${e.message}")
+                        null
+                    }
+                    android.util.Log.d("TumblrApp", "selfCopyDesc=$selfCopyDescription")
+                }
             }
             clipListener = listener
             manager.addPrimaryClipChangedListener(listener)
@@ -89,6 +114,13 @@ class TumblrDownloaderApplication : Application() {
             val changed = primaryClipChanged
             primaryClipChanged = false
             return changed
+        }
+
+        /** Reads and clears the description of our own last copy (#19). */
+        fun consumeSelfCopyDescription(): String? {
+            val desc = selfCopyDescription
+            selfCopyDescription = null
+            return desc
         }
     }
 }

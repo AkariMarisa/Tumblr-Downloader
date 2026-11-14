@@ -57,4 +57,57 @@ class ClipboardDedupeTest {
         assertFalse(shouldProcess(currentDescription = null))
         assertTrue(shouldProcess(text = "https://www.tumblr.com/kthingz/1", currentDescription = null))
     }
+
+    @Test
+    fun ownFieldCopyIsRecognised() {
+        assertTrue(
+            ClipboardDedupe.isOwnFieldCopy(
+                clipChangedSignal = false,
+                selfCopyDescription = description,
+                clipDescription = description
+            )
+        )
+    }
+
+    @Test
+    fun externalCopyAfterOwnCopyIsNotMistakenForIt() {
+        // Another app copied afterwards: its description differs from the one
+        // our own copy produced, so the check must fall through to the
+        // normal signals (which then process it).
+        assertFalse(
+            ClipboardDedupe.isOwnFieldCopy(
+                clipChangedSignal = false,
+                selfCopyDescription = description,
+                clipDescription = newDescription
+            )
+        )
+        // …and the description signal picks it up as a real change.
+        assertTrue(
+            shouldProcess(
+                lastDescription = description,
+                currentDescription = newDescription
+            )
+        )
+    }
+
+    @Test
+    fun listenerSignalBeatsOwnFieldCopy() {
+        // An explicit change signal always wins over the own-copy shortcut.
+        assertFalse(
+            ClipboardDedupe.isOwnFieldCopy(
+                clipChangedSignal = true,
+                selfCopyDescription = description,
+                clipDescription = description
+            )
+        )
+    }
+
+    @Test
+    fun upgradeWithoutDescriptionSnapshotFallsBackToTheUrl() {
+        // v1.0.7 predates the snapshot: `lastClipDescription` is null while the
+        // clip still holds the link it already handled — must stay quiet.
+        assertFalse(shouldProcess(lastDescription = null))
+        // …but a genuinely different link is still picked up after the upgrade.
+        assertTrue(shouldProcess(text = "https://www.tumblr.com/kthingz/1", lastDescription = null))
+    }
 }
