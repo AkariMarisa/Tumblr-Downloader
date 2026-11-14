@@ -50,17 +50,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private val viewModel: MainViewModel by viewModels()
     private val prefs: SharedPreferences by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
-    companion object {
-        /**
-         * Process-level flag: true until the first [onWindowFocusChanged]
-         * call with focus.  Survives Activity recreation (config changes,
-         * memory pressure after Settings) so that clipboard auto-detect
-         * isn't skipped on return-from-settings.
-         */
-        @Volatile
-        private var isColdStart = true
-    }
-
     private val clipboardManager by lazy { getSystemService(android.content.ClipboardManager::class.java) }
 
     /**
@@ -166,18 +155,15 @@ class MainActivity : AppCompatActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
-            // Cold start: skip clipboard check so the app doesn't re-process
-            // stale links on every fresh launch. Only check when user switches
-            // back from another app (already-running process).
-            if (isColdStart) {
-                isColdStart = false
-                Log.d(TAG, "Cold start — skipping clipboard check")
-                return
-            }
             // onWindowFocusChanged(true) is the most reliable indicator that the
             // window has input focus, which is required by Android 10+ for
             // ClipboardManager.getPrimaryClip() to succeed (otherwise it throws
             // SecurityException).
+            //
+            // A cold start checks too: the last-URL dedupe survives process
+            // death, so it still blocks stale links — skipping the first check
+            // only made "copy a link, open the app" silently do nothing,
+            // including after the process was killed mid-flow (#4).
             scheduleClipboardCheck()
         }
     }
@@ -354,19 +340,29 @@ class MainActivity : AppCompatActivity() {
             binding.viewPager.currentItem = 0
             viewModel.notifyFromClipboard(text)
             viewModel.promptBlogOptions(text)
+            // Remember it: a cold start checks the clipboard too, and the
+            // clipboard still holds what the user shared (#4).
+            rememberHandledClip(text)
             return
         }
 
         // Skip if this URL is already fully downloaded (same guard as clipboard auto-detect).
         if (viewModel.isUrlFullyCompleted(text)) {
             Log.d(TAG, "Incoming share URL already fully downloaded, skipping: ${text.take(60)}")
+            rememberHandledClip(text)
             return
         }
 
         if (viewModel.enqueueFromUrl(text)) {
+            rememberHandledClip(text)
             viewModel.notifyFromClipboard(text)
             binding.viewPager.currentItem = 0
         }
+    }
+
+    /** Records a URL the app already acted on so the clipboard check skips it. */
+    private fun rememberHandledClip(url: String) {
+        prefs.edit().putString(PREF_LAST_AUTO_URL, url).apply()
     }
 
     private fun handleClipboardAutoDownload() {
@@ -424,13 +420,13 @@ class MainActivity : AppCompatActivity() {
             // Blog URLs enter the batch flow: fill the field, switch to the
             // Download tab and let the type dialog decide (it starts the scan
             // directly when "auto download all media" is on).
-            prefs.edit().putString(PREF_LAST_AUTO_URL, clipText).apply()
+            rememberHandledClip(clipText)
             binding.viewPager.currentItem = 0
             viewModel.notifyFromClipboard(clipText)
             viewModel.promptBlogOptions(clipText)
             Log.d(TAG, "Clipboard auto-detect: blog URL handed to the batch flow")
         } else if (viewModel.enqueueFromUrl(clipText)) {
-            prefs.edit().putString(PREF_LAST_AUTO_URL, clipText).apply()
+            rememberHandledClip(clipText)
             // Switch to Download tab first so the user sees the loading overlay
             binding.viewPager.currentItem = 0
             viewModel.notifyFromClipboard(clipText)

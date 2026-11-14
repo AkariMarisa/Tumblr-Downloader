@@ -42,7 +42,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 2.15 | Clipboard: copy the URL that is already in the input field | No re-trigger (#2) | ⬜ |
 | 2.16 | Clipboard: return from the media viewer with an unchanged link | Nothing happens (last-URL fallback) | ⬜ |
 | 2.17 | Clipboard auto-detect disabled in settings | No detection at all | ⬜ |
-| 2.18 | Cold start with a Tumblr link in the clipboard | Clipboard check is skipped (no stale re-download) | ⬜ |
+| 2.18 | Cold start with a Tumblr link in the clipboard | Detected on launch too — the last-URL dedupe still blocks links that were handled before | 📱 |
 
 ## 3. Pre-download picker
 
@@ -173,4 +173,4 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | R17 | Card lacked total/scanned posts | New stats line | ✅ 📱 |
 | R18 | "Already in list" but nothing visible | Orphans visible + named toast | ✅ 📱 |
 | R19 | Copying the field's own URL re-triggered detection | Ignore focused copies | ⬜ |
-| R20 | Stale clipboard restarted a removed blog | (under investigation) | ⬜ |
+| R20 | Stale clipboard restarted a removed blog | Deleting a row / clearing history no longer resets the clipboard dedupe key (only 设置 → 清空自动检测缓存 does) | ✅ |

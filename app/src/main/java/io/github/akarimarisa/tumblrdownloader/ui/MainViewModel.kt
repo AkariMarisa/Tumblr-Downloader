@@ -163,14 +163,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun pauseDownload(itemId: String) = stateManager.pause(itemId)
 
     fun removeDownload(itemId: String) {
-        // Clear auto-detect cache so users can re-download the same link
-        // after deleting a task (the cache only blocks the exact last URL).
-        prefs.edit().remove("last_auto_detected_url").apply()
+        // NOTE: this must NOT clear `last_auto_detected_url`. The clipboard
+        // dedupe key is what stops a stale link (still sitting in the
+        // clipboard) from being re-processed on every focus change — clearing
+        // it here made removing one row silently restart whatever blog link
+        // was last copied (#20). Re-copying a link still re-triggers detection
+        // via the clip-change signal, and Settings → 清空自动检测缓存 remains
+        // the explicit way to reset it.
         stateManager.remove(itemId)
     }
 
     fun clearAllDownloads() {
-        prefs.edit().remove("last_auto_detected_url").apply()
+        // Same as removeDownload: clearing history is unrelated to the
+        // clipboard dedupe key (see #20).
         stateManager.clearAll()
     }
 
