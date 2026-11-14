@@ -21,11 +21,13 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.bumptech.glide.Glide
 import io.github.akarimarisa.tumblrdownloader.R
+import io.github.akarimarisa.tumblrdownloader.TumblrDownloaderApplication
 import io.github.akarimarisa.tumblrdownloader.databinding.ActivityMainBinding
 import io.github.akarimarisa.tumblrdownloader.model.DownloadStatus
 import io.github.akarimarisa.tumblrdownloader.ui.auth.TumblrLoginActivity
 import io.github.akarimarisa.tumblrdownloader.ui.about.AboutActivity
 import io.github.akarimarisa.tumblrdownloader.ui.settings.SettingsActivity
+import io.github.akarimarisa.tumblrdownloader.utils.ClipboardDedupe
 import io.github.akarimarisa.tumblrdownloader.utils.LocaleHelper
 import io.github.akarimarisa.tumblrdownloader.utils.LocalizedToast
 import io.github.akarimarisa.tumblrdownloader.utils.BlogFeedParser
@@ -42,48 +44,41 @@ private const val PREFS_NAME = "tumblr_downloader"
 private const val PREF_CLIPBOARD_AUTO_DETECT = "clipboard_auto_detect"
 private const val PREF_LAST_AUTO_URL = "last_auto_detected_url"
 
+/**
+ * Snapshot of the clipboard description taken when a link was last handled.
+ *
+ * Android stops delivering clip-change callbacks to a *backgrounded* app, so
+ * the listener alone could not tell "the user copied the same link again"
+ * from "nothing changed" (#1). The description carries a per-copy timestamp
+ * on this device (`<11-14 12:36:13.763>`), and it stays stable while the
+ * clip is unchanged — which makes it a usable change signal.
+ */
+private const val PREF_LAST_CLIP_DESC = "last_clip_description"
+
 /** Delay before reading the clipboard: Android only allows the read once the window actually holds focus. */
 private const val CLIPBOARD_CHECK_DELAY_MS = 200L
+
+/** After a share is handled, the clipboard is ignored for this long so its stale content cannot fire a second flow. */
+private const val SHARE_CLIPBOARD_GRACE_MS = 5_000L
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private val viewModel: MainViewModel by viewModels()
     private val prefs: SharedPreferences by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
-    companion object {
-        /**
-         * Process-level flag: true until the first [onWindowFocusChanged]
-         * call with focus.  Survives Activity recreation (config changes,
-         * memory pressure after Settings) so that clipboard auto-detect
-         * isn't skipped on return-from-settings.
-         */
-        @Volatile
-        private var isColdStart = true
-    }
-
     private val clipboardManager by lazy { getSystemService(android.content.ClipboardManager::class.java) }
 
-    /**
-     * Set by [clipboardChangedListener] and consumed by the next
-     * [handleClipboardAutoDownload].
-     *
-     * Content alone cannot tell "the user copied the same link again" from
-     * "nothing changed", so the last-URL dedupe used to swallow re-copies
-     * forever — a skipped picker could never be reopened (#3) and a partially
-     * downloaded post stopped being detected (#2). The listener is only a
-     * *signal* (reading the clip still needs window focus on Android 10+);
-     * the last-URL check stays as the fallback if the callback is missed.
-     */
-    @Volatile
-    private var primaryClipChanged = false
+    /** Until this moment the clipboard is ignored because a share was just handled. */
+    private var ignoreClipboardUntilMillis = 0L
 
-    private val clipboardChangedListener =
-        android.content.ClipboardManager.OnPrimaryClipChangedListener {
-            primaryClipChanged = true
-            // A link copied while this window is already focused never goes
-            // through onWindowFocusChanged, so schedule the check ourselves.
-            if (hasWindowFocus()) scheduleClipboardCheck()
-        }
+    /**
+     * The clip-change signal lives in [TumblrDownloaderApplication] (process
+     * scope): an Activity-level listener died with the Activity, which is
+     * routinely destroyed while the app is backgrounded — copies made in
+     * another app during that window were then never seen (#1). The
+     * last-URL check in [handleClipboardAutoDownload] stays as the fallback
+     * when no change signal arrives at all.
+     */
     private lateinit var toggle: ActionBarDrawerToggle
     private var clearAllMenu: MenuItem? = null
     private var pauseAllMenu: MenuItem? = null
@@ -136,12 +131,15 @@ class MainActivity : AppCompatActivity() {
         setupDrawer()
         collectTumblrAccount()
         collectDownloadsState()
-        clipboardManager.addPrimaryClipChangedListener(clipboardChangedListener)
+        TumblrDownloaderApplication.registerClipboardListener(this)
         handleIncomingIntent(intent)
     }
 
     override fun onDestroy() {
-        clipboardManager.removePrimaryClipChangedListener(clipboardChangedListener)
+        // No window of ours is focused once this Activity is gone — otherwise
+        // the process-level listener would treat a copy made while we are
+        // destroyed as "our own" and drop it (#1).
+        TumblrDownloaderApplication.setWindowFocused(false)
         super.onDestroy()
     }
 
@@ -162,19 +160,20 @@ class MainActivity : AppCompatActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        Log.d(TAG, "onWindowFocusChanged hasFocus=$hasFocus")
+        // Publish focus so the process-wide clipboard listener can tell our
+        // own copies (focused) from copies made in other apps (#2).
+        TumblrDownloaderApplication.setWindowFocused(hasFocus)
         if (hasFocus) {
-            // Cold start: skip clipboard check so the app doesn't re-process
-            // stale links on every fresh launch. Only check when user switches
-            // back from another app (already-running process).
-            if (isColdStart) {
-                isColdStart = false
-                Log.d(TAG, "Cold start — skipping clipboard check")
-                return
-            }
             // onWindowFocusChanged(true) is the most reliable indicator that the
             // window has input focus, which is required by Android 10+ for
             // ClipboardManager.getPrimaryClip() to succeed (otherwise it throws
             // SecurityException).
+            //
+            // A cold start checks too: the last-URL dedupe survives process
+            // death, so it still blocks stale links — skipping the first check
+            // only made "copy a link, open the app" silently do nothing,
+            // including after the process was killed mid-flow (#4).
             scheduleClipboardCheck()
         }
     }
@@ -351,24 +350,51 @@ class MainActivity : AppCompatActivity() {
             binding.viewPager.currentItem = 0
             viewModel.notifyFromClipboard(text)
             viewModel.promptBlogOptions(text)
+            // Remember it: a cold start checks the clipboard too, and the
+            // clipboard still holds what the user shared (#4).
+            rememberHandledClip(text)
             return
         }
 
         // Skip if this URL is already fully downloaded (same guard as clipboard auto-detect).
         if (viewModel.isUrlFullyCompleted(text)) {
             Log.d(TAG, "Incoming share URL already fully downloaded, skipping: ${text.take(60)}")
+            rememberHandledClip(text)
             return
         }
 
         if (viewModel.enqueueFromUrl(text)) {
+            rememberHandledClip(text)
             viewModel.notifyFromClipboard(text)
             binding.viewPager.currentItem = 0
         }
     }
 
+    /** Records a URL the app already acted on so the clipboard check skips it. */
+    private fun rememberHandledClip(url: String) {
+        prefs.edit()
+            .putString(PREF_LAST_AUTO_URL, url)
+            // Snapshot the clipboard state too: an unchanged clip must not be
+            // re-processed after any handling (share included), while a new
+            // copy — even of the same link — changes the description (#1).
+            .putString(PREF_LAST_CLIP_DESC, clipboardManager.primaryClipDescription?.toString())
+            .apply()
+        // A share is the user's explicit input; the clipboard still holds
+        // whatever was copied before it. Ignore it briefly so a stale link
+        // cannot pop a second dialog on top of the one the share opened —
+        // sharing a blog while a post link sits in the clipboard used to
+        // trigger both at once (multi-source conflict).
+        ignoreClipboardUntilMillis = android.os.SystemClock.elapsedRealtime() + SHARE_CLIPBOARD_GRACE_MS
+    }
+
     private fun handleClipboardAutoDownload() {
         if (!prefs.getBoolean(PREF_CLIPBOARD_AUTO_DETECT, true)) {
             Log.d(TAG, "Clipboard auto-detect disabled via settings")
+            return
+        }
+
+        if (android.os.SystemClock.elapsedRealtime() < ignoreClipboardUntilMillis) {
+            Log.d(TAG, "clipboard check skipped — a share was just handled")
             return
         }
 
@@ -380,10 +406,41 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.w(TAG, "Clipboard read failed", e)
             null
-        } ?: return
+        }
+        if (clipText == null) {
+            // Also proves the check ran — the early return used to be silent,
+            // which made "detection never fires" impossible to tell apart
+            // from "there was nothing to detect".
+            Log.d(TAG, "clipboard check: no primary clip")
+            return
+        }
 
         if (clipText.isBlank()) {
             Log.d(TAG, "Clipboard is empty, skipping")
+            return
+        }
+
+        // Change signal: the process-wide listener (works while we are
+        // focused) plus the clip description, which Android only delivers to
+        // a backgrounded app as data we read on return — its per-copy
+        // timestamp changes when the user copies again, even the exact same
+        // link, and stays stable otherwise (#1).
+        val clipDescription = clipboardManager.primaryClipDescription?.toString()
+        // The listener flag only — the description and the last URL are
+        // combined by [ClipboardDedupe] below.
+        val clipChanged = TumblrDownloaderApplication.consumeClipChange()
+        val selfCopyDescription = TumblrDownloaderApplication.consumeSelfCopyDescription()
+
+        // Our own copy from the URL field: adopt its description as the new
+        // snapshot (so the description signal stays quiet) and skip — the
+        // link is already in the field, re-parsing it is the #19 regression.
+        // An external copy made afterwards carries a different description,
+        // so it falls through to the normal signals below.
+        if (ClipboardDedupe.isOwnFieldCopy(clipChanged, selfCopyDescription, clipDescription)) {
+            clipDescription?.let {
+                prefs.edit().putString(PREF_LAST_CLIP_DESC, it).apply()
+            }
+            Log.d(TAG, "Copy made in our own input field — ignoring")
             return
         }
 
@@ -394,15 +451,18 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Dedup: skip when the clipboard is unchanged since the last handled
-        // URL. The clip-change signal takes priority — re-copying the same
-        // link must be able to open the picker again (#2, #3) — while the
-        // last-URL fallback keeps the old behaviour if the callback was missed
-        // (e.g. returning from the media viewer with a stale link).
-        val clipChanged = primaryClipChanged
-        primaryClipChanged = false
-        val lastUrl = prefs.getString(PREF_LAST_AUTO_URL, null)
-        if (!clipChanged && clipText == lastUrl) {
+        // See [ClipboardDedupe] for the three signals and why they are
+        // combined: re-copying the same link must open the picker again (#1),
+        // while returning from the media viewer with an untouched clip must
+        // stay quiet (#20).
+        if (!ClipboardDedupe.shouldProcess(
+                clipChangedSignal = clipChanged,
+                clipText = clipText,
+                lastUrl = prefs.getString(PREF_LAST_AUTO_URL, null),
+                lastClipDescription = prefs.getString(PREF_LAST_CLIP_DESC, null),
+                clipDescription = clipDescription
+            )
+        ) {
             Log.d(TAG, "Clipboard unchanged since last handling: ${clipText.take(60)}")
             return
         }
@@ -421,13 +481,13 @@ class MainActivity : AppCompatActivity() {
             // Blog URLs enter the batch flow: fill the field, switch to the
             // Download tab and let the type dialog decide (it starts the scan
             // directly when "auto download all media" is on).
-            prefs.edit().putString(PREF_LAST_AUTO_URL, clipText).apply()
+            rememberHandledClip(clipText)
             binding.viewPager.currentItem = 0
             viewModel.notifyFromClipboard(clipText)
             viewModel.promptBlogOptions(clipText)
             Log.d(TAG, "Clipboard auto-detect: blog URL handed to the batch flow")
         } else if (viewModel.enqueueFromUrl(clipText)) {
-            prefs.edit().putString(PREF_LAST_AUTO_URL, clipText).apply()
+            rememberHandledClip(clipText)
             // Switch to Download tab first so the user sees the loading overlay
             binding.viewPager.currentItem = 0
             viewModel.notifyFromClipboard(clipText)

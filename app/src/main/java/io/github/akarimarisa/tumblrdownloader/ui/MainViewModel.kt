@@ -95,7 +95,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelBlogJob(jobId: String) = blogManager.cancel(jobId)
     fun removeBlogJob(jobId: String) = blogManager.remove(jobId)
 
-    /** Card-level pause: pauses the blog's downloads, halting the scan too if it is still running. */
     fun pauseBlogCard(jobId: String) = blogManager.pause(jobId)
     fun respondBlogLong(jobId: String, proceed: Boolean) = blogManager.respondLongBlog(jobId, proceed)
 
@@ -164,26 +163,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun pauseDownload(itemId: String) = stateManager.pause(itemId)
 
     fun removeDownload(itemId: String) {
-        // Clear auto-detect cache so users can re-download the same link
-        // after deleting a task (the cache only blocks the exact last URL).
-        prefs.edit().remove("last_auto_detected_url").apply()
+        // NOTE: this must NOT clear `last_auto_detected_url`. The clipboard
+        // dedupe key is what stops a stale link (still sitting in the
+        // clipboard) from being re-processed on every focus change — clearing
+        // it here made removing one row silently restart whatever blog link
+        // was last copied (#20). Re-copying a link still re-triggers detection
+        // via the clip-change signal, and Settings → 清空自动检测缓存 remains
+        // the explicit way to reset it.
         stateManager.remove(itemId)
     }
 
     fun clearAllDownloads() {
-        prefs.edit().remove("last_auto_detected_url").apply()
-        stateManager.clearAll()
+        // Same as removeDownload: clearing history is unrelated to the
+        // clipboard dedupe key (see #20). Rows of a live blog card stay —
+        // only standalone downloads and orphans are cleared (#21).
+        stateManager.clearAll(blogJobs.value.map { it.blogName }.toSet())
     }
 
     fun pauseAllDownloads() = stateManager.pauseAll()
 
     fun resumeAllDownloads() = stateManager.resumeAll()
-
-    /** Pause every unfinished item of one blog batch (used from the detail page). */
-    fun pauseBlogBatch(batchId: String) = stateManager.pauseBatch(batchId)
-
-    /** Resume every paused item of one blog batch (used from the detail page). */
-    fun resumeBlogBatch(batchId: String) = stateManager.resumeBatch(batchId)
 
     fun retryPendingLoginUrl() {
         // beginLoginRetry consumes the pending URL AND sets a guard so

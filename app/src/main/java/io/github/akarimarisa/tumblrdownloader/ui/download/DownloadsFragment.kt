@@ -91,9 +91,11 @@ class DownloadsFragment : Fragment() {
             // downloads finish when switching back to the app.
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.downloads.collect { list ->
-                    // Blog batch items belong behind their blog card
-                    // (BlogDetailActivity) — keep the main queue to standalone
-                    // downloads only.
+                    // Blog batch rows belong behind their blog card — and so
+                    // do the orphans left by a removed card: they are counted
+                    // by the next card of that blog (and the duplicate toast
+                    // names the blog), but dumping years of completed blog
+                    // files into the main queue confused users (#18).
                     val visible = list.filter { it.batchId == null }
                     standaloneEmpty = visible.isEmpty()
                     adapter.submitList(visible)
@@ -158,13 +160,11 @@ class DownloadsFragment : Fragment() {
             .setTitle(R.string.remove_download)
             .setMessage(R.string.remove_confirm_message)
             .setPositiveButton(R.string.remove_confirm) { _, _ ->
-                // Clear clipboard to prevent re-detection of the same URL
-                runCatching {
-                    val cm = requireContext().getSystemService(
-                        android.content.ClipboardManager::class.java
-                    )
-                    cm?.setPrimaryClip(android.content.ClipData.newPlainText(null, ""))
-                }
+                // NOTE: no clipboard wiping here. The dedupe key in
+                // MainViewModel.removeDownload already stops the same link
+                // from being re-detected, and emptying the user's clipboard
+                // behind their back was both surprising and — combined with
+                // that key being cleared — part of the #20 chain.
                 viewModel.removeDownload(item.id)
             }
             .setNegativeButton(android.R.string.cancel, null)

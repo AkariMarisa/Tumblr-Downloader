@@ -206,7 +206,10 @@ class SettingsDetailActivity : AppCompatActivity() {
                 .setTitle(R.string.pref_clear_cache)
                 .setMessage(R.string.pref_clear_cache_dialog)
                 .setPositiveButton(android.R.string.ok) { _, _ ->
-                    prefs.edit().remove(PREF_LAST_AUTO_URL).apply()
+                    prefs.edit()
+                        .remove(PREF_LAST_AUTO_URL)
+                        .remove("last_clip_description")
+                        .apply()
                     LocalizedToast.show(toastContext(), R.string.cache_cleared_toast, android.widget.Toast.LENGTH_SHORT)
                 }
                 .setNegativeButton(android.R.string.cancel, null)

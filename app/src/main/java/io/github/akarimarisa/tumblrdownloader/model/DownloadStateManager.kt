@@ -148,7 +148,7 @@ class DownloadStateManager private constructor(private val app: Application) {
         data class StartOrResume(val itemId: String) : Cmd()
         data class Pause(val itemId: String) : Cmd()
         data class Remove(val itemId: String) : Cmd()
-        data object ClearAll : Cmd()
+        data class ClearAll(val keepBlogNames: Set<String>) : Cmd()
         data class Progress(val item: DownloadItem) : Cmd()
         data object PauseAll : Cmd()
         data object ResumeAll : Cmd()
@@ -320,7 +320,7 @@ class DownloadStateManager private constructor(private val app: Application) {
 
         when {
             fresh.isEmpty() -> _parseEvent.tryEmit(
-                ParseEvent.Message(localizedString(R.string.parse_duplicate_skipped))
+                ParseEvent.Message(duplicateMessage(candidates))
             )
             // Even a single fresh file goes through the picker: with the
             // "auto-download all media" switch off the user asked to choose,
@@ -332,7 +332,29 @@ class DownloadStateManager private constructor(private val app: Application) {
         }
     }
 
-    /** Enqueue the media the user kept in the picker. */
+    /**
+     * "Already in the list" must say *where*: blog batch rows live behind
+     * their card, so a post that belongs to a blog download is not visible in
+     * the main list — users reported "the link says it exists but the list is
+     * empty" (#18).
+     */
+    private fun duplicateMessage(candidates: List<ParsedTumblrMedia>): String {
+        val keys = candidates.map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }.toSet()
+        val owner = _items.value
+            .filter { it.status != DownloadStatus.FAILED }
+            .firstOrNull {
+                it.blogName != null &&
+                    DownloadUtils.normalizeMediaIdentity(it.mediaUrl) in keys
+            }?.blogName
+        return if (owner != null) {
+            localizedString(R.string.parse_duplicate_in_blog, owner)
+        } else {
+            localizedString(R.string.parse_duplicate_skipped)
+        }
+    }
+
+    /**
+     * Enqueue the media the user kept in the picker. */
     fun confirmMediaPreview(previewId: String, selectedIndices: Set<Int>) {
         val request = _mediaPreview.value?.takeIf { it.id == previewId } ?: return
         _mediaPreview.value = null
@@ -382,7 +404,14 @@ class DownloadStateManager private constructor(private val app: Application) {
 
     fun remove(itemId: String) { cmdCh.trySend(Cmd.Remove(itemId)) }
 
-    fun clearAll() { cmdCh.trySend(Cmd.ClearAll) }
+    /**
+     * Drop every completed row the main list shows: standalone downloads plus
+     * orphans (batch rows whose card is gone). Rows belonging to a live card
+     * are kept — they back that card's record.
+     *
+     * @param keepBlogNames blogs that still have a card; their rows stay.
+     */
+    fun clearAll(keepBlogNames: Set<String>) { cmdCh.trySend(Cmd.ClearAll(keepBlogNames)) }
 
     fun pauseAll() { cmdCh.trySend(Cmd.PauseAll) }
 
@@ -460,7 +489,7 @@ class DownloadStateManager private constructor(private val app: Application) {
             is Cmd.StartOrResume -> processStartOrResume(cmd.itemId)
             is Cmd.Pause -> processPause(cmd.itemId)
             is Cmd.Remove -> processRemove(cmd.itemId)
-            is Cmd.ClearAll -> processClearAll()
+            is Cmd.ClearAll -> processClearAll(cmd.keepBlogNames)
             is Cmd.PauseAll -> processPauseAll()
             is Cmd.ResumeAll -> processResumeAll()
             is Cmd.ServicePauseAll -> processServicePauseAll()
@@ -534,7 +563,7 @@ class DownloadStateManager private constructor(private val app: Application) {
 
         if (added.isEmpty()) {
             if (cmd.emitQueuedEvent) {
-                _parseEvent.tryEmit(ParseEvent.Message(localizedString(R.string.parse_duplicate_skipped)))
+                _parseEvent.tryEmit(ParseEvent.Message(duplicateMessage(candidates)))
             }
             return
         }
@@ -655,22 +684,24 @@ class DownloadStateManager private constructor(private val app: Application) {
      * Non-completed items (paused, failed, queued, downloading) are kept
      * so the user can retry or resume them later.
      */
-    private fun processClearAll() {
-        // Only standalone downloads belong to the main list's "clear
-        // completed" action. Blog batch items back their card's
-        // full-download/subscription state — clearing them while leaving the
-        // card behind would hollow out the record (see issue reports).
-        val toRemove = _items.value.filter {
-            it.status == DownloadStatus.COMPLETED && it.batchId == null
-        }
+    private fun processClearAll(keepBlogNames: Set<String>) {
+        // Standalone downloads **and orphans** — batch rows whose card no
+        // longer exists are listed in the main queue now, so "clear
+        // completed" has to take them too; otherwise the button does nothing
+        // visible while orphan rows sit there (#21). Rows of a live card are
+        // kept: clearing them would hollow out that card's record while the
+        // card itself stays behind.
+        fun isClearable(item: DownloadItem) =
+            item.status == DownloadStatus.COMPLETED &&
+                (item.batchId == null || item.blogName !in keepBlogNames)
+
+        val toRemove = _items.value.filter(::isClearable)
         if (toRemove.isEmpty()) return
 
         toRemove.forEach { item ->
             CompletedMediaStore.remove(app, item.mediaUrl)
         }
-        _items.value = _items.value.filterNot {
-            it.status == DownloadStatus.COMPLETED && it.batchId == null
-        }
+        _items.value = _items.value.filterNot(::isClearable)
         dirty = true
     }
 
