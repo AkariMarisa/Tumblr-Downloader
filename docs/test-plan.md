@@ -56,6 +56,12 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 2.20 | Tumblr app copy → switch back | Detected | 📱 |
 | 2.21 | Chrome share → the app | Type dialog opens; the stale clipboard is ignored for 5s (no second flow) | 📱 |
 | 2.22 | Tumblr app share → the app | Picker opens (even for a one-file post); no clipboard conflict | 📱 |
+| 2.23 | Share text with surrounding words / several URLs (post) | The first Tumblr URL in the text is used (`firstTumblrUrl`), rest ignored | ⬜ |
+| 2.24 | Share text with surrounding words (blog) | Blog flow still starts — currently `isBlogUrl` sees the raw text, so a blog link with commentary may fall through to the post path | ⬜ |
+| 2.25 | `tmblr.co` short link | Currently NOT recognised by `shareUrlRegex` — must show the invalid-URL toast, never a silent no-op (R28) | ⬜ |
+| 2.26 | URL with `?source=` / `utm_*` params | Parsed normally (`sourceParamRegex` strips Tumblr's own param) | ⬜ |
+| 2.27 | Deleted post (404) / server error | Explicit error message, no silent empty result, no crash | ⬜ |
+| 2.28 | Text-only post with no media | Friendly "no media" message instead of an empty picker | ⬜ |
 
 ## 3. Pre-download picker
 
@@ -103,6 +109,9 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 5.15 | Blog output folder | Files land in `TumblrDownloader/<blog>-<hash>/` (#14) | 📱 |
 | 5.16 | Orphan rows (card gone) | Hidden from the main list; counted by the next card of that blog; clear-all takes them (#18, #24) | 📱 |
 | 5.17 | Interruption (process death) → card 未完成 → 开始 | Resumes from the persisted cursor | ⬜ |
+| 5.18 | Network drops mid-scan | Card goes BLOCKED with an error code; 开始 after reconnect resumes from the cursor | ⬜ |
+| 5.19 | Two blogs scanning at the same time | Two independent cards, counters and pause/remove never cross | ⬜ |
+| 5.20 | Empty blog (0 posts) / password-protected blog | Ends or errors cleanly, no hang, no crash | ⬜ |
 
 > Note: 5.3/5.4 gate on ≥5000 posts (the lowest selectable threshold); no reachable blog is that large, so the on-device path is covered by unit tests only.
 
@@ -118,6 +127,8 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 6.6 | WiFi drops mid-download | Active rows fail after 3 retries, queued rows pause, no auto-resume | ⬜ |
 | 6.7 | Concurrency setting (1–4) | At most N rows download at once | ⬜ |
 | 6.8 | Rate limit | Speed stays under the configured cap | 📱 |
+| 6.9 | Double-tap 下载媒体 / paste the same link twice quickly | Only queued once (`isParsing` guard + dedupe) | ⬜ |
+| 6.10 | Storage full mid-download (ENOSPC) | Row FAILED with a readable error; no 0-byte leftovers, no crash | ⬜ |
 
 ## 7. Files & storage
 
@@ -131,6 +142,8 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 7.6 | Custom directory (SAF) | Files go there; blog sub-folder created on demand | ⬜ |
 | 7.7 | Killed mid-download → resume | Partial file resumed via Range, no duplicate | ⬜ |
 | 7.8 | MediaStore visibility | Files appear in the gallery/Downloads with the right `relative_path` | 📱 |
+| 7.9 | Killed mid-write | No stale `.pending-*` files left behind in Downloads after restart/finish | ⬜ |
+| 7.10 | The same media URL appearing in two posts | Normalised URL dedupes it — queued and stored once | ⬜ |
 
 ## 8. Settings
 
@@ -144,6 +157,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 8.6 | Blog scan interval / long threshold | Affects pacing and when 5.3 fires | 📱 |
 | 8.7 | 清空自动检测缓存 | Next clipboard link is detected again | 📱 |
 | 8.8 | Clear cache / logout | Cookies removed, login state reset | ⬜ |
+| 8.9 | Whole core flow while the UI is English | Toasts, dialogs and notification text are all English (locale sync via LocaleHelper) | ⬜ |
 
 ## 9. Sidebar, viewer, notifications
 
@@ -152,8 +166,9 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 9.1 | Login (WebView) → avatar/logout | Username shown, logout clears cookies | ⬜ |
 | 9.2 | About screen | Version, links open correctly | 📱 |
 | 9.3 | Media viewer: image/video | Opens, next/prev, back returns to the same row | ⬜ |
-| 9.4 | Notification while downloading | Progress + speed; pause/cancel actions work | ⬜ |
-| 9.5 | Notification after completion | Summary transitions correctly, no stale 0% (#24) | ⬜ |
+| 9.4 | Notification while downloading | Posted with filename, progress bar and a 全部停止 action; lands in the **silent (低优先级) group** at the bottom of the shade — see R29 for the channel-importance note | 📱 |
+| 9.5 | Notification after completion | Summary 「成功：X，失败：Y」 persists after the service stops, no stale 0% (#24) — currently INCONSISTENT, see R27 | ⬜ |
+| 9.6 | Android 13+ notification permission | POST_NOTIFICATIONS is declared but never requested at runtime — on a 13+ device the non-FGS summary would be silently blocked (R26); needs a 13+ device to verify | ⬜ |
 
 ## 10. Lifecycle & performance
 
@@ -164,6 +179,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 10.3 | Process death (swipe away) → relaunch | Queue restored, cards restored, no duplicates | 📱 |
 | 10.4 | Huge blog (4k+ posts) | No ANR; queue capped at 3000 rows (#12) | 📱 |
 | 10.5 | Removing a 30k-row card | No crash, no system_server death (#13) | 📱 |
+| 10.6 | Downgrade install (new → old APK) | Old build must not crash-loop; known limitation: v1.0.7 opens the v2 database with `fallbackToDestructiveMigration` — **history/cookies are wiped on downgrade**, so back up first | 📱 |
 
 ## 11. Regression checklist (issues found in device testing)
 
@@ -194,3 +210,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | R23 | Sharing a blog while a post link sat in the clipboard fired both flows | Clipboard ignored for 5s after a share | ✅ 📱 |
 | R24 | Removing a blog card dumped its old rows into the main list | Orphans hidden again — only counted by the next card of that blog | ✅ |
 | R25 | Removing a running blog card resurrected it and downloads resumed | Observed once, correlated with an Activity/window anomaly on this device; a plain removal of a running card stayed stable for 13 min — needs a reliable repro | ⬜ |
+| R26 | POST_NOTIFICATIONS declared but never requested at runtime | On Android 13+ non-FGS notifications (completion summary) are blocked until granted; add a first-run permission request (this device is Android 12 → needs a 13+ device to verify) | ⬜ |
+| R27 | Completion summary notification is inconsistent | Present and lasting minutes in one run, gone 15 s after completion in another — pin down the cancel path (ACTION_START cancels the summary) | ⬜ |
+| R28 | `tmblr.co` short links are not recognised | `shareUrlRegex` matches only tumblr.com / *.tumblr.com — short links hit the invalid-URL path; either expand them or at least surface the toast (never silent) | ⬜ |
+| R29 | Download notification sits in the silent group | Channel `tumblr_download_channel` is IMPORTANCE_LOW → notifications land at the bottom of the shade; consider DEFAULT importance so users see progress | ⬜ |
