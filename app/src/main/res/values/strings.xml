@@ -105,7 +105,7 @@
     <string name="parse_oembed_unavailable">oEmbed unavailable: %1$s</string>
     <string name="parse_login_required">Login required to retry.</string>
     <string name="parse_duplicate_skipped">Media already in download list, duplicates skipped.</string>
-    <string name="parse_duplicate_in_blog">Already in the download list — under the %1$s blog card</string>
+    <string name="parse_duplicate_in_blog">Already in the download list — belongs to the %1$s blog</string>
     <string name="parse_no_new_media">No downloadable media found</string>
     <string name="parse_page_request_failed">Page request failed, HTTP %1$d</string>
     <string name="parse_private_not_supported">Private Tumblr posts are not supported yet.</string>

@@ -38,11 +38,15 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 2.11 | Share intent from another app (post) | Picker opens (switch off) | 📱 |
 | 2.12 | Share intent (blog URL) | Type dialog opens (switch off) / scan starts (switch on) | 📱 |
 | 2.13 | Clipboard: copy post link → switch back | Picker opens, field filled, Download tab selected | 📱 |
-| 2.14 | Clipboard: same link again after 跳过 | Picker opens again (clip-change signal) | ⬜ |
+| 2.14 | Clipboard: same link again after 跳过 | Picker opens again (clip-description timestamp) | 📱 |
 | 2.15 | Clipboard: copy the URL that is already in the input field | No re-trigger (#2) | ⬜ |
 | 2.16 | Clipboard: return from the media viewer with an unchanged link | Nothing happens (last-URL fallback) | ⬜ |
 | 2.17 | Clipboard auto-detect disabled in settings | No detection at all | ⬜ |
 | 2.18 | Cold start with a Tumblr link in the clipboard | Detected on launch too — the last-URL dedupe still blocks links that were handled before | 📱 |
+| 2.19 | Chrome copy → switch back (same link re-copied) | Detected again: the clip description carries a per-copy timestamp (#1) | 📱 |
+| 2.20 | Tumblr app copy → switch back | Detected | 📱 |
+| 2.21 | Chrome share → the app | Type dialog opens; the stale clipboard is ignored for 5s (no second flow) | 📱 |
+| 2.22 | Tumblr app share → the app | Picker opens (even for a one-file post); no clipboard conflict | 📱 |
 
 ## 3. Pre-download picker
 
@@ -175,3 +179,6 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | R19 | Copying the field's own URL re-triggered detection | Ignore focused copies | ⬜ |
 | R20 | Stale clipboard restarted a removed blog | Deleting a row / clearing history no longer resets the clipboard dedupe key (only 设置 → 清空自动检测缓存 does) | ✅ |
 | R21 | Clear-all did nothing while orphan rows were listed | Clear-all now also takes completed orphans; a live card's rows stay | ✅ 📱 |
+| R22 | Re-copying the same link was never re-detected | Clip-description timestamp signal (`ClipboardDedupe`, three signals combined) | ✅ 📱 |
+| R23 | Sharing a blog while a post link sat in the clipboard fired both flows | Clipboard ignored for 5s after a share | ✅ 📱 |
+| R24 | Removing a blog card dumped its old rows into the main list | Orphans hidden again — only counted by the next card of that blog | ✅ |
