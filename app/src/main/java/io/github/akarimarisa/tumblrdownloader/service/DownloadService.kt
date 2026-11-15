@@ -87,7 +87,9 @@ class DownloadService : Service() {
     }
 
     companion object {
-        private const val CHANNEL_ID = "tumblr_download_channel"
+        private const val CHANNEL_ID = "tumblr_download_channel_v2"
+        private const val LEGACY_CHANNEL_ID = "tumblr_download_channel"
+        private const val KEY_LEGACY_CHANNEL_DELETED = "notification_legacy_channel_deleted"
         private const val NOTIFICATION_ID = 10001
         private const val SUMMARY_NOTIFICATION_ID = 10002
         private const val IDLE_TIMEOUT_MS = 5_000L
@@ -1833,11 +1835,34 @@ class DownloadService : Service() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 resolveString(R.string.download_channel_name),
-                NotificationManager.IMPORTANCE_LOW
+                // #R29: the legacy `tumblr_download_channel` was IMPORTANCE_LOW,
+                // which buried the progress and summary notifications in the OS
+                // "silent" group (EMUI folds them into an untappable chip row).
+                // A fresh channel id is used because an existing channel's
+                // importance can never be changed by its app, and deleting it
+                // does not stick while a notification still references it
+                // (observed on device) — first creation wins, so DEFAULT is
+                // honoured on every install. The sound plays only on the first
+                // post of a session; updates never re-alert.
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
                 description = resolveString(R.string.download_channel_desc)
             }
+            // Create the v2 channel first, then drop the legacy one exactly
+            // once (#R29) — notifications posted from here on use v2 even if
+            // the legacy deletion is deferred by an active reference.
             notificationManager.createNotificationChannel(channel)
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            if (!prefs.getBoolean(KEY_LEGACY_CHANNEL_DELETED, false)) {
+                notificationManager.deleteNotificationChannel(LEGACY_CHANNEL_ID)
+                prefs.edit().putBoolean(KEY_LEGACY_CHANNEL_DELETED, true).apply()
+                android.util.Log.i("DownloadSvc", "channel: legacy channel deleted (#R29)")
+            }
+            android.util.Log.i(
+                "DownloadSvc",
+                "channel ready: id=$CHANNEL_ID importance=" +
+                    notificationManager.getNotificationChannel(CHANNEL_ID)?.importance
+            )
         }
     }
 
