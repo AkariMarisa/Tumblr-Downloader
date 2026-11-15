@@ -42,7 +42,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 2.3 | Paste a post whose media is already queued | Toast says where it is (`属于博客「x」` for blog rows) | ✅ 📱 |
 | 2.4 | Paste an invalid URL | `无效的 Tumblr 链接` toast, no crash | 📱 |
 | 2.5 | Paste a non-Tumblr URL | Invalid-URL toast | 📱 |
-| 2.6 | Post that needs login | Login page opens; after login the parse retries and keeps the picker intent — 登录页已实测（ntn888 登录墙）；登录后重试未验证 | ⬜ |
+| 2.6 | Post that needs login | Login page opens; after login the parse retries and keeps the picker intent — 登录页已实测；ntn888 的“墙”实为当时会话失效（登录恢复后可直接解析），真正需要登录的帖子素材仍缺 | ⬜ |
 | 2.7 | Adult-content interstitial | Relaxed JSON parse or login fallback, never a silent empty result — 素材未触发拦截页（登录/登出均直接解析成功），需真正出现年龄确认页的帖子 | ⬜ |
 | 2.8 | Video post | Video row appears with type 视频, downloads as `.mp4` | ⬜ |
 | 2.9 | GIF post (`.gif` / `.gifv` / extensionless) | Picker groups it under GIF; saved file ends in `.gif` | ✅ 📱 |
@@ -112,7 +112,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 5.15 | Blog output folder | Files land in `TumblrDownloader/<blog>-<hash>/` (#14) | 📱 |
 | 5.16 | Orphan rows (card gone) | Hidden from the main list; counted by the next card of that blog; clear-all takes them (#18, #24) | 📱 |
 | 5.17 | Interruption (process death) → card 未完成 → 开始 | Resumes from the persisted cursor (410 → 598 → 735 posts); resume re-asks the long-blog confirm first (in-memory gate) | 📱 |
-| 5.18 | Network drops mid-scan | Card goes BLOCKED with an error code; 开始 after reconnect resumes from the cursor | ⬜ |
+| 5.18 | Network drops mid-scan | Card goes BLOCKED with an error code; 开始 after reconnect resumes from the cursor — 实测：165s+ 停在「解析中」不转出错，恢复后不自愈，暂停→开始后游标仍冻结（见 R36） | ❌ |
 | 5.19 | Two blogs scanning at the same time | Two independent cards, counters and pause/remove never cross | 📱 |
 | 5.20 | Empty blog (0 posts) / password-protected blog | Ends or errors cleanly, no hang, no crash — verified with a non-existent blog (card 出错 · 已扫描 0); empty-blog variant untested | 📱 |
 
@@ -126,8 +126,8 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 6.2 | Row 删除 (red ✕) | Row removed, file kept; re-adding the link does not create a `(1)` copy (#4) | 📱 |
 | 6.3 | 全部暂停 / 全部继续 (toolbar) | Whole queue pauses/resumes | 📱 |
 | 6.4 | Clear completed | Completed standalone **and orphan** rows are removed; a live card's rows stay; empty state returns | 📱 |
-| 6.5 | Failed row → 续 | Retries from scratch without removing it first | ⬜ |
-| 6.6 | WiFi drops mid-download | Active rows fail after 3 retries, queued rows pause, no auto-resume | ⬜ |
+| 6.5 | Failed row → 续 | Retries from scratch without removing it first — 断网路径不再产生失败行（改为挂起），需服务器错误素材（404/5xx 媒体） | ⬜ |
+| 6.6 | WiFi drops mid-download | Active rows fail after 3 retries, queued rows pause, no auto-resume — 实测：下载静默挂起（零日志零提示），挂死项占住并发槽位，恢复网络后队列冻结不自愈；手动全部暂停→全部开始可救活 | ❌ |
 | 6.7 | Concurrency setting (1–4) | At most N rows download at once — verified at N=2 via two overlapping in-flight requests in the log | 📱 |
 | 6.8 | Rate limit | Speed stays under the configured cap | 📱 |
 | 6.9 | Double-tap 下载媒体 / paste the same link twice quickly | Only queued once (`isParsing` guard + dedupe); second tap absorbed by the loading overlay, single toast | 📱 |
@@ -146,7 +146,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 7.7 | Killed mid-download → resume | Partial file resumed via Range, no duplicate | ⬜ |
 | 7.8 | MediaStore visibility | Files appear in the gallery/Downloads with the right `relative_path` | 📱 |
 | 7.9 | Killed mid-write | No stale `.pending-*` files left behind in Downloads after restart/finish | ⬜ |
-| 7.10 | The same media URL appearing in two posts | UX expectation (user): download it once per post (filenames differ by author) rather than silently dedupe; BLOCKED — the original post hits a login wall | ⬜ |
+| 7.10 | The same media URL appearing in two posts | UX expectation (user): download it once per post (filenames differ by author) rather than silently dedupe — 实测：原帖行在队列时，转载帖同 media 被 URL 去重直接跳过（与预期相反） | ❌ |
 
 ## 8. Settings
 
@@ -222,3 +222,4 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | R32 | Re-downloading after clearing history creates numbered `(N)` copies | Blog sub-folder files pile up `(1)/(2)/…` per re-download while a flat single-post file overwrites in place — the existence lookup likely misses the sub-folder path (R4 inconsistency) | ⬜ |
 | R33 | "Private Tumblr posts are not supported yet." is hardcoded English | Chinese UI shows an English toast — move the string into resources (2.6/私密帖) | ⬜ |
 | R34 | Login state flips to logged-out; login bounces back with no error | Root cause: session invalidated server-side (the 401 was the session, not the token) plus stale cookie state in the WebView jar; `pm clear` + re-login succeeded and the round-trip is verified: cold start keeps `akarimarisa/在线` at +5 s and +18 s with `fetch: api ok`. Also shipped: transient failures keep the cached account (offline-verified), login rejection now toasts, redirect-target/root-URL detection fixed, main-frame request diagnostics | ✅ |
+| R36 | After a network drop the blog scan and queue become zombies | Scan card sticks at 解析中 forever (never errors/BLOCKED, never self-heals after reconnect; pause→start unfreezes downloads but the scan cursor stays frozen — suspected swallowed worker exception / leaked activeJobs). Download side: the hung transfer holds its concurrency slot, freezing the whole queue until 全部暂停→全部开始 (verified recovery) | ⬜ |
