@@ -42,6 +42,9 @@ class BlogFeedParserTest {
     @Test
     fun `blog url - subdomain form`() {
         assertEquals("bonesbunns", BlogFeedParser.parseBlogIdentifier("https://bonesbunns.tumblr.com"))
+        assertEquals("akari-test-blog", BlogFeedParser.parseBlogIdentifier("https://www.tumblr.com/blog/akari-test-blog"))
+        assertEquals("akari-test-blog", BlogFeedParser.parseBlogIdentifier("https://www.tumblr.com/blog/akari-test-blog/"))
+        assertTrue(BlogFeedParser.isBlogUrl("https://www.tumblr.com/blog/akari-test-blog"))
         assertEquals("bonesbunns", BlogFeedParser.parseBlogIdentifier("https://bonesbunns.tumblr.com/"))
     }
 

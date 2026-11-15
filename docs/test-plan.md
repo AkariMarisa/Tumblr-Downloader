@@ -42,7 +42,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 2.3 | Paste a post whose media is already queued | Toast says where it is (`属于博客「x」` for blog rows) | ✅ 📱 |
 | 2.4 | Paste an invalid URL | `无效的 Tumblr 链接` toast, no crash | 📱 |
 | 2.5 | Paste a non-Tumblr URL | Invalid-URL toast | 📱 |
-| 2.6 | Post that needs login | Login page opens; after login the parse retries and keeps the picker intent — 登录页已实测；ntn888 的“墙”实为当时会话失效（登录恢复后可直接解析），真正需要登录的帖子素材仍缺 | ⬜ |
+| 2.6 | Post that needs login | Login page opens; after login the parse retries and keeps the picker intent — 全链路实测：登出→ntn888 弹登录页→登录→按「完成」→自动重试→选择器自动弹出；redirect 目标识别补了 slug 规范化匹配（免手动完成） | 📱 |
 | 2.7 | Adult-content interstitial | Relaxed JSON parse or login fallback, never a silent empty result — 素材未触发拦截页（登录/登出均直接解析成功），需真正出现年龄确认页的帖子 | ⬜ |
 | 2.8 | Video post | Video row appears with type 视频, downloads as `.mp4` | ⬜ |
 | 2.9 | GIF post (`.gif` / `.gifv` / extensionless) | Picker groups it under GIF; saved file ends in `.gif` | ✅ 📱 |
@@ -114,7 +114,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 5.17 | Interruption (process death) → card 未完成 → 开始 | Resumes from the persisted cursor (410 → 598 → 735 posts); resume re-asks the long-blog confirm first (in-memory gate) | 📱 |
 | 5.18 | Network drops mid-scan | Card goes BLOCKED with an error code; 开始 after reconnect resumes from the cursor — 实测：165s+ 停在「解析中」不转出错，恢复后不自愈，暂停→开始后游标仍冻结（见 R36） | ❌ |
 | 5.19 | Two blogs scanning at the same time | Two independent cards, counters and pause/remove never cross | 📱 |
-| 5.20 | Empty blog (0 posts) / password-protected blog | Ends or errors cleanly, no hang, no crash — verified with a non-existent blog (card 出错 · 已扫描 0); empty-blog variant untested | 📱 |
+| 5.20 | Empty blog (0 posts) / password-protected blog | Ends or errors cleanly, no hang, no crash — 实测真·空博客（akari-test-blog，0 帖）：类型选择 → 扫描 → 已完成 · 已扫描 0 帖 · 0 媒体，无崩溃；URL 为 /blog/<name> 形式，顺带修复解析（R38）；加密博客变体待素材 | 📱 |
 
 > Note: 5.3/5.4 gate on ≥5000 posts (the lowest selectable threshold); no reachable blog is that large, so the on-device path is covered by unit tests only.
 
@@ -166,7 +166,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 
 | ID | Case | Expected | Status |
 |---|---|---|---|
-| 9.1 | Login (WebView) → avatar/logout | Username shown, logout clears cookies — 登出态侧栏（登录/未登录）已验证；登出按钮+确认流程未受控验证 | ⬜ |
+| 9.1 | Login (WebView) → avatar/logout | Username shown, logout clears cookies — 侧栏显示账号名/头像 ✓；退出登录一键即清（无二次确认），清后接口/dashboard 均 logged-out ✓ | 📱 |
 | 9.2 | About screen | Version, links open correctly | 📱 |
 | 9.3 | Media viewer: image/video | Opens, swipe next changes image, swipe prev returns, back lands on the same row | 📱 |
 | 9.4 | Notification while downloading | Posted with filename, progress bar and a 全部停止 action; lands in the **silent (低优先级) group** at the bottom of the shade — see R29 for the channel-importance note | 📱 |
@@ -214,7 +214,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | R24 | Removing a blog card dumped its old rows into the main list | Orphans hidden again — only counted by the next card of that blog | ✅ |
 | R25 | Removing a running blog card resurrected it and downloads resumed | Observed once, correlated with an Activity/window anomaly on this device; a plain removal of a running card stayed stable for 13 min — needs a reliable repro | ⬜ |
 | R26 | POST_NOTIFICATIONS declared but never requested at runtime | On Android 13+ non-FGS notifications (completion summary) are blocked until granted; add a first-run permission request (this device is Android 12 → needs a 13+ device to verify) | ⬜ |
-| R27 | Completion summary notification is inconsistent | Observed 1 present / 3 absent across runs — hypothesis: a late ACTION_START restarts the service and line 427 cancels the summary | ⬜ |
+| R27 | Completion summary notification is inconsistent | App-side code verified CORRECT via new logs: publishSummary is called repeatedly through the drain, no cancel follows it on the natural-completion path, and onStartCommand traces show ACTION_START cancels the summary *before* queuing new work (not after a drain). Current non-visibility is a TEST-ENVIRONMENT artifact: notification id 10002 sits in the system's Pending-snoozed store with a ~2094 timestamp from an earlier notification-clearing snooze loop, survives reboot (verified), and unsnooze cannot reach the pending store — the historical 1-present/3-absent observations predate that loop and remain partially unexplained | ⬜ |
 | R28 | `tmblr.co` short links are not recognised | Share path confirmed SILENT; field path shows the invalid toast — expand the links or surface the toast on share too | ⬜ |
 | R29 | Download notification sits in the silent group | Channel `tumblr_download_channel` is IMPORTANCE_LOW → notifications land at the bottom of the shade; consider DEFAULT importance so users see progress | ⬜ |
 | R30 | Text-only / deleted posts open a picker with stray page-level images | No post media exists, yet the parser scrapes the blog **cover (og:image)** — verified: text-only post yielded the blog header banner (1419×640), the 404 page yielded its imagery; restrict extraction to actual post media nodes (2.27, 2.28) | ⬜ |
@@ -223,3 +223,4 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | R33 | "Private Tumblr posts are not supported yet." is hardcoded English | Chinese UI shows an English toast — move the string into resources (2.6/私密帖) | ⬜ |
 | R34 | Login state flips to logged-out; login bounces back with no error | Root cause: session invalidated server-side (the 401 was the session, not the token) plus stale cookie state in the WebView jar; `pm clear` + re-login succeeded and the round-trip is verified: cold start keeps `akarimarisa/在线` at +5 s and +18 s with `fetch: api ok`. Also shipped: transient failures keep the cached account (offline-verified), login rejection now toasts, redirect-target/root-URL detection fixed, main-frame request diagnostics | ✅ |
 | R36 | After a network drop the blog scan and queue become zombies | Scan card sticks at 解析中 forever (never errors/BLOCKED, never self-heals after reconnect; pause→start unfreezes downloads but the scan cursor stays frozen — suspected swallowed worker exception / leaked activeJobs). Download side: the hung transfer holds its concurrency slot, freezing the whole queue until 全部暂停→全部开始 (verified recovery) | ⬜ |
+| R38 | `www.tumblr.com/blog/<name>` URLs rejected as invalid | Tumblr's own blog switcher shares URLs with the `blog/` prefix while the anchor regex only allowed a single path segment — fixed (optional `blog/` prefix) with unit tests, device-verified with akari-test-blog in 5.20 | ✅ |

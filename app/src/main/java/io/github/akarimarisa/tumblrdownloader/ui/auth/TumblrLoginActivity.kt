@@ -289,7 +289,13 @@ class TumblrLoginActivity : AppCompatActivity() {
         val target = loginTargetUrl.trim()
         if (target.isBlank() || target == DEFAULT_LOGIN_URL || url.isNullOrBlank()) return false
         fun norm(s: String) = s.substringBefore('?').substringBefore('#').trimEnd('/')
-        return norm(url) == norm(target)
+        val t = norm(target)
+        val u = norm(url)
+        // Tumblr canonicalises the bare post URL to a slug-suffixed one
+        // (`/8243…/slug`), so exact equality missed the real redirect and the
+        // user had to press 完成 by hand (#R34 follow-up, seen in trace
+        // `nav GET /ntn888/8243…` → `onPageFinished /ntn888/8243…/slug`).
+        return u == t || u.startsWith("$t/") || t.startsWith("$u/")
     }
 
     companion object {

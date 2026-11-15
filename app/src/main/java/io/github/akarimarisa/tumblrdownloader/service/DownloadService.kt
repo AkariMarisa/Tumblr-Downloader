@@ -406,6 +406,9 @@ class DownloadService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Trace late intents: a stray ACTION_START arriving right after the
+        // queue drains cancels the summary notification at its branch (#R27).
+        android.util.Log.i("DownloadSvc", "onStartCommand action=${intent?.action ?: ACTION_START} item=${intent?.let { parseIntent(it)?.id }}")
         when (intent?.action ?: ACTION_START) {
             ACTION_START -> {
                 // MUST run before any return path below.
@@ -425,6 +428,7 @@ class DownloadService : Service() {
                 }
                 notificationMode = NotificationMode.ACTIVE
                 notificationManager.cancel(SUMMARY_NOTIFICATION_ID)
+                android.util.Log.i("DownloadSvc", "cancel summary: ACTION_START path")
                 if (activeJobs.isEmpty() && queuedItemIds.isEmpty() && inHandItemIds.isEmpty()) {
                     sessionCompletedIds.clear()
                     sessionFailedIds.clear()
@@ -507,6 +511,7 @@ class DownloadService : Service() {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 notificationManager.cancel(NOTIFICATION_ID)
                 notificationManager.cancel(SUMMARY_NOTIFICATION_ID)
+                android.util.Log.i("DownloadSvc", "cancel summary: ACTION_CLEAR path")
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -556,6 +561,7 @@ class DownloadService : Service() {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 notificationManager.cancel(NOTIFICATION_ID)
                 publishSummaryNotification()
+                android.util.Log.i("DownloadSvc", "posted summary via pause-all path")
                 return START_STICKY
             }
 
@@ -1669,6 +1675,7 @@ class DownloadService : Service() {
     }
 
     private fun publishSummaryNotification() {
+        android.util.Log.i("DownloadSvc", "publishSummary enter mode=$notificationMode completed=${sessionCompletedIds.size}")
         notificationMode = NotificationMode.SUMMARY
         val content = try {
             LocaleHelper.contextForAppLocale(this).getString(R.string.download_summary_notification, sessionCompletedIds.size, sessionFailedIds.size)

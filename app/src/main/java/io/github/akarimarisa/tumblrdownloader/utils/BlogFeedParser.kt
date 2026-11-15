@@ -39,7 +39,10 @@ object BlogFeedParser {
 
     private val blogUrlRegex = Regex(
         "(?i)^https?://" +
-            "(?:(?:www\\.)?tumblr\\.com/([a-z0-9][a-z0-9_.-]{0,40})" +
+            // `blog/` is accepted as a prefix: Tumblr's own blog switcher
+            // produces www.tumblr.com/blog/<name>, which the single-segment
+            // anchor rejected as an invalid link (user-reported, #R38).
+            "(?:(?:www\\.)?tumblr\\.com/(?:blog/)?([a-z0-9][a-z0-9_.-]{0,40})" +
             "|([a-z0-9][a-z0-9_.-]{0,40})\\.tumblr\\.com)/?$"
     )
 
