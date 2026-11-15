@@ -5,6 +5,9 @@ Every user-visible flow of the app, grouped by area. Status legend:
 * ✅ **automated** — covered by a JVM unit test (`./gradlew testDebugUnitTest`, 212 tests)
 * 📱 **verified** — executed by hand on a real device (SHG01, Android 14, Chinese UI)
 * ⬜ **open** — designed here, not executed yet
+* ❌ **failed** — executed, did not meet the expected behaviour (tracked as a regression row)
+
+Design rule: expectations are written from the user's perspective first — a clear message beats silence, and an honest duplicate download beats a silent dedupe the user cannot explain (see 7.10).
 
 Run the automated suite with `./gradlew testDebugUnitTest lintDebug assembleDebug`.
 Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat` for behaviour).
@@ -39,8 +42,8 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 2.3 | Paste a post whose media is already queued | Toast says where it is (`属于博客「x」` for blog rows) | ✅ 📱 |
 | 2.4 | Paste an invalid URL | `无效的 Tumblr 链接` toast, no crash | 📱 |
 | 2.5 | Paste a non-Tumblr URL | Invalid-URL toast | 📱 |
-| 2.6 | Post that needs login | Login page opens; after login the parse retries and keeps the picker intent | ⬜ |
-| 2.7 | Adult-content interstitial | Relaxed JSON parse or login fallback, never a silent empty result | ⬜ |
+| 2.6 | Post that needs login | Login page opens; after login the parse retries and keeps the picker intent — 登录页已实测（ntn888 登录墙）；登录后重试未验证 | ⬜ |
+| 2.7 | Adult-content interstitial | Relaxed JSON parse or login fallback, never a silent empty result — 素材未触发拦截页（登录/登出均直接解析成功），需真正出现年龄确认页的帖子 | ⬜ |
 | 2.8 | Video post | Video row appears with type 视频, downloads as `.mp4` | ⬜ |
 | 2.9 | GIF post (`.gif` / `.gifv` / extensionless) | Picker groups it under GIF; saved file ends in `.gif` | ✅ 📱 |
 | 2.10 | `.pnj` high-quality image | Saved as `.png` | ✅ |
@@ -56,12 +59,12 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 2.20 | Tumblr app copy → switch back | Detected | 📱 |
 | 2.21 | Chrome share → the app | Type dialog opens; the stale clipboard is ignored for 5s (no second flow) | 📱 |
 | 2.22 | Tumblr app share → the app | Picker opens (even for a one-file post); no clipboard conflict | 📱 |
-| 2.23 | Share text with surrounding words / several URLs (post) | The first Tumblr URL in the text is used (`firstTumblrUrl`), rest ignored | ⬜ |
-| 2.24 | Share text with surrounding words (blog) | Blog flow still starts — currently `isBlogUrl` sees the raw text, so a blog link with commentary may fall through to the post path | ⬜ |
-| 2.25 | `tmblr.co` short link | Currently NOT recognised by `shareUrlRegex` — must show the invalid-URL toast, never a silent no-op (R28) | ⬜ |
+| 2.23 | Share text with surrounding words / several URLs (post) | The first Tumblr URL in the text is used (`firstTumblrUrl`), rest ignored | 📱 |
+| 2.24 | Share text with surrounding words (blog) | Blog flow still starts (type dialog) | ❌ |
+| 2.25 | `tmblr.co` short link | Field path shows the invalid-URL toast ✓; share path must not be a silent no-op (R28) | ❌ |
 | 2.26 | URL with `?source=` / `utm_*` params | Parsed normally (`sourceParamRegex` strips Tumblr's own param) | ⬜ |
-| 2.27 | Deleted post (404) / server error | Explicit error message, no silent empty result, no crash | ⬜ |
-| 2.28 | Text-only post with no media | Friendly "no media" message instead of an empty picker | ⬜ |
+| 2.27 | Deleted post (404) / server error | Explicit error message, no silent empty result, no crash | ❌ |
+| 2.28 | Text-only post with no media | Friendly "no media" message instead of an empty picker — 素材不符：所给帖实际带 1 张图，需真·纯文字帖 | ⬜ |
 
 ## 3. Pre-download picker
 
@@ -94,8 +97,8 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 |---|---|---|---|
 | 5.1 | Blog URL → 下载媒体 (switch off) | Type dialog appears before anything is queued | 📱 |
 | 5.2 | Choose 仅图片 | Only image rows are enqueued | 📱 |
-| 5.3 | Long blog confirm | Dialog appears **before** the first media is queued (#15) | ✅ |
-| 5.4 | Long blog → 取消 | No rows queued, card ends CANCELLED | ⬜ |
+| 5.3 | Long blog confirm | Dialog appears **before** the first media is queued (#15); verified on device twice (41748- and 8573-post blogs at threshold 5000) | ✅ 📱 |
+| 5.4 | Long blog → 取消 | No rows queued, card ends CANCELLED (已扫描 0 帖 · 0 个媒体) | ✅ 📱 |
 | 5.5 | Card while scanning | Stats `已扫描 x/y 帖 · n 个媒体`, bar shows media progress, summary `已下载 a/b 个媒体` (#8, #17) | 📱 |
 | 5.6 | Card buttons | 详情/暂停/移除 always visible; 开始 when idle (#9) | 📱 |
 | 5.7 | Card 暂停 → 开始 | Scan and downloads stop/start together | 📱 |
@@ -104,14 +107,14 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 5.10 | Detail 全部开始 → back | Card shows parsing/downloading again | 📱 |
 | 5.11 | Same blog twice | One card, moved to the top, progress kept | ✅ 📱 |
 | 5.12 | Remove card → re-add | Old completed files are counted by the new card (#10) | ✅ 📱 |
-| 5.13 | Detail blocked while the long-confirm is pending | Toast `博客仍在解析中…` instead of navigating (#6) | ⬜ |
+| 5.13 | Detail blocked while the long-confirm is pending | Modal confirm blocks the 详情 tap (no navigation); the toast path is only reachable when no dialog is up (#6) | 📱 |
 | 5.14 | Back-pressure: queue > 3000 rows | Scan waits for downloads; no ANR (#12) | 📱 |
 | 5.15 | Blog output folder | Files land in `TumblrDownloader/<blog>-<hash>/` (#14) | 📱 |
 | 5.16 | Orphan rows (card gone) | Hidden from the main list; counted by the next card of that blog; clear-all takes them (#18, #24) | 📱 |
-| 5.17 | Interruption (process death) → card 未完成 → 开始 | Resumes from the persisted cursor | ⬜ |
+| 5.17 | Interruption (process death) → card 未完成 → 开始 | Resumes from the persisted cursor (410 → 598 → 735 posts); resume re-asks the long-blog confirm first (in-memory gate) | 📱 |
 | 5.18 | Network drops mid-scan | Card goes BLOCKED with an error code; 开始 after reconnect resumes from the cursor | ⬜ |
-| 5.19 | Two blogs scanning at the same time | Two independent cards, counters and pause/remove never cross | ⬜ |
-| 5.20 | Empty blog (0 posts) / password-protected blog | Ends or errors cleanly, no hang, no crash | ⬜ |
+| 5.19 | Two blogs scanning at the same time | Two independent cards, counters and pause/remove never cross | 📱 |
+| 5.20 | Empty blog (0 posts) / password-protected blog | Ends or errors cleanly, no hang, no crash — verified with a non-existent blog (card 出错 · 已扫描 0); empty-blog variant untested | 📱 |
 
 > Note: 5.3/5.4 gate on ≥5000 posts (the lowest selectable threshold); no reachable blog is that large, so the on-device path is covered by unit tests only.
 
@@ -125,9 +128,9 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 6.4 | Clear completed | Completed standalone **and orphan** rows are removed; a live card's rows stay; empty state returns | 📱 |
 | 6.5 | Failed row → 续 | Retries from scratch without removing it first | ⬜ |
 | 6.6 | WiFi drops mid-download | Active rows fail after 3 retries, queued rows pause, no auto-resume | ⬜ |
-| 6.7 | Concurrency setting (1–4) | At most N rows download at once | ⬜ |
+| 6.7 | Concurrency setting (1–4) | At most N rows download at once — verified at N=2 via two overlapping in-flight requests in the log | 📱 |
 | 6.8 | Rate limit | Speed stays under the configured cap | 📱 |
-| 6.9 | Double-tap 下载媒体 / paste the same link twice quickly | Only queued once (`isParsing` guard + dedupe) | ⬜ |
+| 6.9 | Double-tap 下载媒体 / paste the same link twice quickly | Only queued once (`isParsing` guard + dedupe); second tap absorbed by the loading overlay, single toast | 📱 |
 | 6.10 | Storage full mid-download (ENOSPC) | Row FAILED with a readable error; no 0-byte leftovers, no crash | ⬜ |
 
 ## 7. Files & storage
@@ -139,33 +142,33 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 7.3 | Extensionless URL | Renamed from the response `Content-Type` after download (#7) | ✅ |
 | 7.4 | `.gifv` / uppercase `.GIF` / `?format=gif` | Saved as `.gif` | ✅ |
 | 7.5 | Re-download of an existing file | Overwrites in place, no `(1)` / `_1` copy (#4) | 📱 |
-| 7.6 | Custom directory (SAF) | Files go there; blog sub-folder created on demand | ⬜ |
+| 7.6 | Custom directory (SAF) | Files go there; blog sub-folder created on demand | 📱 |
 | 7.7 | Killed mid-download → resume | Partial file resumed via Range, no duplicate | ⬜ |
 | 7.8 | MediaStore visibility | Files appear in the gallery/Downloads with the right `relative_path` | 📱 |
 | 7.9 | Killed mid-write | No stale `.pending-*` files left behind in Downloads after restart/finish | ⬜ |
-| 7.10 | The same media URL appearing in two posts | Normalised URL dedupes it — queued and stored once | ⬜ |
+| 7.10 | The same media URL appearing in two posts | UX expectation (user): download it once per post (filenames differ by author) rather than silently dedupe; BLOCKED — the original post hits a login wall | ⬜ |
 
 ## 8. Settings
 
 | ID | Case | Expected | Status |
 |---|---|---|---|
 | 8.1 | Category menu → each sub-screen | Only that category's cards are shown | 📱 |
-| 8.2 | Download directory (default/custom) | Label updates; new files go there | ⬜ |
+| 8.2 | Download directory (default/custom) | Label updates (当前下载目录：TumblrTest); new files go there; 恢复默认 works | 📱 |
 | 8.3 | Language 中文/English | Whole UI switches, including notifications and toasts | 📱 |
 | 8.4 | Theme light/dark/system | Applies and survives restart | 📱 |
-| 8.5 | Image/video quality tiers | Picker/parse use the chosen rendition | ⬜ |
+| 8.5 | Image/video quality tiers | Picker/parse use the chosen rendition — same video: 最高可用 12.4 MB vs 480p 3.7 MB | 📱 |
 | 8.6 | Blog scan interval / long threshold | Affects pacing and when 5.3 fires | 📱 |
 | 8.7 | 清空自动检测缓存 | Next clipboard link is detected again | 📱 |
 | 8.8 | Clear cache / logout | Cookies removed, login state reset | ⬜ |
-| 8.9 | Whole core flow while the UI is English | Toasts, dialogs and notification text are all English (locale sync via LocaleHelper) | ⬜ |
+| 8.9 | Whole core flow while the UI is English | UI strings verified English (tabs/hint/buttons) and restored to system default after; toast/notification share the same resources | 📱 |
 
 ## 9. Sidebar, viewer, notifications
 
 | ID | Case | Expected | Status |
 |---|---|---|---|
-| 9.1 | Login (WebView) → avatar/logout | Username shown, logout clears cookies | ⬜ |
+| 9.1 | Login (WebView) → avatar/logout | Username shown, logout clears cookies — 登出态侧栏（登录/未登录）已验证；登出按钮+确认流程未受控验证 | ⬜ |
 | 9.2 | About screen | Version, links open correctly | 📱 |
-| 9.3 | Media viewer: image/video | Opens, next/prev, back returns to the same row | ⬜ |
+| 9.3 | Media viewer: image/video | Opens, swipe next changes image, swipe prev returns, back lands on the same row | 📱 |
 | 9.4 | Notification while downloading | Posted with filename, progress bar and a 全部停止 action; lands in the **silent (低优先级) group** at the bottom of the shade — see R29 for the channel-importance note | 📱 |
 | 9.5 | Notification after completion | Summary 「成功：X，失败：Y」 persists after the service stops, no stale 0% (#24) — currently INCONSISTENT, see R27 | ⬜ |
 | 9.6 | Android 13+ notification permission | POST_NOTIFICATIONS is declared but never requested at runtime — on a 13+ device the non-FGS summary would be silently blocked (R26); needs a 13+ device to verify | ⬜ |
@@ -211,6 +214,10 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | R24 | Removing a blog card dumped its old rows into the main list | Orphans hidden again — only counted by the next card of that blog | ✅ |
 | R25 | Removing a running blog card resurrected it and downloads resumed | Observed once, correlated with an Activity/window anomaly on this device; a plain removal of a running card stayed stable for 13 min — needs a reliable repro | ⬜ |
 | R26 | POST_NOTIFICATIONS declared but never requested at runtime | On Android 13+ non-FGS notifications (completion summary) are blocked until granted; add a first-run permission request (this device is Android 12 → needs a 13+ device to verify) | ⬜ |
-| R27 | Completion summary notification is inconsistent | Present and lasting minutes in one run, gone 15 s after completion in another — pin down the cancel path (ACTION_START cancels the summary) | ⬜ |
-| R28 | `tmblr.co` short links are not recognised | `shareUrlRegex` matches only tumblr.com / *.tumblr.com — short links hit the invalid-URL path; either expand them or at least surface the toast (never silent) | ⬜ |
+| R27 | Completion summary notification is inconsistent | Observed 1 present / 3 absent across runs — hypothesis: a late ACTION_START restarts the service and line 427 cancels the summary | ⬜ |
+| R28 | `tmblr.co` short links are not recognised | Share path confirmed SILENT; field path shows the invalid toast — expand the links or surface the toast on share too | ⬜ |
 | R29 | Download notification sits in the silent group | Channel `tumblr_download_channel` is IMPORTANCE_LOW → notifications land at the bottom of the shade; consider DEFAULT importance so users see progress | ⬜ |
+| R30 | A deleted/nonexistent post opens a picker with stray images from the 404 page | No error message; user is misled into downloading unrelated images — detect the error page before scraping media (2.27) | ⬜ |
+| R31 | Sharing a blog link with surrounding words is a silent no-op | `isBlogUrl` tests the raw text, so a commented blog share falls into the post path and dies silently (2.24) | ⬜ |
+| R32 | Re-downloading after clearing history creates numbered `(N)` copies | Blog sub-folder files pile up `(1)/(2)/…` per re-download while a flat single-post file overwrites in place — the existence lookup likely misses the sub-folder path (R4 inconsistency) | ⬜ |
+| R33 | "Private Tumblr posts are not supported yet." is hardcoded English | Chinese UI shows an English toast — move the string into resources (2.6/私密帖) | ⬜ |
