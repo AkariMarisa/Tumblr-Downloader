@@ -131,7 +131,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 6.7 | Concurrency setting (1–4) | At most N rows download at once — verified at N=2 via two overlapping in-flight requests in the log | 📱 |
 | 6.8 | Rate limit | Speed stays under the configured cap | 📱 |
 | 6.9 | Double-tap 下载媒体 / paste the same link twice quickly | Only queued once (`isParsing` guard + dedupe); second tap absorbed by the loading overlay, single toast | 📱 |
-| 6.10 | Storage full mid-download (ENOSPC) | Row FAILED with a readable error; no 0-byte leftovers, no crash | ⬜ |
+| 6.10 | Storage full mid-download (ENOSPC) | Row FAILED with a readable error; no 0-byte leftovers, no crash — 实测：dd 压盘至约 8MB 空闲后下载 12.4MB 视频 → 行「下载失败：write failed: ENOSPC (No space left on device)。已重试 3/3 次。可手动重试。」；删填充文件后手动重试正常完成，无 0 字节、无该文件 pending 残留（注：系统在压力下自动清了约 1GB 缓存，不影响结论） | 📱 |
 
 ## 7. Files & storage
 
@@ -143,9 +143,9 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 7.4 | `.gifv` / uppercase `.GIF` / `?format=gif` | Saved as `.gif` | ✅ |
 | 7.5 | Re-download of an existing file | Overwrites in place, no `(1)` / `_1` copy (#4) | 📱 |
 | 7.6 | Custom directory (SAF) | Files go there; blog sub-folder created on demand | 📱 |
-| 7.7 | Killed mid-download → resume | Partial file resumed via Range, no duplicate | ⬜ |
+| 7.7 | Killed mid-download → resume | Partial file resumed via Range, no duplicate — 实测：写到 5,890,048 B 时 force-stop → 重启后行显示「下载失败 · 应用重启后状态失效，请重试」→ 手动开始 → 请求 offset=5890048、HTTP 206、剩余 6,466,118 B 精确续上，同一 pending 文件写完 → 已完成 12,356,166 B；续传本身不产生重复副本（最终文件名带 (N) 属清史重下问题，见 R32） | 📱 |
 | 7.8 | MediaStore visibility | Files appear in the gallery/Downloads with the right `relative_path` | 📱 |
-| 7.9 | Killed mid-write | No stale `.pending-*` files left behind in Downloads after restart/finish | ⬜ |
+| 7.9 | Killed mid-write | No stale `.pending-*` files left behind in Downloads after restart/finish — 实测：force-stop 后 `.pending-…`（5,890,048 B）作为续传状态保留，重试完成后 `ls -la` 确认无残留；下载中删行同样会清掉其 pending（22:40 实测：删前存在 6,069,300 B、删后消失）；但目录里有 8 个 11–13 日的遗留 `.pending`（旧版本产物）永不清理 → 见 R39 | 📱 |
 | 7.10 | The same media URL appearing in two posts | UX expectation (user): download it once per post (filenames differ by author) rather than silently dedupe — 实测：原帖行在队列时，转载帖同 media 被 URL 去重直接跳过（与预期相反） | ❌ |
 
 ## 8. Settings
@@ -169,8 +169,8 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 9.1 | Login (WebView) → avatar/logout | Username shown, logout clears cookies — 侧栏显示账号名/头像 ✓；退出登录一键即清（无二次确认），清后接口/dashboard 均 logged-out ✓ | 📱 |
 | 9.2 | About screen | Version, links open correctly | 📱 |
 | 9.3 | Media viewer: image/video | Opens, swipe next changes image, swipe prev returns, back lands on the same row | 📱 |
-| 9.4 | Notification while downloading | Posted with filename, progress bar and a 全部停止 action; lands in the **silent (低优先级) group** at the bottom of the shade — see R29 for the channel-importance note | 📱 |
-| 9.5 | Notification after completion | Summary 「成功：X，失败：Y」 persists after the service stops, no stale 0% (#24) — currently INCONSISTENT, see R27 | ⬜ |
+| 9.4 | Notification while downloading | Posted with filename, progress bar and a 全部停止 action; lands in the **silent (低优先级) group** at the bottom of the shade — see R29 for the channel-importance note；实测动作：点「全部停止」→ 服务收到 ACTION_PAUSE_ALL（日志 21:54:13）→ 可见行全部「已暂停」、其后零新请求；静音分组根因确认为通道重要性=静音（R29），临时调「默认」后通知独立显示且动作可点，测完已调回 | 📱 |
+| 9.5 | Notification after completion | Summary 「成功：X，失败：Y」 persists after the service stops, no stale 0% (#24) — currently INCONSISTENT, see R27；补充实测：pause-all 路径确实发布了汇总（日志 posted summary via pause-all path），但被 id10002 的 snooze 残留挡住不可见（R27 工件） | ⬜ |
 | 9.6 | Android 13+ notification permission | POST_NOTIFICATIONS is declared but never requested at runtime — on a 13+ device the non-FGS summary would be silently blocked (R26); needs a 13+ device to verify | ⬜ |
 
 ## 10. Lifecycle & performance
@@ -216,11 +216,14 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | R26 | POST_NOTIFICATIONS declared but never requested at runtime | On Android 13+ non-FGS notifications (completion summary) are blocked until granted; add a first-run permission request (this device is Android 12 → needs a 13+ device to verify) | ⬜ |
 | R27 | Completion summary notification is inconsistent | App-side code verified CORRECT via new logs: publishSummary is called repeatedly through the drain, no cancel follows it on the natural-completion path, and onStartCommand traces show ACTION_START cancels the summary *before* queuing new work (not after a drain). Current non-visibility is a TEST-ENVIRONMENT artifact: notification id 10002 sits in the system's Pending-snoozed store with a ~2094 timestamp from an earlier notification-clearing snooze loop, survives reboot (verified), and unsnooze cannot reach the pending store — the historical 1-present/3-absent observations predate that loop and remain partially unexplained | ⬜ |
 | R28 | `tmblr.co` short links are not recognised | Share path confirmed SILENT; field path shows the invalid toast — expand the links or surface the toast on share too | ⬜ |
-| R29 | Download notification sits in the silent group | Channel `tumblr_download_channel` is IMPORTANCE_LOW → notifications land at the bottom of the shade; consider DEFAULT importance so users see progress | ⬜ |
+| R29 | Download notification sits in the silent group | Channel `tumblr_download_channel` is IMPORTANCE_LOW → EMUI shows the channel as「静音」and the OS folds download notifications into the collapsed chips of the bottom silent group (root cause confirmed on device); experiment: raising the channel to 默认 made the notification stand alone with an expandable 全部停止 action (tapped and verified), restoring 静音 buried it again — consider DEFAULT importance as a product change (affects alert behaviour) | ⬜ |
 | R30 | Text-only / deleted posts open a picker with stray page-level images | No post media exists, yet the parser scrapes the blog **cover (og:image)** — verified: text-only post yielded the blog header banner (1419×640), the 404 page yielded its imagery; restrict extraction to actual post media nodes (2.27, 2.28) | ⬜ |
 | R31 | Sharing a blog link with surrounding words is a silent no-op | `isBlogUrl` tests the raw text, so a commented blog share falls into the post path and dies silently (2.24) | ⬜ |
-| R32 | Re-downloading after clearing history creates numbered `(N)` copies | Blog sub-folder files pile up `(1)/(2)/…` per re-download while a flat single-post file overwrites in place — the existence lookup likely misses the sub-folder path (R4 inconsistency) | ⬜ |
+| R32 | Re-downloading after clearing history creates numbered `(N)` copies | Blog sub-folder files pile up `(1)/(2)/…` per re-download while a flat single-post file overwrites in place — the existence lookup likely misses the sub-folder path (R4 inconsistency); 夜间实测扩展：平铺单帖文件在清史后同样复现（qqchurch 视频连下 5 次堆出 (1)–(5)），说明覆盖逻辑依赖历史行记录，清史后走 MediaStore 插入冲突 → `(N)` | ⬜ |
 | R33 | "Private Tumblr posts are not supported yet." is hardcoded English | Chinese UI shows an English toast — move the string into resources (2.6/私密帖) | ⬜ |
 | R34 | Login state flips to logged-out; login bounces back with no error | Root cause: session invalidated server-side (the 401 was the session, not the token) plus stale cookie state in the WebView jar; `pm clear` + re-login succeeded and the round-trip is verified: cold start keeps `akarimarisa/在线` at +5 s and +18 s with `fetch: api ok`. Also shipped: transient failures keep the cached account (offline-verified), login rejection now toasts, redirect-target/root-URL detection fixed, main-frame request diagnostics | ✅ |
+| R35 | Cross-post same-media URL deduped silently | With the original post's row in the queue, a reblog's identical media is URL-deduped and never enqueued — per the user's UX rule one file per post is preferred (filenames differ by author); drives the 7.10 ❌ | ⬜ |
 | R36 | After a network drop the blog scan and queue become zombies | Scan card sticks at 解析中 forever (never errors/BLOCKED, never self-heals after reconnect; pause→start unfreezes downloads but the scan cursor stays frozen — suspected swallowed worker exception / leaked activeJobs). Download side: the hung transfer holds its concurrency slot, freezing the whole queue until 全部暂停→全部开始 (verified recovery) | ⬜ |
+| R37 | Login redirect target missed the slug-canonicalised URL | Tumblr canonicalises `/<id>` to `/<id>/slug`, so the exact-match `isRedirectTarget` never auto-finished and the user had to tap 完成 by hand — fixed (prefix/slug match, commit 1ede60b) and verified in the full 2.6 chain | ✅ |
 | R38 | `www.tumblr.com/blog/<name>` URLs rejected as invalid | Tumblr's own blog switcher shares URLs with the `blog/` prefix while the anchor regex only allowed a single path segment — fixed (optional `blog/` prefix) with unit tests, device-verified with akari-test-blog in 5.20 | ✅ |
+| R39 | Orphaned `.pending-*` files are never swept | 8 legacy pending files (Nov 11–13, old `post-*` naming) sit in Downloads forever; today's flows (finish / ENOSPC-fail / remove-row mid-write) all clean their own pendings (verified) — add a startup sweep for pendings with no matching row | ⬜ |
