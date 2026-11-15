@@ -64,7 +64,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 2.25 | `tmblr.co` short link | Field path shows the invalid-URL toast ✓; share path must not be a silent no-op (R28) | ❌ |
 | 2.26 | URL with `?source=` / `utm_*` params | Parsed normally (`sourceParamRegex` strips Tumblr's own param) | ⬜ |
 | 2.27 | Deleted post (404) / server error | Explicit error message, no silent empty result, no crash | ❌ |
-| 2.28 | Text-only post with no media | Friendly "no media" message instead of an empty picker — 素材不符：所给帖实际带 1 张图，需真·纯文字帖 | ⬜ |
+| 2.28 | Text-only post with no media | Friendly "no media" message instead of an empty picker | ❌ |
 
 ## 3. Pre-download picker
 
@@ -217,7 +217,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | R27 | Completion summary notification is inconsistent | Observed 1 present / 3 absent across runs — hypothesis: a late ACTION_START restarts the service and line 427 cancels the summary | ⬜ |
 | R28 | `tmblr.co` short links are not recognised | Share path confirmed SILENT; field path shows the invalid toast — expand the links or surface the toast on share too | ⬜ |
 | R29 | Download notification sits in the silent group | Channel `tumblr_download_channel` is IMPORTANCE_LOW → notifications land at the bottom of the shade; consider DEFAULT importance so users see progress | ⬜ |
-| R30 | A deleted/nonexistent post opens a picker with stray images from the 404 page | No error message; user is misled into downloading unrelated images — detect the error page before scraping media (2.27) | ⬜ |
+| R30 | Text-only / deleted posts open a picker with stray page-level images | No post media exists, yet the parser scrapes the blog **cover (og:image)** — verified: text-only post yielded the blog header banner (1419×640), the 404 page yielded its imagery; restrict extraction to actual post media nodes (2.27, 2.28) | ⬜ |
 | R31 | Sharing a blog link with surrounding words is a silent no-op | `isBlogUrl` tests the raw text, so a commented blog share falls into the post path and dies silently (2.24) | ⬜ |
 | R32 | Re-downloading after clearing history creates numbered `(N)` copies | Blog sub-folder files pile up `(1)/(2)/…` per re-download while a flat single-post file overwrites in place — the existence lookup likely misses the sub-folder path (R4 inconsistency) | ⬜ |
 | R33 | "Private Tumblr posts are not supported yet." is hardcoded English | Chinese UI shows an English toast — move the string into resources (2.6/私密帖) | ⬜ |
