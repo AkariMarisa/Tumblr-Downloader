@@ -24,6 +24,7 @@ object TumblrParser {
 
     private val shareUrlRegex = Regex(
         "(?i)" +
+        "https?://(?:www\\.)?tmblr\\.co/[A-Za-z0-9_-]+|" +
         "https?://(?:www\\.)?tumblr\\.com/[A-Za-z0-9_.-]+/\\d+(?:/[A-Za-z0-9_-]+)?|" +
         "https?://[A-Za-z0-9_.-]+\\.tumblr\\.com/(?:post/)?(?:private/)?\\d+(?:/[A-Za-z0-9_-]+)?"
     )
@@ -104,6 +105,11 @@ object TumblrParser {
         return shareUrlRegex.find(normalizeText(text))?.value
     }
 
+    /** True for the `https://tmblr.co/...` share short links (#R28). */
+    private fun isTmblrShortLink(url: String): Boolean = runCatching {
+        android.net.Uri.parse(url).host?.endsWith("tmblr.co", ignoreCase = true) == true
+    }.getOrDefault(false)
+
     fun guessType(mediaUrl: String): MediaType {
         val lower = mediaUrl.lowercase(Locale.ROOT)
         return when {
@@ -122,7 +128,21 @@ object TumblrParser {
         rawUrl: String,
         quality: MediaQualitySettings = MediaQualitySettings()
     ): TumblrShareParseResult = withContext(Dispatchers.IO) {
-        val normalizedUrl = normalizeShareUrl(rawUrl)
+        var normalizedUrl = normalizeShareUrl(rawUrl)
+        // tmblr.co links only redirect to the real post — follow the redirect
+        // before classifying (#R28); OkHttp resolves the chain and reports the
+        // final request URL. Anything that does not land on a recognisable
+        // Tumblr post URL fails loudly instead of silently.
+        if (isTmblrShortLink(normalizedUrl)) {
+            val resolved = runCatching { httpGet(normalizedUrl).finalUrl }
+                .getOrNull()
+                ?.let { normalizeShareUrl(it) }
+            if (resolved == null || resolved == normalizedUrl || !isTumblrShareUrl(resolved)) {
+                return@withContext TumblrShareParseResult.Error("Link resolution failed")
+            }
+            android.util.Log.i("TumblrParser", "short link resolved: $normalizedUrl -> ${resolved.take(80)}")
+            normalizedUrl = resolved
+        }
         if (!isTumblrShareUrl(normalizedUrl)) {
             return@withContext TumblrShareParseResult.Error("Not a valid Tumblr share link")
         }

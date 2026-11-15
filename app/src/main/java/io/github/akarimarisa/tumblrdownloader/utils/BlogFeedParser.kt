@@ -87,6 +87,23 @@ object BlogFeedParser {
     fun isBlogUrl(text: String): Boolean = parseBlogIdentifier(text) != null
 
     /**
+     * Finds a standalone blog URL inside free-form text — a commented share
+     * such as `看看这个 https://www.tumblr.com/name，推荐` used to fail
+     * [isBlogUrl] (which needs the bare URL), fall into the post path and die
+     * silently (#R31). The candidate stops at the first character that cannot
+     * occur in a blog link (so glued CJK punctuation is dropped); post URLs
+     * are NOT matched (they are not blog URLs).
+     */
+    fun findBlogUrlInText(text: String): String? {
+        return urlTokenRegex.findAll(text)
+            .map { it.value.trimEnd('.') }
+            .firstOrNull { isBlogUrl(it) }
+    }
+
+    /** URL-shaped runs of characters that a Tumblr link can be made of. */
+    private val urlTokenRegex = Regex("https?://[A-Za-z0-9./?&=_~%+#-]+")
+
+    /**
      * Extract the bare blog name from a blog URL:
      *  - `https://www.tumblr.com/bonesbunns` → `bonesbunns`
      *  - `https://bonesbunns.tumblr.com/`    → `bonesbunns`

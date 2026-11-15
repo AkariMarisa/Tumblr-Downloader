@@ -42,6 +42,8 @@ import android.util.Log
 private const val TAG = "MainActivity"
 private const val PREFS_NAME = "tumblr_downloader"
 private const val PREF_CLIPBOARD_AUTO_DETECT = "clipboard_auto_detect"
+private const val PREF_NOTIF_PERMISSION_ASKED = "notification_permission_asked"
+private const val REQ_POST_NOTIFICATIONS = 6011
 private const val PREF_LAST_AUTO_URL = "last_auto_detected_url"
 
 /**
@@ -156,6 +158,26 @@ class MainActivity : AppCompatActivity() {
         // (downloads stuck at "0%" while files complete).
         viewModel.claimServiceProgressListener()
         viewModel.refreshTumblrAccount()
+        maybeRequestNotificationPermission()
+    }
+
+    /**
+     * #R26: on Android 13+ ask for POST_NOTIFICATIONS exactly once, after
+     * onboarding — without it the system blocks every notification from this
+     * app (foreground progress included) and the user never learns why.
+     */
+    private fun maybeRequestNotificationPermission() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return
+        if (!OnboardingActivity.isDone(this)) return
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) return
+        if (prefs.getBoolean(PREF_NOTIF_PERMISSION_ASKED, false)) return
+        prefs.edit().putBoolean(PREF_NOTIF_PERMISSION_ASKED, true).apply()
+        requestPermissions(
+            arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+            REQ_POST_NOTIFICATIONS
+        )
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -338,35 +360,57 @@ class MainActivity : AppCompatActivity() {
     private fun handleIncomingIntent(intent: Intent?) {
         if (intent?.action != Intent.ACTION_SEND) return
 
-        val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+        val rawText = intent.getStringExtra(Intent.EXTRA_TEXT)
             ?: intent.clipData?.getItemAt(0)?.coerceToText(this)?.toString()
             ?: return
 
-        // A standalone blog URL kicks off the batch-download flow instead of
-        // single-post parsing — fill the Download tab field so the user picks
-        // media options there.
-        if (BlogFeedParser.isBlogUrl(text)) {
-            Log.d(TAG, "Incoming share is a blog URL: ${text.take(60)}")
+        // Classify on an extracted URL, not the raw text: a commented share
+        // (link + surrounding words) used to miss the blog branch, fall into
+        // the post path and die silently (#R31).
+        val blogUrl = BlogFeedParser.findBlogUrlInText(rawText)
+        if (blogUrl != null) {
+            // A blog link kicks off the batch-download flow instead of
+            // single-post parsing — fill the Download tab field so the user
+            // picks media options there.
+            Log.d(TAG, "Incoming share is a blog URL: ${blogUrl.take(60)}")
             binding.viewPager.currentItem = 0
-            viewModel.notifyFromClipboard(text)
-            viewModel.promptBlogOptions(text)
-            // Remember it: a cold start checks the clipboard too, and the
-            // clipboard still holds what the user shared (#4).
-            rememberHandledClip(text)
+            viewModel.notifyFromClipboard(blogUrl)
+            viewModel.promptBlogOptions(blogUrl)
+            // Remember the raw clip: a cold start checks the clipboard too,
+            // and the clipboard still holds exactly what the user shared (#4).
+            rememberHandledClip(rawText)
+            return
+        }
+
+        val postUrl = TumblrParser.firstTumblrUrl(rawText)
+        if (postUrl == null) {
+            // An explicit share must never fail silently (#R28, #R31).
+            Log.d(TAG, "Incoming share is not a Tumblr URL: ${rawText.take(60)}")
+            LocalizedToast.show(
+                LocaleHelper.contextForAppLocale(this),
+                R.string.invalid_url,
+                android.widget.Toast.LENGTH_SHORT
+            )
+            rememberHandledClip(rawText)
             return
         }
 
         // Skip if this URL is already fully downloaded (same guard as clipboard auto-detect).
-        if (viewModel.isUrlFullyCompleted(text)) {
-            Log.d(TAG, "Incoming share URL already fully downloaded, skipping: ${text.take(60)}")
-            rememberHandledClip(text)
+        if (viewModel.isUrlFullyCompleted(postUrl)) {
+            Log.d(TAG, "Incoming share URL already fully downloaded, skipping: ${postUrl.take(60)}")
+            rememberHandledClip(rawText)
             return
         }
 
-        if (viewModel.enqueueFromUrl(text)) {
-            rememberHandledClip(text)
-            viewModel.notifyFromClipboard(text)
+        if (viewModel.enqueueFromUrl(postUrl)) {
+            rememberHandledClip(rawText)
+            viewModel.notifyFromClipboard(postUrl)
             binding.viewPager.currentItem = 0
+        } else {
+            // Transient rejection only (a parse is already running or a login
+            // retry owns the UI) — the running parse shows the overlay/toasts,
+            // so a second toast here would just double up.
+            rememberHandledClip(rawText)
         }
     }
 

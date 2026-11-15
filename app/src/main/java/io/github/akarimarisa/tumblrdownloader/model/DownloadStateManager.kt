@@ -1206,6 +1206,8 @@ class DownloadStateManager private constructor(private val app: Application) {
     /** Map known English parser error messages to localized strings. */
     private fun localizeError(msg: String): String {
         return when {
+            msg.startsWith("Link resolution failed") ->
+                localizedString(R.string.parse_link_resolve_failed)
             msg.startsWith("Not a valid Tumblr share link") ->
                 localizedString(R.string.parse_not_valid_url)
             msg.startsWith("Private Tumblr posts are not supported yet") ->
