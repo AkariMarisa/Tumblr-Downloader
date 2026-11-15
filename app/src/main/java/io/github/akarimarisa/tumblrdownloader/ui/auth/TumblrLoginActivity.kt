@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.webkit.CookieManager
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -61,7 +62,11 @@ class TumblrLoginActivity : AppCompatActivity() {
                 view: WebView,
                 request: WebResourceRequest
             ): WebResourceResponse? {
-                if (!request.isForMainFrame) {
+                if (request.isForMainFrame) {
+                    // Log the main-frame chain (POST /login, its redirect, …)
+                    // so a rejected login can be told apart from a client bug (#R34).
+                    Log.i(TAG, "main-frame ${request.method} ${request.url}")
+                } else {
                     val url = request.url.toString().lowercase(Locale.ROOT)
                     val host = request.url.host?.lowercase(Locale.ROOT) ?: return null
                     
@@ -88,6 +93,27 @@ class TumblrLoginActivity : AppCompatActivity() {
                 return super.shouldInterceptRequest(view, request)
             }
 
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                request?.let { Log.i(TAG, "nav ${it.method} ${it.url}") }
+                return super.shouldOverrideUrlLoading(view, request)
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?
+            ) {
+                Log.w(TAG, "http error ${errorResponse?.statusCode} for ${request?.url}")
+                super.onReceivedHttpError(view, request, errorResponse)
+            }
+
+            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                if (request?.isForMainFrame == true) {
+                    Log.w(TAG, "main-frame error ${error?.errorCode}: ${error?.description} url=${request.url}")
+                }
+                super.onReceivedError(view, request, error)
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 // Inject JS to remove any tracker elements that loaded before
                 // shouldInterceptRequest could catch them (e.g. inline scripts).
@@ -99,8 +125,15 @@ class TumblrLoginActivity : AppCompatActivity() {
                 // fail SILENTLY — the user just saw the page re-appear with no
                 // explanation (#R34). Surface it.
                 val loggedIn = isLikelyLoggedIn(url) || isRedirectTarget(url)
-                if (!loggedIn && isLoginUrl(url) && lastSeenNavUrl?.let { !isLoginUrl(it) } == true) {
-                    Log.w(TAG, "login bounced back to: $url")
+                // Two bounce shapes: back to the plain form after leaving it,
+                // or Tumblr's own "login required again" marker on the login
+                // URL — that one means the POST was rejected server-side (#R34).
+                val rejectedMarker = (url ?: "").contains("login_register_required") &&
+                    lastSeenNavUrl?.contains("login_register_required") != true
+                val bouncedBack = !loggedIn && isLoginUrl(url) &&
+                    lastSeenNavUrl?.let { !isLoginUrl(it) } == true
+                if (!loggedIn && (rejectedMarker || bouncedBack)) {
+                    Log.w(TAG, "login rejected/bounced: $url")
                     android.widget.Toast.makeText(
                         this@TumblrLoginActivity,
                         getString(R.string.login_rejected),
