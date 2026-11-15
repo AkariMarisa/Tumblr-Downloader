@@ -63,8 +63,12 @@ object TumblrCookieStore {
         cookieManager.flush()
 
         if (payload.length() == 0) {
-            // No cookies found — clear any stale data.
-            AppDatabase.getInstance(context).cookieDao().deleteAll()
+            // Nothing readable in the WebView jar right now. KEEP the
+            // persisted snapshot: wiping here turned a momentarily empty jar
+            // (e.g. visiting the login page before it sets cookies) into a
+            // permanent logout after the next restart (#R34). Explicit
+            // logout goes through clear() anyway.
+            Log.w(TAG, "saveFromWebView: no cookies readable, keeping existing snapshot")
             return@withContext false
         }
 

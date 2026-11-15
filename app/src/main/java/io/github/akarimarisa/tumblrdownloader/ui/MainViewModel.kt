@@ -253,7 +253,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshTumblrAccount() {
         viewModelScope.launch(Dispatchers.IO) {
             val account = TumblrAccountStore.fetchAccountInfo(appContext)
-            _tumblrAccount.value = account
+            if (account != null) {
+                _tumblrAccount.value = account
+            } else {
+                // Transport failure (offline/timeout/5xx): keep showing the
+                // cached account instead of flipping the drawer to "logged
+                // out" — flipping on a flaky network made a healthy account
+                // look dead (#R34: name shows for a second, then flips).
+                Log.w(TAG, "refreshTumblrAccount: transient failure, keeping cached account")
+            }
         }
     }
 

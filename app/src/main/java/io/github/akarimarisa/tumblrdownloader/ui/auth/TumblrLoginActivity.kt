@@ -29,6 +29,9 @@ class TumblrLoginActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityTumblrLoginBinding
 
+    /** Last page URL seen in the WebView — used to detect a bounced login (#R34). */
+    private var lastSeenNavUrl: String? = null
+
     private val loginTargetUrl: String by lazy {
         intent.getStringExtra(EXTRA_LOGIN_URL) ?: DEFAULT_LOGIN_URL
     }
@@ -90,7 +93,23 @@ class TumblrLoginActivity : AppCompatActivity() {
                 // shouldInterceptRequest could catch them (e.g. inline scripts).
                 view?.evaluateJavascript(TRACKER_CLEANUP_JS, null)
 
-                if (isLikelyLoggedIn(url)) {
+                Log.i(TAG, "onPageFinished: $url (target=$loginTargetUrl)")
+
+                // A login attempt that lands back on the login form used to
+                // fail SILENTLY — the user just saw the page re-appear with no
+                // explanation (#R34). Surface it.
+                val loggedIn = isLikelyLoggedIn(url) || isRedirectTarget(url)
+                if (!loggedIn && isLoginUrl(url) && lastSeenNavUrl?.let { !isLoginUrl(it) } == true) {
+                    Log.w(TAG, "login bounced back to: $url")
+                    android.widget.Toast.makeText(
+                        this@TumblrLoginActivity,
+                        getString(R.string.login_rejected),
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+                lastSeenNavUrl = url
+
+                if (loggedIn) {
                     Log.i(TAG, "Detected Tumblr logged-in state from URL: $url")
                     view?.evaluateJavascript(
                         "(function() { try { return window.__INITIAL_STATE__; } catch(e) { return null; } })()"
@@ -216,9 +235,28 @@ class TumblrLoginActivity : AppCompatActivity() {
     private fun isLikelyLoggedIn(url: String?): Boolean {
         val lower = (url ?: "").lowercase(Locale.getDefault())
         return lower.contains("/dashboard") ||
-            lower.endsWith("https://www.tumblr.com/") ||
+            // was `endsWith(...)` — an all-lowercase string never contains
+            // the uppercase "H" of "https", so this never matched (#R34).
+            lower == "https://www.tumblr.com/" ||
+            lower == "https://www.tumblr.com" ||
             lower.contains("/settings") ||
             lower.contains("/blog/")
+    }
+
+    private fun isLoginUrl(url: String?): Boolean = (url ?: "").contains("/login")
+
+    /**
+     * After a successful login Tumblr redirects to the `redirect_to` target
+     * (usually the original post URL) — none of the [isLikelyLoggedIn]
+     * heuristics match that, so a perfectly successful login looked like a
+     * no-op (#R34). Only applies when the activity was launched with an
+     * explicit EXTRA_LOGIN_URL.
+     */
+    private fun isRedirectTarget(url: String?): Boolean {
+        val target = loginTargetUrl.trim()
+        if (target.isBlank() || target == DEFAULT_LOGIN_URL || url.isNullOrBlank()) return false
+        fun norm(s: String) = s.substringBefore('?').substringBefore('#').trimEnd('/')
+        return norm(url) == norm(target)
     }
 
     companion object {

@@ -23,6 +23,7 @@
     <string name="cookie_security_message">A Tumblr login cookie has been detected. It is stored locally on this device and used only for parsing. It will never be uploaded. Do not keep it on public devices. You can clear it anytime.</string>
     <string name="login_cookie_saved">Login saved locally. Private content can be parsed automatically.</string>
     <string name="login_cookie_not_found">No login cookie found. Please make sure you are logged in.</string>
+    <string name="login_rejected">Tumblr did not accept the login. Please try again later or check your network.</string>
     <string name="cookies_cleared_toast">Local cookies cleared</string>
     <string name="cookie_sync_timeout">Login successful, but cookie sync is delayed. The URL has been preserved — please try again.</string>
     <string name="login_retry_failed">Login was detected but couldn\'t access this post. Please try pasting the link again.</string>
