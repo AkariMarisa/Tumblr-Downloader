@@ -170,7 +170,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 9.2 | About screen | Version, links open correctly | 📱 |
 | 9.3 | Media viewer: image/video | Opens, swipe next changes image, swipe prev returns, back lands on the same row | 📱 |
 | 9.4 | Notification while downloading | Posted with filename, progress bar and a 全部停止 action; lands in the **silent (低优先级) group** at the bottom of the shade — see R29 for the channel-importance note；实测动作：点「全部停止」→ 服务收到 ACTION_PAUSE_ALL（日志 21:54:13）→ 可见行全部「已暂停」、其后零新请求；静音分组根因确认为通道重要性=静音（R29），临时调「默认」后通知独立显示且动作可点，测完已调回 | 📱 |
-| 9.5 | Notification after completion | Summary 「成功：X，失败：Y」 persists after the service stops, no stale 0% (#24) — 实测（Pixel 3 净净 Android 15 + 授权后）：格式 ✓、服务停止后仍留存（+60s 复查仍在）、无 0% ✓；**但计数错误**：显示「成功:3」而 4 行/4 文件全部完成（文件 23:16:28 前落盘，23:16:29 与 23:16:34 发布仍写 3）→ R40；pause-all 路径发布汇总本身已日志验证 ✓；主手机上还被 snooze 工件挡住不可见（R27） | ❌ |
+| 9.5 | Notification after completion | Summary 「成功：X，失败：Y」 persists after the service stops, no stale 0% (#24) — Pixel 3（干净 Android 15 + 授权后）复测：格式 ✓、服务停止后留存 ✓（+60s 复查）、无 0% ✓；计数曾错误（R40：成功:3 而实际 4 行）→ **R40 修复后实拍「成功: 4，失败: 0」置顶显示 ✓**（留存机制同路径未变）；pause-all 路径发布汇总日志验证 ✓；主手机汇总仍被 snooze 工件挡住不可见（R27 环境问题，非应用缺陷） | 📱 |
 | 9.6 | Android 13+ notification permission | POST_NOTIFICATIONS is declared but never requested at runtime — on a 13+ device the non-FGS summary would be silently blocked (R26) — 实测（Pixel 3, Android 15/SDK35 全新安装）：首启及全流程无任何权限弹窗、granted=false → 系统拦下**全部**通知：含 FGS 进度通知（numPostedByApp=0、app importance=NONE、通知栏完全不可见）；`pm grant` 后 id10001/id10002 立即可见（posted=1）→ 修复方向=运行时请求（R26）；**修复后复测通过**：首启弹「要允许…发送通知吗？」→ 允许 → granted=true(USER_SET) → asked 标志无二次弹窗；下载中 id10001、完成后 id10002 均可见（SDK35 实测） | 📱 |
 
 ## 10. Lifecycle & performance
