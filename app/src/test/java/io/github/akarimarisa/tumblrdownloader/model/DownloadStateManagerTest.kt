@@ -319,17 +319,40 @@ class DownloadStateManagerTest {
 
     @Test
     fun restore_doesNotDuplicateByMediaUrl() = runTest(testDispatcher) {
-        stateManager.restore(listOf(item("r", mediaUrl = "https://media.tumblr.com/dup.jpg")))
+        // Same media twice for the SAME post must still collapse (#R35 keeps
+        // only cross-post rows apart — those two rows would be different files).
+        val first = item("r", mediaUrl = "https://media.tumblr.com/dup.jpg")
+        stateManager.restore(listOf(first))
         testDispatcher.scheduler.advanceUntilIdle()
 
-        stateManager.restore(listOf(item("s", mediaUrl = "https://media.tumblr.com/dup.jpg")))
+        stateManager.restore(listOf(item("s", mediaUrl = "https://media.tumblr.com/dup.jpg").copy(sourceUrl = first.sourceUrl)))
         testDispatcher.scheduler.advanceUntilIdle()
 
         assertEquals(
-            "duplicate mediaUrl should be skipped",
+            "duplicate mediaUrl of the same post should be skipped",
             1,
             stateManager.items.value.size
         )
+    }
+
+    @Test
+    fun restore_keepsCrossPostSameMediaAsTwoRows() = runTest(testDispatcher) {
+        // #R35: the same media under two posts is two files (author prefix) —
+        // both rows must survive a restart merge. Source URLs use real blog
+        // segments so the author differs (the fixture's bare `blog/<id>`
+        // pattern would extract "blog" for both sides).
+        val media = "https://media.tumblr.com/per-post.jpg"
+        stateManager.restore(
+            listOf(item("orig", mediaUrl = media).copy(sourceUrl = "https://www.tumblr.com/ntn888/1/s"))
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        stateManager.restore(
+            listOf(item("reblog", mediaUrl = media).copy(sourceUrl = "https://www.tumblr.com/fetishes-i-like3/2/s"))
+        )
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(2, stateManager.items.value.size)
     }
 
     // ── parallel start (max concurrent) ──────────────────────────────────
@@ -763,7 +786,10 @@ class DownloadStateManagerTest {
         // written.  Restore must trust the disk (CompletedMediaStore).
         val lost = item("lost", status = DownloadStatus.FAILED)
         val untouched = item("untouched", status = DownloadStatus.FAILED)
-        CompletedMediaStore.markCompleted(app, lost.mediaUrl)
+        CompletedMediaStore.markCompleted(
+            app,
+            CompletedMediaStore.keyFor(lost.sourceUrl, lost.mediaUrl, lost.blogName, lost.batchId != null)
+        )
 
         stateManager.restore(listOf(lost, untouched))
         testDispatcher.scheduler.advanceUntilIdle()
@@ -868,7 +894,11 @@ class DownloadStateManagerTest {
     @Test
     fun mediaPreview_dedupesExistingAndDuplicateCandidates() = runTest(testDispatcher) {
         val existingUrl = "https://64.media.tumblr.com/preview-existing.jpg"
-        stateManager.restore(listOf(item("existing", mediaUrl = existingUrl)))
+        // Same post as the candidate below — cross-post rows are intentionally
+        // NOT deduped (#R35), so share the candidate's source for this test.
+        stateManager.restore(
+            listOf(item("existing", mediaUrl = existingUrl).copy(sourceUrl = media(existingUrl).sourceUrl))
+        )
         testDispatcher.scheduler.advanceUntilIdle()
 
         val first = "https://64.media.tumblr.com/preview-first.jpg"

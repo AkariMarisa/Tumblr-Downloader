@@ -4,16 +4,22 @@ import android.content.Context
 import android.content.SharedPreferences
 
 /**
- * Persistently tracks media files that have been **actually written to disk**
- * (keyed by the normalized media URL).
+ * Persistently tracks media files that have been **actually written to disk**.
+ *
+ * Keys are file-scoped ([DownloadUtils.postScopedMediaKey]: author prefix +
+ * media identity, #R35) — the same media URL inside a reblog is a *different*
+ * file (different author prefix), so it downloads once per post, while the
+ * same post never downloads twice. The key therefore mirrors the exact
+ * filename the service would write, which is also what this store guards: "is
+ * that file already on disk?".
+ *
+ * Migration: entries written by older builds used the bare media identity and
+ * no longer match — the first re-download of such a media overwrites in place
+ * (#R32) and re-marks itself.
  *
  * Acts as the final service-level guard: even if an item is enqueued again
- * due to ordering/restart, this detects that the media was already downloaded
+ * due to ordering/restart, this detects that the file was already downloaded
  * and skips the download flow, returning COMPLETED instead.
- *
- * Query: [isCompleted]
- * Mark: [markCompleted]
- * Remove: [remove] (called on "re-download")
  */
 object CompletedMediaStore {
 
@@ -23,41 +29,38 @@ object CompletedMediaStore {
     private fun prefs(context: Context): SharedPreferences =
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
 
-    /**
-     * Whether the media URL has already been marked as completed.
-     * Normalizes via [DownloadUtils.normalizeMediaIdentity] before comparing,
-     * consistent with the dedup logic in [MainViewModel.appendItems].
-     */
-    fun isCompleted(context: Context, mediaUrl: String): Boolean {
-        val key = normalizedKey(mediaUrl) ?: return false
-        return prefs(context).getBoolean(key, false)
+    /** Store key for a row/candidate, or null when the media URL is unusable. */
+    fun keyFor(
+        sourceUrl: String,
+        mediaUrl: String,
+        blogName: String?,
+        inBatch: Boolean
+    ): String? {
+        val scoped = DownloadUtils.postScopedMediaKey(sourceUrl, mediaUrl, blogName, inBatch)
+        if (scoped.isBlank()) return null
+        return KEY_PREFIX + scoped
     }
 
-    /**
-     * Marks a media URL as completed. Called after a successful download in
-     * [DownloadService].
-     */
-    fun markCompleted(context: Context, mediaUrl: String) {
-        val key = normalizedKey(mediaUrl) ?: return
-        prefs(context).edit().putBoolean(key, true).apply()
+    /** Whether the file behind [storeKey] has already been written to disk. */
+    fun isCompleted(context: Context, storeKey: String?): Boolean {
+        if (storeKey == null) return false
+        return prefs(context).getBoolean(storeKey, false)
     }
 
-    /**
-     * Removes the completed mark for a media URL (used for "re-download").
-     */
-    fun remove(context: Context, mediaUrl: String) {
-        val key = normalizedKey(mediaUrl) ?: return
-        prefs(context).edit().remove(key).apply()
+    /** Marks the file behind [storeKey] as written. Called after a successful download in [DownloadService]. */
+    fun markCompleted(context: Context, storeKey: String?) {
+        if (storeKey == null) return
+        prefs(context).edit().putBoolean(storeKey, true).apply()
+    }
+
+    /** Removes the mark (used for "re-download"). */
+    fun remove(context: Context, storeKey: String?) {
+        if (storeKey == null) return
+        prefs(context).edit().remove(storeKey).apply()
     }
 
     /** Clears all completed records. */
     fun clear(context: Context) {
         prefs(context).edit().clear().apply()
-    }
-
-    private fun normalizedKey(mediaUrl: String): String? {
-        val normalized = DownloadUtils.normalizeMediaIdentity(mediaUrl)
-        if (normalized.isBlank()) return null
-        return KEY_PREFIX + normalized
     }
 }

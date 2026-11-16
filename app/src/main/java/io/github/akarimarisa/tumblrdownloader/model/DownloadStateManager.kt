@@ -310,16 +310,22 @@ class DownloadStateManager private constructor(private val app: Application) {
      * nothing to choose between. Items already queued (or already completed
      * and kept in history) are filtered out first, so the picker only lists
      * media the user can actually gain.
+     *
+     * Keys are file-scoped (#R35): a reblog's copy of an already-queued media
+     * is a *different* file (its own author prefix) and must stay offerable.
      */
     private fun offerMediaPreview(candidates: List<ParsedTumblrMedia>) {
+        fun keyOf(sourceUrl: String, mediaUrl: String, blogName: String?, inBatch: Boolean) =
+            DownloadUtils.postScopedMediaKey(sourceUrl, mediaUrl, blogName, inBatch)
+
         val existingKeys = _items.value
             .filter { it.status != DownloadStatus.FAILED }
-            .map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }
+            .map { keyOf(it.sourceUrl, it.mediaUrl, it.blogName, it.batchId != null) }
             .toMutableSet()
         val fresh = candidates
             .asSequence()
-            .distinctBy { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }
-            .filter { existingKeys.add(DownloadUtils.normalizeMediaIdentity(it.mediaUrl)) }
+            .distinctBy { keyOf(it.sourceUrl, it.mediaUrl, null, false) }
+            .filter { existingKeys.add(keyOf(it.sourceUrl, it.mediaUrl, null, false)) }
             .toList()
 
         when {
@@ -540,15 +546,19 @@ class DownloadStateManager private constructor(private val app: Application) {
         android.util.Log.d("DownloadSM", "processAppend: ${existing.size} existing items")
         // Only deduplicate against non-FAILED items.  A failed download
         // should be retryable — the user shouldn't have to remove-and-re-add.
+        // Keys are file-scoped (#R35): batch rows are named after their blog,
+        // so candidates are keyed with the same blog context.
         val existingKeys = existing
             .filter { it.status != DownloadStatus.FAILED }
-            .map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }
+            .map { DownloadUtils.postScopedMediaKey(it.sourceUrl, it.mediaUrl, it.blogName, it.batchId != null) }
             .toMutableSet()
 
         val baseTime = System.currentTimeMillis()
         val added = candidates
             .asSequence()
-            .distinctBy { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }
+            .distinctBy {
+                DownloadUtils.postScopedMediaKey(it.sourceUrl, it.mediaUrl, cmd.blogName, cmd.batchId != null)
+            }
             .mapIndexed { index, media ->
                 DownloadItem(
                     sourceUrl = media.sourceUrl,
@@ -560,7 +570,11 @@ class DownloadStateManager private constructor(private val app: Application) {
                     blogName = cmd.blogName
                 )
             }
-            .filter { existingKeys.add(DownloadUtils.normalizeMediaIdentity(it.mediaUrl)) }
+            .filter {
+                existingKeys.add(
+                    DownloadUtils.postScopedMediaKey(it.sourceUrl, it.mediaUrl, it.blogName, it.batchId != null)
+                )
+            }
             .toList()
 
         android.util.Log.d("DownloadSM", "processAppend: ${added.size} new items after dedup")
@@ -591,9 +605,16 @@ class DownloadStateManager private constructor(private val app: Application) {
     // ── Restore (from persistence) ─────────────────────────────────────
     private fun processRestore(items: List<DownloadItem>) {
         val existing = _items.value
-        val existingNormIds = existing.map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }.toSet()
+        // File-scoped merge keys (#R35): the same media under two posts stays
+        // two rows across restarts, while genuine same-post duplicates still
+        // collapse.
+        val existingScopedKeys = existing.map {
+            DownloadUtils.postScopedMediaKey(it.sourceUrl, it.mediaUrl, it.blogName, it.batchId != null)
+        }.toSet()
         val merged = (existing + items
-            .filterNot { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) in existingNormIds }
+            .filterNot {
+                DownloadUtils.postScopedMediaKey(it.sourceUrl, it.mediaUrl, it.blogName, it.batchId != null) in existingScopedKeys
+            }
             .map { reconcileRestoredItemWithDisk(it) }
         ).sortedByDescending { it.createdAt }
         android.util.Log.d("DownloadSM", "processRestore: ${existing.size} existing + ${items.size} history = ${merged.size} merged")
@@ -724,9 +745,13 @@ class DownloadStateManager private constructor(private val app: Application) {
      * ever set after a file lands in MediaStore, so an existing mark promotes
      * the row back to COMPLETED/100 instead of showing 0% forever.
      */
+    /** #R35: [CompletedMediaStore] key for a queue row (file-scoped). */
+    private fun completedStoreKey(item: DownloadItem): String? =
+        CompletedMediaStore.keyFor(item.sourceUrl, item.mediaUrl, item.blogName, item.batchId != null)
+
     private fun reconcileRestoredItemWithDisk(item: DownloadItem): DownloadItem {
         if (item.status == DownloadStatus.COMPLETED) return item
-        if (!CompletedMediaStore.isCompleted(app, item.mediaUrl)) return item
+        if (!CompletedMediaStore.isCompleted(app, completedStoreKey(item))) return item
         android.util.Log.d(
             "DownloadSM",
             "processRestore: ${item.id.take(8)}... was ${item.status}/${item.progress}% but the file is on disk — promoting to COMPLETED"
@@ -785,7 +810,7 @@ class DownloadStateManager private constructor(private val app: Application) {
     // ── Remove ──────────────────────────────────────────────────────────
     private fun processRemove(itemId: String) {
         val item = _items.value.find { it.id == itemId }
-        item?.let { CompletedMediaStore.remove(app, it.mediaUrl) }
+        item?.let { CompletedMediaStore.remove(app, completedStoreKey(item)) }
         _items.value = _items.value.filterNot { it.id == itemId }
         dirty = true
         sendRemoveIntent(itemId)
@@ -812,7 +837,7 @@ class DownloadStateManager private constructor(private val app: Application) {
         if (toRemove.isEmpty()) return
 
         toRemove.forEach { item ->
-            CompletedMediaStore.remove(app, item.mediaUrl)
+            CompletedMediaStore.remove(app, completedStoreKey(item))
         }
         _items.value = _items.value.filterNot(::isClearable)
         dirty = true

@@ -754,8 +754,10 @@ class DownloadService : Service() {
         // ponytail: pre-download check — if this media URL is already marked as
         // completed, skip the download flow entirely. This is a second line of
         // defense beyond the `processAppend` dedup, preventing the same media
-        // URL from being downloaded again due to ordering/restarts.
-        if (CompletedMediaStore.isCompleted(this@DownloadService, current.mediaUrl)) {
+        // URL from being downloaded again due to ordering/restarts. Keyed by
+        // the file identity (#R35): a reblog's copy is another file and must
+        // download.
+        if (CompletedMediaStore.isCompleted(this@DownloadService, completedStoreKey(current))) {
             emitProgress(current.copy(status = DownloadStatus.COMPLETED, progress = 100, errorMessage = null))
             return
         }
@@ -995,7 +997,7 @@ class DownloadService : Service() {
                 // the real type, so rename the file (and the queue title).
                 val (finalUri, finalTitle) = applyDetectedExtension(output.uri, contentType, current)
                 if (finalUri != output.uri) downloadTargetMap[current.id] = finalUri
-                CompletedMediaStore.markCompleted(this@DownloadService, current.mediaUrl)
+                CompletedMediaStore.markCompleted(this@DownloadService, completedStoreKey(current))
                 emitProgress(
                     current.copy(
                         status = DownloadStatus.COMPLETED,
@@ -1571,6 +1573,10 @@ class DownloadService : Service() {
      * duplicating (#4). Prefers a published row over a stale pending one so a
      * fresh download never appends to somebody else's partial file.
      */
+    /** #R35: [CompletedMediaStore] key for a queue row (file-scoped). */
+    private fun completedStoreKey(item: DownloadItem): String? =
+        CompletedMediaStore.keyFor(item.sourceUrl, item.mediaUrl, item.blogName, item.batchId != null)
+
     private fun findExistingDownload(fileName: String, relativePath: String): Uri? {
         // minSdk 30 → always the Q+ collection.
         val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)

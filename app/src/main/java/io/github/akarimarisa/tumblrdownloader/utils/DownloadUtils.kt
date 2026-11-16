@@ -290,6 +290,28 @@ object DownloadUtils {
      * main thread into an ANR. The function is a pure function of its argument,
      * so caching cannot change any result.
      */
+    /**
+     * #R35: dedupe key scoped to the FILE a download produces. The same media
+     * URL inside a reblog lives under the reblogger's author prefix, so it is
+     * a different file on disk and must be downloaded once per post (user UX
+     * rule, case 7.10) instead of being URL-deduped away. Mirrors
+     * `DownloadService.targetFileName`: batch rows are named after their blog,
+     * single posts after the shared post's blog. Bare [normalizeMediaIdentity]
+     * stays for within-post size collapsing.
+     */
+    fun postScopedMediaKey(
+        sourceUrl: String,
+        mediaUrl: String,
+        blogName: String?,
+        inBatch: Boolean
+    ): String {
+        val identity = normalizeMediaIdentity(mediaUrl)
+        if (identity.isBlank()) return ""
+        val author = blogName?.takeIf { inBatch && it.isNotBlank() }
+            ?: authorFromSourceUrl(sourceUrl)
+        return "${sanitizeFileName(author)}|$identity"
+    }
+
     fun normalizeMediaIdentity(mediaUrl: String): String {
         identityCache[mediaUrl]?.let { return it }
         val identity = computeIdentity(mediaUrl)
