@@ -171,7 +171,7 @@
 | 9.3 | 媒体查看器：图片/视频 | 打开、左滑下一张/右滑回上一张、返回定位到原行 | 📱 |
 | 9.4 | 下载中的通知 | 含文件名、进度条与「全部停止」动作；落在通知栏**「静音」分组**底部 —— 重要性说明见 R29；实测动作：点「全部停止」→ 服务收到 ACTION_PAUSE_ALL（日志 21:54:13）→ 可见行全部「已暂停」、其后零新请求；根因确认为通道重要性=静音（R29），临时调「默认」后通知独立显示且动作可点，测完已调回 | 📱 |
 | 9.5 | 完成后的通知 | 汇总「成功：X，失败：Y」在服务停止后仍保留、不显示 0%（#24） —— 实测（Pixel 3 干净 Android 15 + 授权后）：格式 ✓、服务停止后仍留存（+60s 复查仍在）、无 0% ✓；**但计数错误**：显示「成功:3」而 4 行/4 文件全部完成（文件 23:16:28 前落盘，23:16:29 与 23:16:34 发布仍写 3）→ R40；pause-all 路径发布汇总已日志验证 ✓；主手机上还被 snooze 工件挡住不可见（R27） | ❌ |
-| 9.6 | Android 13+ 通知权限 | POST_NOTIFICATIONS 只声明未运行时请求 —— 13+ 设备上非前台服务的完成通知会被静默拦截（R26）—— 实测（Pixel 3，Android 15/SDK35 全新安装）：首启及全流程无权限弹窗、granted=false → 系统拦截**全部**通知：含前台进度通知（numPostedByApp=0、importance=NONE、通知栏完全不可见）；pm grant 后 id10001/id10002 立即可见 → 修复方向=运行时请求（R26） | ❌ |
+| 9.6 | Android 13+ 通知权限 | POST_NOTIFICATIONS 只声明未运行时请求 —— 13+ 设备上非前台服务的完成通知会被静默拦截（R26）—— 实测（Pixel 3，Android 15/SDK35 全新安装）：首启及全流程无权限弹窗、granted=false → 系统拦截**全部**通知：含前台进度通知（numPostedByApp=0、importance=NONE、通知栏完全不可见）；pm grant 后 id10001/id10002 立即可见 → 修复方向=运行时请求（R26）；**修复后复测通过**：首启弹「要允许…发送通知吗？」→ 允许 → granted=true(USER_SET) → asked 标志无二次弹窗；下载中 id10001、完成后 id10002 均可见（SDK35 实测） | 📱 |
 
 ## 10. 生命周期与性能
 
@@ -213,9 +213,9 @@
 | R23 | 剪贴板有单帖链接时分享博客会同时触发两条流程 | 分享后 5 秒内忽略剪贴板 | ✅ 📱 |
 | R24 | 移除博客卡片后旧行回流到主列表 | 孤儿行重新隐藏——只由该博客的下一张卡片统计 | ✅ |
 | R25 | 移除运行中的博客卡片后卡片复活并继续下载 | 观察到一次，伴随本机 Activity 窗口异常；单独移除运行中卡片13分钟未复现——需要可靠复现步骤 | ⬜ |
-| R26 | POST_NOTIFICATIONS 只声明、从未运行时请求 | Android 13+ 上通知在授权前被系统拦截 —— 已在 Pixel 3（SDK35）实测确认：连前台进度通知也被拦（importance=NONE、numPostedByApp=0、通知栏完全不可见），应用也无任何「通知被禁用」提示（静默，违反 UX 规则）；pm grant 即全部恢复 → 修复：首启运行时请求 + areNotificationsEnabled() 禁用提示 —— **修复已提交**（MainActivity onboarding 后请求一次 + asked 标志），待 Pixel 3 复插后真机验证弹窗 | ⬜ |
+| R26 | POST_NOTIFICATIONS 只声明、从未运行时请求 | Android 13+ 上通知在授权前被系统拦截 —— 已在 Pixel 3（SDK35）实测确认：连前台进度通知也被拦（importance=NONE、numPostedByApp=0、通知栏完全不可见），应用也无任何「通知被禁用」提示（静默，违反 UX 规则）；pm grant 即全部恢复 → 修复：首启运行时请求 + areNotificationsEnabled() 禁用提示 —— **已修复并真机验证**（SDK35）：onboarding 后弹「要允许…发送通知吗？」→ 允许 → granted=true(USER_SET)，asked 标志确保不二次弹窗，授权后通知恢复可见（9.6 复测通过）；areNotificationsEnabled() 禁用提示属可选增强、未包含 | ✅ |
 | R27 | 完成后的汇总通知表现不一致 | 新日志验证应用侧代码正确：publishSummary 在排空期间被反复调用，自然完成路径上其后无取消；onStartCommand 追踪显示 ACTION_START 是在*入队前*取消汇总（而非排空后）。当前不出现属测试环境污染：通知 id 10002 挂在系统「Pending snoozed」存储里（时间戳约 2094 年，源于此前清理通知时的 snooze 循环），重启后仍在（已验证），unsnooze 无法触及该存储 —— 历史 1 现 3 不现的观察早于该循环，仍部分无法解释 | ⬜ |
-| R28 | `tmblr.co` 短链不被识别 | 分享路径已实锤静默；字段路径有无效提示 —— **已修复**：`shareUrlRegex` 识别 tmblr.co、`parseShareUrl` 网络跟随重定向后再分类、失败/无 URL 分支一律本地化 Toast（不再静默）；真机验证失败腿「无法解析短链接。」，成功腿待真实短链 E2E | ✅ |
+| R28 | `tmblr.co` 短链不被识别 | 分享路径已实锤静默；字段路径有无效提示 —— **已修复**：`shareUrlRegex` 识别 tmblr.co、`parseShareUrl` 网络跟随重定向后再分类、失败/无 URL 分支一律本地化 Toast（不再静默）；真机验证失败腿「无法解析短链接。」；**成功腿 E2E ✓**：真实短链 `tmblr.co/Z5-RFwSEjDJR` → 日志 `short link resolved → historicalmyths.tumblr.com/post/30311503067…` → 选择器「已选 1/1」 | ✅ |
 | R29 | 下载通知落在静音分组 | 真机根因确认：通道为 IMPORTANCE_LOW → EMUI 折进静音组折叠 chips（原生 Android 15 上 LOW 在静音组内仍单独可见）；真机实验（调「默认」→ 显眼且动作可点，调回 → 再次被埋）验证了修复方向。**已修复**：改用新通道 id `tumblr_download_channel_v2`（IMPORTANCE_DEFAULT）+ 一次性清理旧通道 —— 必须换 id，因为已存在通道的重要性应用无法修改，且删除在仍有通知引用时不生效（两者均真机观察到）。Pixel 3 验证：日志 `v2 importance=3`、NotificationRecord importance=3、汇总通知置顶显示于通知栏主区（原先被埋进静音组）。EMUI 主手机同日再验：迁移日志（legacy deleted / v2 importance=3）、NotificationRecord importance=3、进度通知「kthingz-… · 现在」以独立大行实拍于通知栏主区 | ✅ |
 | R30 | 纯文字/已删除帖子弹出选择器（页面级杂散图） | 本无媒体，解析器却抓取了博客**封面（og:image）**——已实证：纯文字帖抓到封面横幅（1419×640）、404 页抓到页面配图；应把提取范围限制到帖子内容节点（2.27、2.28） | ⬜ |
 | R31 | 博客链接带前后文字分享时静默无反应 | `isBlogUrl` 判原文，带评论的博客分享掉进帖子路径后无声失败（2.24）—— **已修复**：`BlogFeedParser.findBlogUrlInText` 从自由文本提取博客链接后路由，分享无 URL 时弹无效提示；真机 2.24 通过、单测覆盖 | ✅ |
