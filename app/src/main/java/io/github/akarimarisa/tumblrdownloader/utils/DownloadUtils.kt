@@ -13,6 +13,7 @@ object DownloadUtils {
 
     private const val PREF_NAME_DOWNLOAD_CONFIG = "download_config"
     private const val KEY_CUSTOM_DOWNLOAD_DIR_URI = "custom_download_dir_uri"
+    private const val KEY_DEFAULT_DIR_GRANT_URI = "default_download_dir_grant_uri"
 
     fun sanitizeFileName(sourceUrl: String): String {
         val fallback = "tumblr_media"
@@ -184,6 +185,37 @@ object DownloadUtils {
             .getString(KEY_CUSTOM_DOWNLOAD_DIR_URI, null)
             ?: return null
         return runCatching { Uri.parse(raw) }.getOrNull()
+    }
+
+    /**
+     * One-time persistable SAF grant on the default download folder (#R32):
+     * files whose MediaStore row lost its owner attribution are invisible to
+     * our name query and undeletable by path, so without this grant a
+     * re-download collides and the provider renames ours to "<name> (1)".
+     * The tree grant lets the app find/overwrite those files regardless of
+     * row ownership.
+     */
+    fun getDefaultDirGrant(context: Context): Uri? =
+        context.getSharedPreferences(PREF_NAME_DOWNLOAD_CONFIG, Context.MODE_PRIVATE)
+            .getString(KEY_DEFAULT_DIR_GRANT_URI, null)
+            ?.let { runCatching { Uri.parse(it) }.getOrNull() }
+
+    fun setDefaultDirGrant(context: Context, uri: Uri?) {
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
+        }
+        context.getSharedPreferences(PREF_NAME_DOWNLOAD_CONFIG, Context.MODE_PRIVATE).edit()
+            .apply {
+                if (uri == null) remove(KEY_DEFAULT_DIR_GRANT_URI)
+                else putString(KEY_DEFAULT_DIR_GRANT_URI, uri.toString())
+            }
+            .commit() // commit() so the very next download sees the grant
     }
 
     fun getCurrentDownloadDirectory(context: Context): Uri {

@@ -111,6 +111,10 @@
     <string name="parse_page_request_failed">Page request failed, HTTP %1$d</string>
     <string name="parse_private_not_supported">Private Tumblr posts are not supported yet.</string>
     <string name="parse_link_resolve_failed">Could not resolve the short link.</string>
+    <string name="saf_grant_title">Authorize the download folder</string>
+    <string name="saf_grant_message">Pick the TumblrDownloader folder once so re-downloads overwrite the previous file instead of saving another \"(1)\" copy. The folder picker opens only one time.</string>
+    <string name="saf_grant_positive">Choose folder</string>
+    <string name="saf_grant_negative">Not now</string>
     <string name="parse_oembed_redirect_error">oEmbed redirect error (HTTP %1$d)</string>
     <string name="parse_oembed_http_error">oEmbed request failed, HTTP %1$d</string>
     <string name="parse_oembed_parsed_empty">No downloadable media found in oEmbed response</string>

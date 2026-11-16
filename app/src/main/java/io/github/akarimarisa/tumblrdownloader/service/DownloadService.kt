@@ -47,6 +47,7 @@ import okhttp3.Request
 import android.provider.MediaStore
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import java.io.File
 import java.io.IOException
 import java.io.OutputStream
 import java.util.Collections
@@ -1315,7 +1316,38 @@ class DownloadService : Service() {
         val custom = createCustomDirTarget(item, fileName, mimeType)
         if (custom != null) return custom
 
+        // #R32: with the one-time folder grant, find an already existing file
+        // through SAF — this sees files whose MediaStore row lost its owner
+        // attribution (invisible to our name query, undeletable by path), so
+        // a re-download overwrites in place instead of colliding into "(1)".
+        createDefaultDirSafTarget(item, fileName)?.let { return it }
+
         return createMediaStoreTarget(item, fileName, mimeType)
+    }
+
+    /**
+     * #R32 SAF leg: overwrite an existing file under the granted default
+     * folder. Returns null (→ normal MediaStore insert) when no grant is
+     * stored or the file does not exist — with the folder granted, "file does
+     * not exist" is authoritative, so the insert below cannot collide either.
+     */
+    private fun createDefaultDirSafTarget(item: DownloadItem, fileName: String): DownloadTarget? {
+        val tree = DownloadUtils.getDefaultDirGrant(this) ?: return null
+        val root = runCatching { DocumentFile.fromTreeUri(this, tree) }.getOrNull() ?: return null
+        if (!root.isDirectory) return null
+        val existing = runCatching { blogSubDir(root, item).findFile(fileName) }.getOrNull()
+        if (existing == null || !existing.isFile) return null
+        val output = contentResolver.openOutputStream(existing.uri, "wt")
+            ?: return null
+        android.util.Log.i("DownloadSvc", "R32: SAF overwrite name=$fileName")
+        return DownloadTarget(
+            uri = existing.uri,
+            outputStream = output,
+            onSuccess = {
+                // Already published — no IS_PENDING flip needed.
+            },
+            onFailure = { /* the next attempt overwrites again */ }
+        )
     }
 
     /**
@@ -1486,6 +1518,22 @@ class DownloadService : Service() {
                 },
                 onFailure = { /* the next attempt overwrites again */ }
             )
+        }
+
+        // #R32: the name query above can miss files whose MediaStore row lost
+        // its owner attribution (verified on device: owner=NULL rows while
+        // the file is plainly visible by path) — without READ permission our
+        // query only sees rows attributed to us, yet the provider's insert
+        // conflict check sees every row and renames our fresh insert to
+        // "<name> (1)". When the query found nothing, delete whatever already
+        // sits at the target path so the insert below cannot collide.
+        val directFile = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "${relativePath.removePrefix("${Environment.DIRECTORY_DOWNLOADS}/")}/$fileName"
+        )
+        if (runCatching { directFile.isFile }.getOrDefault(false)) {
+            val removed = runCatching { directFile.delete() }.getOrDefault(false)
+            android.util.Log.i("DownloadSvc", "R32: pre-insert path delete ok=$removed name=$fileName")
         }
 
         val values = ContentValues().apply {

@@ -28,6 +28,7 @@ import io.github.akarimarisa.tumblrdownloader.ui.auth.TumblrLoginActivity
 import io.github.akarimarisa.tumblrdownloader.ui.about.AboutActivity
 import io.github.akarimarisa.tumblrdownloader.ui.settings.SettingsActivity
 import io.github.akarimarisa.tumblrdownloader.utils.ClipboardDedupe
+import io.github.akarimarisa.tumblrdownloader.utils.DownloadUtils
 import io.github.akarimarisa.tumblrdownloader.utils.LocaleHelper
 import io.github.akarimarisa.tumblrdownloader.utils.LocalizedToast
 import io.github.akarimarisa.tumblrdownloader.utils.BlogFeedParser
@@ -43,6 +44,7 @@ private const val TAG = "MainActivity"
 private const val PREFS_NAME = "tumblr_downloader"
 private const val PREF_CLIPBOARD_AUTO_DETECT = "clipboard_auto_detect"
 private const val PREF_NOTIF_PERMISSION_ASKED = "notification_permission_asked"
+private const val PREF_SAF_GUIDE_SHOWN = "saf_grant_guide_shown"
 private const val REQ_POST_NOTIFICATIONS = 6011
 private const val PREF_LAST_AUTO_URL = "last_auto_detected_url"
 
@@ -68,6 +70,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private val viewModel: MainViewModel by viewModels()
     private val prefs: SharedPreferences by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
+
+    /** One-time folder-grant result (#R32) — opens the SAF tree picker. */
+    private val safGrantLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val uri = result.data?.data
+            if (result.resultCode == Activity.RESULT_OK && uri != null) {
+                DownloadUtils.setDefaultDirGrant(this, uri)
+                Log.i(TAG, "download folder granted: $uri")
+            } else {
+                Log.i(TAG, "download folder grant declined")
+            }
+        }
     private val clipboardManager by lazy { getSystemService(android.content.ClipboardManager::class.java) }
 
     /** Until this moment the clipboard is ignored because a share was just handled. */
@@ -159,6 +173,43 @@ class MainActivity : AppCompatActivity() {
         viewModel.claimServiceProgressListener()
         viewModel.refreshTumblrAccount()
         maybeRequestNotificationPermission()
+        // The folder guide waits until the notification-permission round has
+        // settled so the two first-run prompts never stack (#R32).
+        val notifSettled =
+            android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU ||
+                prefs.getBoolean(PREF_NOTIF_PERMISSION_ASKED, false) ||
+                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (notifSettled) maybeShowSafGrantGuide()
+    }
+
+    /**
+     * #R32: one-time explanation + folder picker. The persistable tree grant
+     * lets re-downloads overwrite files whose MediaStore row lost its owner
+     * attribution instead of colliding into "(1)" copies.
+     */
+    private fun maybeShowSafGrantGuide() {
+        if (!OnboardingActivity.isDone(this)) return
+        if (prefs.getBoolean(PREF_SAF_GUIDE_SHOWN, false)) return
+        if (DownloadUtils.getDefaultDirGrant(this) != null) return
+        prefs.edit().putBoolean(PREF_SAF_GUIDE_SHOWN, true).apply()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.saf_grant_title)
+            .setMessage(R.string.saf_grant_message)
+            .setPositiveButton(R.string.saf_grant_positive) { _, _ ->
+                val initial = android.provider.DocumentsContract.buildTreeDocumentUri(
+                    "com.android.externalstorage.documents",
+                    "primary:${android.os.Environment.DIRECTORY_DOWNLOADS}/" +
+                        DownloadUtils.getDefaultDownloadFolderName(this)
+                )
+                safGrantLauncher.launch(
+                    Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                        putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, initial)
+                    }
+                )
+            }
+            .setNegativeButton(R.string.saf_grant_negative, null)
+            .show()
     }
 
     /**
