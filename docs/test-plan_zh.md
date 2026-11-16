@@ -112,7 +112,7 @@
 | 5.15 | 博客输出目录 | 文件写入 `TumblrDownloader/<博客>-<哈希>/`（#14） | 📱 |
 | 5.16 | 孤儿行（卡片已移除） | 不出现在主列表；由该博客的下一张卡片统计；清空会清除（#18、#24） | 📱 |
 | 5.17 | 进程被杀 → 卡片「未完成」→ 开始 | 从持久化游标续扫（410 → 598 → 735）；恢复时会先再次弹长博客确认（内存态门禁） | 📱 |
-| 5.18 | 扫描中断网 | 卡片变 BLOCKED 并带错误码；恢复网络后 点开始 从游标续扫 —— 实测：165s+ 停在「解析中」不转出错，恢复后不自愈，暂停→开始后游标仍冻结（见 R36） | ❌ |
+| 5.18 | 扫描中断网 | 卡片变 BLOCKED 并带错误码；恢复网络后 点开始 从游标续扫 —— **修复后复测通过**：断网 18 秒内 `feed giving up after 4 IOExceptions → network BLOCKED`，卡片红字「出错」+「网络请求失败，请检查网络后重试」，游标 1513/8632 持久化；恢复网络 → 暂停 → 开始 → **从游标续扫**（pages 91→121 持续推进） | 📱 |
 | 5.19 | 两个博客同时扫描 | 两张卡片各自独立计数，暂停/移除互不串扰 | 📱 |
 | 5.20 | 空博客（0 篇）/ 加密博客 | 正常结束或明确报错，不挂起不崩溃 —— 实测真·空博客（akari-test-blog，0 帖）：类型选择 → 扫描 → 已完成 · 已扫描 0 帖 · 0 媒体，无崩溃；URL 为 /blog/<name> 形式，顺带修复解析（R38）；加密博客变体实测（akari-test-blog-pass）：卡片「出错 · 已扫描 0 帖 · 0 媒体」干净收场、不挂起不崩溃（仅显示「出错」未注明是密码墙，可读性可再进一步） | 📱 |
 
@@ -127,7 +127,7 @@
 | 6.3 | 工具栏 全部暂停 / 全部继续 | 整个队列暂停/恢复 | 📱 |
 | 6.4 | 清空已完成 | 清除独立行**和孤儿行**；仍存活卡片的行保留；清完恢复空状态 | 📱 |
 | 6.5 | 失败行 → 续 | 直接重试，无需先删除 —— 断网路径不再产生失败行（改为挂起），需服务器错误素材（404/5xx 媒体） | ⬜ |
-| 6.6 | 下载中断网 | 活跃行 3 次重试后失败，排队行暂停，不自动恢复 —— 实测：下载静默挂起（零日志零提示），挂死项占住并发槽位，恢复网络后队列冻结不自愈；手动全部暂停→全部开始可救活 | ❌ |
+| 6.6 | 下载中断网 | 活跃行 3 次重试后失败，排队行暂停，不自动恢复 —— 实测（修复后）：断网 10 秒内**双守卫**触发（`post-error network check → PAUSED` + `network guard → PAUSED`），活动行转「已暂停」并携带可读消息「等待网络连接…」；这是有意设计（秒级清晰暂停优于烧完 3 次重试才失败，符合 UX 规则），排队行保持排队、恢复后不自动续（符合本条预期）。昨日「零日志零提示挂起」实为 R43 主线程 ANR 冻结所致 —— 日志与消息现均已可见 | 📱 |
 | 6.7 | 并发数设置（1–4） | 同时最多 N 行下载 —— N=2 时日志中两个下载请求重叠在飞 | 📱 |
 | 6.8 | 限速设置 | 速度不超过配置上限 | 📱 |
 | 6.9 | 双击「下载媒体」/ 快速重复粘贴同一链接 | 只入队一次（`isParsing` 拦截 + 去重）；第二次点击被加载遮罩吸收，仅一条提示 | 📱 |
@@ -223,10 +223,11 @@
 | R33 | 「Private Tumblr posts are not supported yet.」为英文硬编码 | 中文界面弹英文 Toast —— 字符串应入资源（2.6/私密帖）—— 实为已覆盖：`DownloadStateManager.localizeError` 将英文字面量映射到 `R.string.parse_private_not_supported`（英文串只是内部 key），真机实拍中文 Toast「暂不支持下载私密帖子。」→ 结案 | ✅ |
 | R34 | 登录态闪变未登录 / 登录后回跳无提示 | 根因：会话被服务端作废（401 是会话所致而非 token）+ WebView jar 残留脏 cookie；`pm clear` 后重新登录成功，往返已实测：冷启动 +5s/+18s 均保持 `akarimarisa/在线` 且 `fetch: api ok`。另已交付：瞬断保留缓存（离线实测）、登录被拒弹提示、redirect目标/根URL识别修正、主框架请求诊断 | ✅ |
 | R35 | 跨帖同图被 URL 去重静默跳过 | 原帖行在队列时，转载帖的同一 media 不再入队 —— 按用户 UX 规则倾向按帖各下一份（文件名因作者不同）；对应 7.10 ❌ —— **已修复并 E2E 验证**：去重键改为文件级 `postScopedMediaKey`（作者前缀+media 身份，镜像 targetFileName 命名），覆盖 offerMediaPreview/processAppend/processRestore 合并与 CompletedMediaStore（键语义 = 「该文件是否已落盘」）；同帖仍去重。迁移：旧裸 identity 标记不再匹配 → 旧媒体首次重下原地覆盖一次（R32 兜底）后重新标记 | ✅ |
-| R36 | 断网后扫描与队列变僵尸 | 扫描卡永远停在「解析中」（不转出错/BLOCKED、恢复网络不自愈；暂停→开始能救活下载但扫描游标仍冻结——疑似 worker 异常被吞/activeJobs 泄漏）。下载侧：挂死的传输占住并发槽位冻结全队列，需 全部暂停→全部开始 救活（已实测） | ⬜ |
+| R36 | 断网后扫描与队列变僵尸 | 昨日现象（解析中永冻、零日志、恢复不自愈）的**真根因 = R43 主线程 ANR 冻结**（进程冻住 → UI/日志全停），并非异常被吞：错误处理本就有界（attempts≥3 → BlockedException → 卡片出错）。**已修 + 双侧复测**：① 扫描侧 —— 断网 18s 内 BLOCKED、红字可读错误、游标持久化、恢复后暂停→开始从游标续扫（5.18 ✅）；② 下载侧 —— 双守卫 10s 内转已暂停+「等待网络连接…」、日志可见、按设计不自动续（6.6 ✅）；③ 加固 —— 网关 callTimeout 20s（含 DNS 封顶）保险 + 全套 BlogDM/守卫可观测日志 | ✅ |
 | R37 | 登录 redirect 目标漏掉 slug 规范化 URL | Tumblr 把 `/<id>` 规范化成 `/<id>/slug`，精确匹配的 `isRedirectTarget` 永不自动完成、用户须手动点 完成 —— 已修（前缀/slug 匹配，提交 1ede60b），2.6 全链路实测通过 | ✅ |
 | R38 | `www.tumblr.com/blog/<name>` 形式链接被判无效 | Tumblr 自身的博客切换器分享出的链接带 `blog/` 前缀，而锚点正则只允许单段路径 —— 已修复（可选 `blog/` 前缀）+ 单元测试，5.20 用 akari-test-blog 真机验证通过 | ✅ |
 | R39 | 孤儿 `.pending-*` 文件从不清扫 | Downloads 里 8 个 11–13 日的遗留 pending（旧 `post-*` 命名）永不消失 —— **已修复并真机验证**：每次 restore 后双源清扫（MediaStore 行 + 应用目录文件走查），按 mediaId 与行集合比对判定孤儿；真机三段证据：行存在 → `removed=0`（Range 续传受保护，#7.9）→ UI 删行且服务未运行时 pending 残留（真实孤儿配方，顺带发现 remove 的清理依赖服务在跑）→ 再启动 `delete=true removed=1 PENDING_GONE`。能力边界：`pm clear` 清掉 owner 归属与 provider 行后，僵尸文件对应用完全不可见（文件/API 双盲），无法自查（本次由 shell 手工清理） | ✅ |
 | R40 | 完成汇总可能少计 | 汇总显示「成功:3」（后又见「成功:1」）而 4 行全部已完成。**根因**：ACTION_START 处理里的「服务空闲即新会话」判断，在串行队列下**相邻下一项的 START 恰好落进瞬时空闲窗**就清空 `sessionCompletedIds` —— 时间线铁证：`add→size=1 / CLEAR sizeBefore=1 / add→size=2 / CLEAR sizeBefore=2 / publish completed=1`。**已修**：仅当上一状态为 SUMMARY（上一批已完成并汇总）才开新会话，批内 START 永不清。**验证**：`add 1,2,3,4` 批内零 CLEAR、4 图跑 `publishSummary completed=4`（通知文案用同一数值；本机可见性仍受 R27 工件阻挡） | ✅ |
 | R41 | 同一项重复收到 ACTION_START | 同一 item id 被多次启动（Pixel 3：4 项 6 次；主手机：单项最多 3 次）—— 每个多余 START 还走「取消汇总」分支（R27 相邻）。**根因（mapping.txt 栈反查）**：服务端在限速间隔等待时发出 `status=QUEUED`（668 行「等待 …ms」），processProgress 的 `else -> incoming` 直写回行（绕过 replaceItem），1112 行泵看到非 DOWNLOADING → **重选同一行** → 每次 gap 发出再来一次 ACTION_START。**已修**：`sendStartIntent` 维护非显式 in-flight 集合（终态/暂停释放、gap-QUEUED 期间保持、显式用户启动绕过），重复以 SKIP 记日志。**验证**：4 图跑 START 计数 1/1/1/1、SKIP-dup 拦下重选 | ✅ |
 | R42 | 全量跑单测偶发失败 | 3 次目击（completedProgress_isPersistedImmediately、pauseBatch_pausesOnlyBatchItems、migrate_cookies_skips_if_room_has_data）—— 单独跑均通过、全量重跑即绿；疑为 test-dispatcher/时序竞态，需修以免成为 CI 红灯噪音 | ⬜ |
+| R43 | 主线程每调用编译正则导致 ANR | 主手机 3 次历史 ANR（00:08:28 输入超时、00:17:08 与 00:19:38 executing-service），bugreport 栈显示主线程卡在 `java.util.regex.Pattern.compile`（ICU 原生）烧掉 32s CPU —— `sanitizeFileName` 每次调用编译两条正则，而 #R35 把它放进入队去重热路径（候选×行×append 全在 main 命令循环），ICU 编译还持跨线程锁。**已修**：所有函数内 `Regex(...)` 提升为预编译 val（sanitize ×2、isSquareRendition ×2、jsonMediaUrl 共享）+ **复测**：9,886 媒体卡片满负荷恢复中连续 90 秒 UI 锤击 → am_anr 保持 3（全部为修复前） | ✅ |

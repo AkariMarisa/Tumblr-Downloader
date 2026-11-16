@@ -297,7 +297,13 @@ class BlogDownloadManager private constructor(
      */
     fun resume(jobId: String) {
         val job = _jobs.value.firstOrNull { it.jobId == jobId } ?: return
-        if (activeJobs.containsKey(jobId)) return
+        if (activeJobs.containsKey(jobId)) {
+            // #R36: yesterday's zombie showed exactly this no-op — the card
+            // said 解析中, 开始 did nothing, and the stuck worker was never
+            // replaced. Log it so a stuck-but-tracked worker is visible.
+            android.util.Log.i("BlogDM", "resume ignored — worker still active jobId=$jobId state=${job.state()}")
+            return
+        }
         // A finished scan (DONE) has no feed left to re-fetch: only restart
         // the batch's paused/queued downloads. Everything else relaunches the
         // scan from its persisted cursor and resumes the batch alongside it.
@@ -423,6 +429,12 @@ class BlogDownloadManager private constructor(
                 // Safety net: a worker that died before reaching the gate
                 // must not leave the list locked out of the detail screen.
                 setConfirmPending(jobId, false)
+                // #R36 diagnostics: how did the worker leave?
+                android.util.Log.i(
+                    "BlogDM",
+                    "worker exit jobId=$jobId blocked=${blocked != null} crashed=${crashed != null} " +
+                        "cancelFlag=${cancelFlags[jobId] ?: false}"
+                )
             }
             val reason = blocked
             if (reason != null) {
@@ -466,6 +478,8 @@ class BlogDownloadManager private constructor(
         val longThreshold = BlogPrefs.longThreshold(app)
 
         val fresh = job.resumeLink == null && job.pagesCompleted == 0
+        // #R36 diagnostics: entry/exit of every scan worker.
+        android.util.Log.i("BlogDM", "runWorker start jobId=$jobId fresh=$fresh")
 
         val boot = bootstrapBlog(blogName)
         val token = boot.apiToken
@@ -495,6 +509,12 @@ class BlogDownloadManager private constructor(
             if (cancelFlags.containsKey(jobId)) {
                 break
             }
+            // #R36 diagnostics: one line per scan pass (progress heartbeat).
+            android.util.Log.i(
+                "BlogDM",
+                "scan pass jobId=$jobId pages=$pages next=${nextLink?.take(44) ?: "-"} " +
+                    "discovered=$discovered enqueued=$enqueued"
+            )
 
             // Long-blog gate — ask BEFORE this pass queues anything. It used
             // to run after the enqueue block, so downloads were already
@@ -588,6 +608,7 @@ class BlogDownloadManager private constructor(
                     updatedAt = System.currentTimeMillis(),
                     errorCode = null
                 )
+                android.util.Log.i("BlogDM", "scan DONE jobId=$jobId pages=$pages discovered=$discovered")
                 persistAndPublish(done)
                 _events.tryEmit(BlogEvent.Finished(jobId, cancelled = false))
                 return
@@ -629,6 +650,7 @@ class BlogDownloadManager private constructor(
         }
 
         // Only reachable via `break`: the job was cancelled or the user said no.
+        android.util.Log.i("BlogDM", "scan break → CANCELLED jobId=$jobId")
         cancelFlags.remove(jobId)
         markState(jobId, BlogJobState.CANCELLED)
         _events.tryEmit(BlogEvent.Finished(jobId, cancelled = true))
@@ -652,7 +674,11 @@ class BlogDownloadManager private constructor(
                 if (boot.apiToken.isBlank()) throw BlockedException("token_missing")
                 return boot
             } catch (io: IOException) {
-                if (attempts >= 3) throw BlockedException("network")
+                if (attempts >= 3) {
+                    android.util.Log.i("BlogDM", "bootstrap giving up after ${attempts + 1} IOExceptions → network BLOCKED (${io.javaClass.simpleName}: ${io.message})")
+                    throw BlockedException("network")
+                }
+                android.util.Log.i("BlogDM", "bootstrap IOException attempt=${attempts + 1} → backoff (${io.javaClass.simpleName}: ${io.message})")
                 delay(backoffMs(attempts++))
             }
         }
@@ -687,7 +713,11 @@ class BlogDownloadManager private constructor(
                 if (resp.code == 404) throw BlockedException("not_found")
                 throw BlockedException("http_${resp.code}")
             } catch (io: IOException) {
-                if (attempts >= 3) throw BlockedException("network")
+                if (attempts >= 3) {
+                    android.util.Log.i("BlogDM", "feed giving up after ${attempts + 1} IOExceptions → network BLOCKED (${io.javaClass.simpleName}: ${io.message})")
+                    throw BlockedException("network")
+                }
+                android.util.Log.i("BlogDM", "feed IOException attempt=${attempts + 1} → backoff (${io.javaClass.simpleName}: ${io.message})")
                 delay(backoffMs(attempts++))
             }
         }

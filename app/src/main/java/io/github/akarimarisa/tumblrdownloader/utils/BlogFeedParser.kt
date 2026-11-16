@@ -351,8 +351,11 @@ object BlogFeedParser {
         return best
     }
 
+    /** Precompiled: a per-call Pattern.compile here ran inside the parse hot loop (#R43). */
+    private val SQUARE_RENDITION_REGEX = Regex("_\\d{2,4}sq(?=\\.[a-z0-9]+$)", RegexOption.IGNORE_CASE)
+
     private fun isSquareRendition(url: String): Boolean =
-        Regex("_\\d{2,4}sq(?=\\.[a-z0-9]+$)", RegexOption.IGNORE_CASE).containsMatchIn(url)
+        SQUARE_RENDITION_REGEX.containsMatchIn(url)
 
     /** Only real post media is downloadable — reject avatars/posters/background noise. */
     fun isDownloadableMedia(url: String): Boolean {

@@ -15,6 +15,12 @@ object DownloadUtils {
     private const val KEY_CUSTOM_DOWNLOAD_DIR_URI = "custom_download_dir_uri"
     private const val KEY_DEFAULT_DIR_GRANT_URI = "default_download_dir_grant_uri"
 
+    /** Precompiled once: compiling these per call ran ICU Pattern.compile on
+     *  the main thread during enqueue storms and burned 32 s of CPU → ANR
+     *  (#R43; reached via postScopedMediaKey → sanitizeFileName). */
+    private val UNSAFE_NAME_CHARS = Regex("[^\\p{L}\\p{N}._-]")
+    private val UNDERSCORE_RUN = Regex("_+")
+
     fun sanitizeFileName(sourceUrl: String): String {
         val fallback = "tumblr_media"
         return sourceUrl
@@ -22,8 +28,8 @@ object DownloadUtils {
             .replace("https://", "")
             .replace("http://", "")
             // Keep Unicode letters (Chinese/Japanese/Korean, etc.), digits, . _ -; replace the rest with _
-            .replace(Regex("[^\\p{L}\\p{N}._-]"), "_")
-            .replace(Regex("_+"), "_")   // collapse consecutive underscores
+            .replace(UNSAFE_NAME_CHARS, "_")
+            .replace(UNDERSCORE_RUN, "_")   // collapse consecutive underscores
             .ifBlank { fallback }
     }
 

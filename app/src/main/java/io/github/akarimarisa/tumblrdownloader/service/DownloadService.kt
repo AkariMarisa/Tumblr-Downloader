@@ -785,6 +785,9 @@ class DownloadService : Service() {
             // This also prevents queued items behind this one from being
             // blocked longer than necessary.
             if (!isNetworkConnected()) {
+                // #R36 observability: the deliberate pause-with-message path
+                // must be visible in logs (6.6 was judged "silent" without it).
+                android.util.Log.i("DownloadSvc", "network guard → PAUSED id=${current.id.take(8)} (waiting for network)")
                 // Save partial state so user can resume later.
                 val uri = downloadTargetMap[current.id]?.toString() ?: current.downloadFileUri
                 val savedBytes = bytesThisSession.coerceAtLeast(current.downloadedBytes)
@@ -1105,6 +1108,8 @@ class DownloadService : Service() {
                 // of waiting for the next heartbeat cycle.
                 probeNetworkNow()
                 if (!isNetworkConnected()) {
+                    // #R36 observability (6.6): the deliberate pause-with-message path.
+                    android.util.Log.i("DownloadSvc", "post-error network check → PAUSED id=${current.id.take(8)}")
                     val uri = downloadTargetMap[current.id]?.toString() ?: current.downloadFileUri
                     val savedBytes = bytesThisSession.coerceAtLeast(current.downloadedBytes)
                     if (uri != null && savedBytes > 0L) {

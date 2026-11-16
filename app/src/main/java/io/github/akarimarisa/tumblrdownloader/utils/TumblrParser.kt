@@ -91,6 +91,16 @@ object TumblrParser {
             .followRedirects(true)
             .followSslRedirects(true)
             .cookieJar(WebViewCookieJar())
+            // #R36: page-sized fetches must fail as IOException inside a hard
+            // cap — the defaults leave DNS/connect stalls long enough that the
+            // blog scan's bounded retries never exhaust and the card sits at
+            // 解析中 forever (zombie). callTimeout covers the WHOLE call
+            // including DNS; media downloads use DownloadService's own client
+            // and are unaffected.
+            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
 
         resolveProxyAddress()?.let { builder.proxy(it) }
 
@@ -420,12 +430,15 @@ object TumblrParser {
      * media.tumblr.com URLs from every JSON script block, relying on
      * [isLikelyPostMedia] (URL-level filtering) for noise removal.
      */
+    /** Shared by both JSON extractors — precompiled for the scan hot loop (#R43). */
+    private val JSON_MEDIA_URL_REGEX = Regex(
+        "https?://[^\"'\\s<>)\\]}]+media\\.tumblr\\.com[^\"'\\s<>)\\]}]+",
+        RegexOption.IGNORE_CASE
+    )
+
     private fun extractFromJsonRelaxed(html: String): List<String> {
         val urls = LinkedHashSet<String>()
-        val jsonMediaUrlRegex = Regex(
-            "https?://[^\"'\\s<>)\\]}]+media\\.tumblr\\.com[^\"'\\s<>)\\]}]+",
-            RegexOption.IGNORE_CASE
-        )
+        val jsonMediaUrlRegex = JSON_MEDIA_URL_REGEX
 
         fun extractFromText(raw: String) {
             jsonMediaUrlRegex.findAll(unescapeJsonText(raw)).forEach { m ->
@@ -488,10 +501,7 @@ object TumblrParser {
                 // relying on file extension patterns.  The JSON path filtering + noise
                 // tokens already provide sufficient precision; extension-based matching
                 // is too fragile (Tumblr uses .pnj for high-quality images).
-                val jsonMediaUrlRegex = Regex(
-                    "https?://[^\"'\\s<>)\\]}]+media\\.tumblr\\.com[^\"'\\s<>)\\]}]+",
-                    RegexOption.IGNORE_CASE
-                )
+                val jsonMediaUrlRegex = JSON_MEDIA_URL_REGEX
                 jsonMediaUrlRegex.findAll(trimmed).forEach { m ->
                     val url = m.value.trimEnd(')', ']', '}', ',', ';', '"', '\'')
                     if (url.isNotBlank()) {
@@ -792,8 +802,11 @@ object TumblrParser {
         return score + url.length
     }
 
+    /** Precompiled: per-call Pattern.compile in the per-candidate hot loop (#R43). */
+    private val SQUARE_RENDITION_REGEX = Regex("_\\d{2,4}sq(?=\\.[a-z0-9]+$)", RegexOption.IGNORE_CASE)
+
     private fun isSquareRendition(url: String): Boolean =
-        Regex("_\\d{2,4}sq(?=\\.[a-z0-9]+$)", RegexOption.IGNORE_CASE).containsMatchIn(url)
+        SQUARE_RENDITION_REGEX.containsMatchIn(url)
 
     private fun normalizeShareUrl(rawUrl: String): String {
         return sourceParamRegex.replace(normalizeText(rawUrl), "").trimEnd('?', '&', ' ')
