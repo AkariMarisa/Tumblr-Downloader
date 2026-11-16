@@ -1,11 +1,15 @@
 package io.github.akarimarisa.tumblrdownloader.model
 
 import android.app.Application
+import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.SystemClock
+import android.provider.MediaStore
+import java.io.File
 import androidx.annotation.VisibleForTesting
 import io.github.akarimarisa.tumblrdownloader.R
 import io.github.akarimarisa.tumblrdownloader.service.DownloadService
@@ -595,9 +599,118 @@ class DownloadStateManager private constructor(private val app: Application) {
         android.util.Log.d("DownloadSM", "processRestore: ${existing.size} existing + ${items.size} history = ${merged.size} merged")
         _items.value = merged
         dirty = true
+        // Sweep once per restore: today's flows clean their own pendings
+        // (finish / ENOSPC-fail / row removal — all device-verified), but
+        // orphans from crashes, deleted rows or older builds lingered
+        // forever (#R39). FAILED rows keep their partial file: their media
+        // id is in the snapshot, so Range resume (#7.9) stays intact.
+        sweepOrphanPendingFiles(merged)
         // ponytail: do NOT auto-start restored items — files from the previous
         // session still exist on disk.  Auto-starting would create "(1)" copies
         // via MediaStore's name conflict resolution.  User clicks Start manually.
+    }
+
+    /**
+     * #R39: delete the app's `.pending-*` partials whose media id matches no
+     * row (see [DownloadUtils.isOrphanPendingFileName]). Two sources feed the
+     * sweep because either can outlive the other:
+     *  - MediaStore rows, while the provider still tracks the entry, and
+     *  - a raw file walk of the app folder — `pm clear` drops the provider
+     *    rows (owner attribution) while the file itself survives, leaving a
+     *    zombie no query can see (observed on device).
+     * FAILED rows keep their partial: their media id is in the snapshot, so
+     * Range resume (#7.9) stays intact. Batch pendings live one level down in
+     * the per-blog subfolders, hence walk depth 2.
+     */
+    private fun sweepOrphanPendingFiles(rows: List<DownloadItem>) {
+        val knownIds = rows.map { DownloadUtils.mediaIdFromUrl(it.mediaUrl) }.toSet()
+        scope.launch {
+            var removed = 0
+            var walkListed = -1
+            var blocked = false
+            try {
+                withContext(Dispatchers.IO) {
+                    // (1) Entries still tracked by MediaStore.
+                    try {
+                        val projection = arrayOf(
+                            MediaStore.Downloads._ID,
+                            MediaStore.Downloads.DISPLAY_NAME
+                        )
+                        // The default folder plus any custom folder inside Download/.
+                        // Without READ_EXTERNAL the query only returns this app's own
+                        // entries anyway.
+                        val selection = "${MediaStore.Downloads.RELATIVE_PATH} LIKE ? AND " +
+                            "${MediaStore.Downloads.DISPLAY_NAME} LIKE '.pending-%'"
+                        app.contentResolver.query(
+                            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                            projection,
+                            selection,
+                            arrayOf("Download/%"),
+                            null
+                        )?.use { cursor ->
+                            val idIdx = cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID)
+                            val nameIdx = cursor.getColumnIndexOrThrow(MediaStore.Downloads.DISPLAY_NAME)
+                            while (cursor.moveToNext()) {
+                                val name = cursor.getString(nameIdx) ?: continue
+                                if (!DownloadUtils.isOrphanPendingFileName(name, knownIds)) continue
+                                val uri = ContentUris.withAppendedId(
+                                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                                    cursor.getLong(idIdx)
+                                )
+                                removed += if (app.contentResolver.delete(uri, null, null) > 0) 1 else 0
+                            }
+                        }
+                    } catch (e: Exception) {
+                        blocked = true
+                        android.util.Log.w("DownloadSM", "pending sweep (MediaStore) failed: ${e.message}")
+                    }
+
+                    // (2) Raw file walk for zombies with no provider row.
+                    try {
+                        val root = File(
+                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                            DownloadUtils.getDefaultDownloadFolderName(app)
+                        )
+                        val listing = runCatching { root.listFiles() }.getOrNull()
+                        android.util.Log.d(
+                            "DownloadSM",
+                            "sweep probe: root exists=${root.exists()} canRead=${root.canRead()} " +
+                                "list=${listing?.size ?: "null"} names=" +
+                                (listing?.take(4)?.joinToString { it.name.take(34) } ?: "-")
+                        )
+                        root.walkTopDown().maxDepth(2).forEach { f ->
+                            if (!f.isFile && !f.name.startsWith(".pending-")) return@forEach
+                            if (!f.isFile) {
+                                android.util.Log.d(
+                                    "DownloadSM",
+                                    "sweep probe: exists=${f.exists()} isFile=false name=${f.name.take(60)}"
+                                )
+                                return@forEach
+                            }
+                            if (!f.name.startsWith(".pending-")) return@forEach
+                            val orphan = DownloadUtils.isOrphanPendingFileName(f.name, knownIds)
+                            if (!orphan) return@forEach
+                            val ok = runCatching { f.delete() }.getOrDefault(false)
+                            android.util.Log.d(
+                                "DownloadSM",
+                                "sweep probe: delete=${ok} err name=${f.name.take(60)}"
+                            )
+                            if (ok) removed++ else blocked = true
+                        }
+                        walkListed = 1
+                    } catch (e: Exception) {
+                        blocked = true
+                        android.util.Log.w("DownloadSM", "pending sweep (file walk) failed: ${e.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DownloadSM", "pending sweep failed: ${e.message}")
+            }
+            android.util.Log.i(
+                "DownloadSM",
+                "pending sweep: walk=$walkListed removed=$removed blocked=$blocked (#R39)"
+            )
+        }
     }
 
     /**

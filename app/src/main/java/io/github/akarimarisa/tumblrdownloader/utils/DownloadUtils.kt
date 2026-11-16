@@ -65,6 +65,25 @@ object DownloadUtils {
      * Media id segment of a media URL — the middle part of every file name.
      * Shared by the queue title and the saved file so they cannot drift apart.
      */
+    /**
+     * #R39: true for a MediaStore `.pending-<store-id>-<display>` name whose
+     * media no longer has any queue/history row behind it (crashed sessions,
+     * rows deleted mid-write, pendings left by older builds). Matching is a
+     * `contains` on the row's media id so both naming generations — the
+     * legacy `post-<id>` and today's `<author>-<id>` — are recognised;
+     * ids shorter than 8 chars (the "media" fallback of [mediaIdFromUrl])
+     * never protect anything, so a malformed row cannot pin every pending
+     * file forever. Non-pending names are never orphans.
+     */
+    fun isOrphanPendingFileName(pendingName: String, knownMediaIds: Collection<String>): Boolean {
+        // Full MediaStore shape `.pending-<store-id>-…` — anything else (an
+        // ordinary file, a differently prefixed dot-file) is never touched.
+        if (!pendingShapeRegex.containsMatchIn(pendingName)) return false
+        return knownMediaIds.none { it.length >= 8 && pendingName.contains(it) }
+    }
+
+    private val pendingShapeRegex = Regex("^\\.pending-\\d+-")
+
     fun mediaIdFromUrl(mediaUrl: String): String {
         val uri = runCatching { Uri.parse(mediaUrl) }.getOrNull() ?: return "media"
         val scheme = uri.scheme?.lowercase(Locale.ROOT)

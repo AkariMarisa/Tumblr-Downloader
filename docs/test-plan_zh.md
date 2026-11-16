@@ -226,6 +226,6 @@
 | R36 | 断网后扫描与队列变僵尸 | 扫描卡永远停在「解析中」（不转出错/BLOCKED、恢复网络不自愈；暂停→开始能救活下载但扫描游标仍冻结——疑似 worker 异常被吞/activeJobs 泄漏）。下载侧：挂死的传输占住并发槽位冻结全队列，需 全部暂停→全部开始 救活（已实测） | ⬜ |
 | R37 | 登录 redirect 目标漏掉 slug 规范化 URL | Tumblr 把 `/<id>` 规范化成 `/<id>/slug`，精确匹配的 `isRedirectTarget` 永不自动完成、用户须手动点 完成 —— 已修（前缀/slug 匹配，提交 1ede60b），2.6 全链路实测通过 | ✅ |
 | R38 | `www.tumblr.com/blog/<name>` 形式链接被判无效 | Tumblr 自身的博客切换器分享出的链接带 `blog/` 前缀，而锚点正则只允许单段路径 —— 已修复（可选 `blog/` 前缀）+ 单元测试，5.20 用 akari-test-blog 真机验证通过 | ✅ |
-| R39 | 孤儿 `.pending-*` 文件从不清扫 | Downloads 里躺着 8 个 11–13 日的遗留 pending（旧 `post-*` 命名）永不清除；今日各路径（完成 / ENOSPC 失败 / 下载中删行）都会清自己的 pending（已验证）—— 建议启动时清扫无对应行的 pending | ⬜ |
+| R39 | 孤儿 `.pending-*` 文件从不清扫 | Downloads 里 8 个 11–13 日的遗留 pending（旧 `post-*` 命名）永不消失 —— **已修复并真机验证**：每次 restore 后双源清扫（MediaStore 行 + 应用目录文件走查），按 mediaId 与行集合比对判定孤儿；真机三段证据：行存在 → `removed=0`（Range 续传受保护，#7.9）→ UI 删行且服务未运行时 pending 残留（真实孤儿配方，顺带发现 remove 的清理依赖服务在跑）→ 再启动 `delete=true removed=1 PENDING_GONE`。能力边界：`pm clear` 清掉 owner 归属与 provider 行后，僵尸文件对应用完全不可见（文件/API 双盲），无法自查（本次由 shell 手工清理） | ✅ |
 | R40 | 完成汇总可能少计 | 干净 Android 15 设备上汇总显示「成功:3」而 4 行/4 文件全部完成 —— 文件 23:16:28 前全部落盘，23:16:29（ACTIVE）与 23:16:34（SUMMARY）两次发布都仍写 3，此后无任何再发布；有一个完成事件被丢，疑与 R41 的重复 START 竞态相关 —— 展示的 成功：X，失败：Y 会误导用户 | ⬜ |
 | R41 | 同一项重复收到 ACTION_START | 同一 item id 连续被启动两次（Pixel 3：4 个项收到 6 次 START，23:16:22–27；主手机：2fea4fa7 在 20:43:42.460 与 20:43:43.471 各启动一次）—— 每个多余 START 还会走一遍「取消汇总」分支（与 R27 相邻）；根因在入队/启动路径 | ⬜ |
