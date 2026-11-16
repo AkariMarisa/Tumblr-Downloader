@@ -1413,6 +1413,8 @@ class DownloadStateManager private constructor(private val app: Application) {
                 localizedString(R.string.parse_error_generic, msg.substringAfter("Page parse failed: "))
             msg.startsWith("No downloadable media found") ->
                 localizedString(R.string.parse_no_new_media)
+            msg.startsWith("Post not found or deleted") ->
+                localizedString(R.string.parse_post_not_found)
             else -> msg
         }
     }

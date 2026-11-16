@@ -305,6 +305,14 @@ object TumblrParser {
 
                 val html = response.body
                 val source = normalizeShareUrl(postUrl)
+                // #R30: pages without any post payload (deleted / 404 / server
+                // error pages) must fail with an explicit message instead of
+                // scraping their decorative imagery into a picker (case 2.27).
+                val postPresent = initialStateScriptRegex.containsMatchIn(html) ||
+                    applicationJsonScriptRegex.containsMatchIn(html)
+                if (!postPresent) {
+                    return@runCatching TumblrShareParseResult.Error("Post not found or deleted")
+                }
                 val candidates = run {
                     val structured = extractFromHtml(html, structuredOnly = true, quality = quality)
                     if (structured.isNotEmpty()) {
@@ -375,7 +383,7 @@ object TumblrParser {
         }
     }
 
-    private fun extractFromHtml(
+    internal fun extractFromHtml(
         html: String,
         preferVideo: Boolean = false,
         structuredOnly: Boolean = false,
@@ -386,15 +394,17 @@ object TumblrParser {
             addAll(extractFromJsonScripts(html))
 
             if (!structuredOnly) {
-                addAll(extractImageCandidates(html))
-                addAll(extractVideoCandidates(html))
-                if (!preferVideo) {
-                    addAll(extractFromMeta(imageMetaRegex, html))
-                    addAll(extractFromMeta(videoMetaRegex, html))
-                } else {
-                    addAll(extractFromMeta(videoMetaRegex, html))
-                    addAll(extractFromMeta(imageMetaRegex, html))
+                // #R30: the page-wide scan used to return blog covers
+                // (og:image) and 404-page art as "post media" (cases 2.27/2.28).
+                // Scope the HTML scan to actual post containers and stop
+                // scraping head-level og:image entirely — a real post's media
+                // is already carried by the structured JSON above.
+                val postHtml = scopeToPostContent(html)
+                if (postHtml.isNotEmpty()) {
+                    addAll(extractImageCandidates(postHtml))
+                    addAll(extractVideoCandidates(postHtml))
                 }
+                addAll(extractFromMeta(videoMetaRegex, html))
             }
         }
 
@@ -406,6 +416,27 @@ object TumblrParser {
                 .distinct(),
             quality
         )
+    }
+
+    /** #R30: post-body regions of a page (articles first, figures as fallback). */
+    private val articleRegex = Regex(
+        "<article\\b[^>]*>.*?</article>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+    private val figureRegex = Regex(
+        "<figure\\b[^>]*>.*?</figure>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+
+    /**
+     * #R30: the part of [html] that may contain post media. Empty when the
+     * page has no post container at all (404 / server-error pages) — callers
+     * then skip page-wide scraping instead of collecting decorative art.
+     */
+    internal fun scopeToPostContent(html: String): String {
+        val articles = articleRegex.findAll(html).joinToString("\n") { it.value }
+        if (articles.isNotEmpty()) return articles
+        return figureRegex.findAll(html).joinToString("\n") { it.value }
     }
 
     private fun extractFromInitialState(html: String): List<String> {
