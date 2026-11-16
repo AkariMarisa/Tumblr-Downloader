@@ -63,8 +63,8 @@
 | 2.24 | 分享博客链接带前后文字 | 博客流程仍能启动（类型选择弹窗）—— 修复后实测：「推荐这个博客 https://www.tumblr.com/blog/akari-test-blog 空空如也」→ 类型选择弹窗（`findBlogUrlInText` 提取后路由，R31） | 📱 |
 | 2.25 | `tmblr.co` 短链 | 字段路径弹无效链接提示 ✓；分享路径不得静默无反应（R28）—— 修复后：短链被识别 → 网络跟随重定向 → 失败给本地化 Toast「无法解析短链接。」（真机实拍）；成功腿待真实 tmblr 链接 E2E | 📱 |
 | 2.26 | 带 `?source=` / `utm_*` 参数的链接 | 正常解析（`sourceParamRegex` 会剥离 Tumblr 自带参数）—— 实测：带 `utm_source/utm_medium/ref` 的分享直接弹选择器（已选 4/4） | 📱 |
-| 2.27 | 已删除帖子（404）/ 服务器错误 | 明确错误提示，不静默返回空、不崩溃 | ❌ |
-| 2.28 | 纯文字无媒体的帖子 | 给出「无媒体」提示，而不是弹一个空选择器 | ❌ |
+| 2.27 | 已删除帖子（404）/ 服务器错误 | 明确错误提示，不静默返回空、不崩溃 —— **修复后实测（Pixel 3，假删帖）**：Toast「该链接未识别到可下载媒体」；无载荷页另有新映射「该帖已被删除或不存在。」（parse_post_not_found），无选择器、无崩溃；单测覆盖无容器页 scope 归零 | 📱 |
+| 2.28 | 纯文字无媒体的帖子 | 给出「无媒体」提示，而不是弹一个空选择器 —— 分层验证：单测（纯文字页含 og:image → 提取为空、封面不被抓）+ 真机（Empty 结果 → 友好 Toast「该链接未识别到可下载媒体」、无空选择器、无崩溃；假删帖同路径触发）；活素材三连试均偏（死帖/登录重定向/内嵌 GIF）已记录 | 📱 |
 
 ## 3. 下载前选择器
 
@@ -217,7 +217,7 @@
 | R27 | 完成后的汇总通知表现不一致 | 新日志验证应用侧代码正确：publishSummary 在排空期间被反复调用，自然完成路径上其后无取消；onStartCommand 追踪显示 ACTION_START 是在*入队前*取消汇总（而非排空后）。当前不出现属测试环境污染：通知 id 10002 挂在系统「Pending snoozed」存储里（时间戳约 2094 年，源于此前清理通知时的 snooze 循环），重启后仍在（已验证），unsnooze 无法触及该存储 —— 历史 1 现 3 不现的观察早于该循环，仍部分无法解释 | ⬜ |
 | R28 | `tmblr.co` 短链不被识别 | 分享路径已实锤静默；字段路径有无效提示 —— **已修复**：`shareUrlRegex` 识别 tmblr.co、`parseShareUrl` 网络跟随重定向后再分类、失败/无 URL 分支一律本地化 Toast（不再静默）；真机验证失败腿「无法解析短链接。」；**成功腿 E2E ✓**：真实短链 `tmblr.co/Z5-RFwSEjDJR` → 日志 `short link resolved → historicalmyths.tumblr.com/post/30311503067…` → 选择器「已选 1/1」 | ✅ |
 | R29 | 下载通知落在静音分组 | 真机根因确认：通道为 IMPORTANCE_LOW → EMUI 折进静音组折叠 chips（原生 Android 15 上 LOW 在静音组内仍单独可见）；真机实验（调「默认」→ 显眼且动作可点，调回 → 再次被埋）验证了修复方向。**已修复**：改用新通道 id `tumblr_download_channel_v2`（IMPORTANCE_DEFAULT）+ 一次性清理旧通道 —— 必须换 id，因为已存在通道的重要性应用无法修改，且删除在仍有通知引用时不生效（两者均真机观察到）。Pixel 3 验证：日志 `v2 importance=3`、NotificationRecord importance=3、汇总通知置顶显示于通知栏主区（原先被埋进静音组）。EMUI 主手机同日再验：迁移日志（legacy deleted / v2 importance=3）、NotificationRecord importance=3、进度通知「kthingz-… · 现在」以独立大行实拍于通知栏主区 | ✅ |
-| R30 | 纯文字/已删除帖子弹出选择器（页面级杂散图） | 本无媒体，解析器却抓取了博客**封面（og:image）**——已实证：纯文字帖抓到封面横幅（1419×640）、404 页抓到页面配图；应把提取范围限制到帖子内容节点（2.27、2.28） | ⬜ |
+| R30 | 纯文字/已删除帖子弹出选择器（页面级杂散图） | 本无媒体，解析器却抓取了博客**封面（og:image）**——已实证：纯文字帖抓到封面横幅（1419×640）、404 页抓到页面配图；应把提取范围限制到帖子内容节点（2.27、2.28）—— **已修复并验证**：`extractFromHtml` 页面扫描限定在 `<article>/<figure>` 容器内（新 `scopeToPostContent`），彻底停抓 head 级 og:image；无载荷页（无 InitialState/json）直接报「Post not found or deleted」→ 本地化 `parse_post_not_found`；真机：假删帖出友好 Toast 无选择器、真实 kthingz 帖照常弹选择器（回归 ✓），3 条新单测覆盖 | ✅ |
 | R31 | 博客链接带前后文字分享时静默无反应 | `isBlogUrl` 判原文，带评论的博客分享掉进帖子路径后无声失败（2.24）—— **已修复**：`BlogFeedParser.findBlogUrlInText` 从自由文本提取博客链接后路由，分享无 URL 时弹无效提示；真机 2.24 通过、单测覆盖 | ✅ |
 | R32 | 清空历史后重下产生递增的 `(N)` 副本 | 博客子目录文件每次重下堆出 `(1)/(2)…`，而根目录单帖文件却原地覆盖 —— 存在性查询疑似漏了子目录路径（R4 不一致）；夜间实测扩展：平铺单帖文件清史后同样复现（qqchurch 视频连下 5 次堆出 (1)–(5)），说明覆盖依赖历史行记录，清史后走 MediaStore 插入冲突 → `(N)`；**真根因（探针实锤）**：MediaStore 行会丢失 owner 归属（owner=NULL，疑与重启/重扫相关），无 READ 权限的本应用对这类行「查询不可见 → 漏检 → insert 冲突 → (1)」且「路径读/删全被拒」（exists=true canRead=false delete=false）——先前 Android15 反例结论作废（Pixel 实测同样会堆 (N)）。**已修复并 E2E 验证（用户选定 SAF 方案）**：首启引导一次「授权下载文件夹」（去授权/暂不，仅一次）→ 持久化树授权 → 下载时经 SAF 查找旧文件并原地覆写；真机证据 `R32: SAF overwrite name=qqchurch-….mov` + 重下后 count=1、mtime 刷新、无 (2)、行已完成。路径预删分支保留兜底（对归属完好文件有效） | ✅ |
 | R33 | 「Private Tumblr posts are not supported yet.」为英文硬编码 | 中文界面弹英文 Toast —— 字符串应入资源（2.6/私密帖）—— 实为已覆盖：`DownloadStateManager.localizeError` 将英文字面量映射到 `R.string.parse_private_not_supported`（英文串只是内部 key），真机实拍中文 Toast「暂不支持下载私密帖子。」→ 结案 | ✅ |
