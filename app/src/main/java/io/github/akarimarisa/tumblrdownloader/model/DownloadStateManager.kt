@@ -114,6 +114,8 @@ class DownloadStateManager private constructor(private val app: Application) {
     /** Items for which the UI pause command was sent but the service has not
      * emitted its final PAUSED checkpoint yet. */
     private val pendingPauseIds = mutableSetOf<String>()
+    /** #R41: ids with a non-explicit ACTION_START already in flight (see [sendStartIntent]). */
+    private val startIntentsInFlight = mutableSetOf<String>()
 
     private var isParsing = false
 
@@ -811,6 +813,7 @@ class DownloadStateManager private constructor(private val app: Application) {
     private fun processRemove(itemId: String) {
         val item = _items.value.find { it.id == itemId }
         item?.let { CompletedMediaStore.remove(app, completedStoreKey(item)) }
+        startIntentsInFlight.remove(itemId) // #R41: no marker leak for removed rows
         _items.value = _items.value.filterNot { it.id == itemId }
         dirty = true
         sendRemoveIntent(itemId)
@@ -838,6 +841,7 @@ class DownloadStateManager private constructor(private val app: Application) {
 
         toRemove.forEach { item ->
             CompletedMediaStore.remove(app, completedStoreKey(item))
+            startIntentsInFlight.remove(item.id) // #R41
         }
         _items.value = _items.value.filterNot(::isClearable)
         dirty = true
@@ -1098,6 +1102,16 @@ class DownloadStateManager private constructor(private val app: Application) {
         }
         dirty = true
 
+        // #R41: free the in-flight start marker on terminal/manual states.
+        // A gap-wait QUEUED callback keeps it — that is exactly the state that
+        // used to make the pump re-send ACTION_START for the same item.
+        when (_items.value.find { it.id == update.id }?.status) {
+            DownloadStatus.COMPLETED,
+            DownloadStatus.FAILED,
+            DownloadStatus.PAUSED -> startIntentsInFlight.remove(update.id)
+            else -> Unit
+        }
+
         // When a terminal status (COMPLETED/FAILED/PAUSED) arrives for the
         // currently-DOWNLOADING item, try to start the next queued one.
         // There is no global-pause gate here: pause-all marks every pre-existing
@@ -1151,6 +1165,11 @@ class DownloadStateManager private constructor(private val app: Application) {
             val next = _items.value
                 .filter { it.status == DownloadStatus.QUEUED }
                 .minByOrNull { it.createdAt } ?: return
+            // #R41 diagnostic
+            android.util.Log.i(
+                "DownloadSM",
+                "pump pick id=${next.id.take(8)} running=$running max=${getMaxConcurrentDownloads()}"
+            )
 
             val idx = _items.value.indexOfFirst { it.id == next.id }
             val started = next.copy(
@@ -1165,6 +1184,28 @@ class DownloadStateManager private constructor(private val app: Application) {
     // ── Intent helpers ──────────────────────────────────────────────────
 
     private fun sendStartIntent(item: DownloadItem, explicitResume: Boolean = false) {
+        // #R41: the service emits status=QUEUED while an item waits for the
+        // rate-limit gap ("等待 1040ms…"), processProgress writes that back to
+        // the row, and the line-1112 pump then re-picked the SAME row — every
+        // gap emission produced another ACTION_START (up to 3 observed per
+        // item), which also re-ran the cancel-summary branch (R27-adjacent)
+        // and raced completion bookkeeping (R40). Non-explicit (pump) sends
+        // are therefore allowed only once per in-flight item; explicit user
+        // starts/resumes always bypass so a stuck row can still be restarted.
+        if (!explicitResume && item.id in startIntentsInFlight) {
+            android.util.Log.i("DownloadSM", "sendStartIntent SKIP dup id=${item.id.take(8)} (#R41)")
+            return
+        }
+        startIntentsInFlight.add(item.id)
+        // #R41 diagnostic: every duplicate ACTION_START names its callers
+        // (4 frames with line numbers — retraced against mapping.txt).
+        android.util.Log.i(
+            "DownloadSM",
+            "sendStartIntent id=${item.id.take(8)} explicit=$explicitResume " +
+                "caller=${Throwable().stackTrace.take(4).joinToString(" <- ") {
+                    "${it.className.substringAfterLast('.')}#${it.methodName}:${it.lineNumber}"
+                }}"
+        )
         val intent = Intent(app, DownloadService::class.java).apply {
             action = DownloadService.ACTION_START
             putExtra(DownloadService.EXTRA_EXPLICIT_RESUME, explicitResume)

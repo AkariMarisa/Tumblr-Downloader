@@ -429,10 +429,19 @@ class DownloadService : Service() {
                 if (intent?.getBooleanExtra(EXTRA_EXPLICIT_RESUME, false) == true) {
                     globalPauseRequested = false
                 }
+                // A new session opens only from the SUMMARY state — i.e. the
+                // previous batch was finished and summarized. The old emptiness
+                // check misfired with a serial queue: each next item's START
+                // landed in a momentary all-idle window and wiped the
+                // completions recorded so far (#R40: the summary read 成功:1
+                // while all 4 rows had finished — every inter-item START called
+                // "session CLEAR sizeBefore=1/2").
+                val openingNewSession = notificationMode == NotificationMode.SUMMARY
                 notificationMode = NotificationMode.ACTIVE
                 notificationManager.cancel(SUMMARY_NOTIFICATION_ID)
                 android.util.Log.i("DownloadSvc", "cancel summary: ACTION_START path")
-                if (activeJobs.isEmpty() && queuedItemIds.isEmpty() && inHandItemIds.isEmpty()) {
+                if (openingNewSession) {
+                    android.util.Log.i("DownloadSvc", "session CLEAR reason=new-session sizeBefore=${sessionCompletedIds.size}")
                     sessionCompletedIds.clear()
                     sessionFailedIds.clear()
                     notificationItems.clear()
@@ -491,6 +500,8 @@ class DownloadService : Service() {
             ACTION_CLEAR_ALL -> {
                 globalPauseRequested = false
                 notificationMode = NotificationMode.ACTIVE
+                // #R40 diagnostic
+                android.util.Log.i("DownloadSvc", "session CLEAR reason=ACTION_CLEAR_ALL sizeBefore=${sessionCompletedIds.size}")
                 sessionCompletedIds.clear()
                 sessionFailedIds.clear()
                 // Cancel all active downloads
@@ -1670,7 +1681,11 @@ class DownloadService : Service() {
 
     private fun emitProgress(item: DownloadItem) {
         when (item.status) {
-            DownloadStatus.COMPLETED -> sessionCompletedIds.add(item.id)
+            DownloadStatus.COMPLETED -> {
+                sessionCompletedIds.add(item.id)
+                // #R40 diagnostic
+                android.util.Log.i("DownloadSvc", "session add COMPLETED id=${item.id.take(8)} size=${sessionCompletedIds.size}")
+            }
             DownloadStatus.FAILED -> sessionFailedIds.add(item.id)
             else -> Unit
         }
