@@ -159,7 +159,7 @@ Device cases are scripted with `adb` (`uiautomator dump` for assertions, `logcat
 | 8.5 | Image/video quality tiers | Picker/parse use the chosen rendition — same video: 最高可用 12.4 MB vs 480p 3.7 MB | 📱 |
 | 8.6 | Blog scan interval / long threshold | Affects pacing and when 5.3 fires | 📱 |
 | 8.7 | 清空自动检测缓存 | Next clipboard link is detected again | 📱 |
-| 8.8 | Clear cache / logout | Cookies removed, login state reset | ⬜ |
+| 8.8 | Clear cache / logout | Cookies removed, login state reset—— **实测（主手机，用户配合登出）**：① 抽屉实拍「登录/未登录」、退出项消失（登录态重置 ✓）；② 行为级：2011 老帖短链 → Toast「登录后可重试。」且无选择器（服务器仅在请求无会话 cookie 时回 login_required → cookies 已清 ✓），同刻两条公开帖照常解析（`tmblr.co/ZEH9lx2jYaZ25`→已选 7/7、`tmblr.co/Z5-RFwSEjDJR`→已选 1/1）证明非网络/解析器故障；③ 代码路径核对：`TumblrCookieStore.clear()` = Room `cookieDao.deleteAll` + `TumblrAccountStore.clear` + `CookieManager.removeAllCookies/flush`。「Clear cache」半边由 8.7（清空自动检测缓存）覆盖（应用内仅此一个清缓存入口）。重登后同链接翻转复核待用户登录 | 📱 |
 | 8.9 | Whole core flow while the UI is English | UI strings verified English (tabs/hint/buttons) and restored to system default after; toast/notification share the same resources | 📱 |
 
 ## 9. Sidebar, viewer, notifications
