@@ -31,6 +31,11 @@ class MigrationTest {
     fun setUp() {
         context = ApplicationProvider.getApplicationContext<Context>()
         runBlocking {
+            // #R42: the Application fires its startup migration on a real IO
+            // thread; join it first so it cannot interleave with (or wipe)
+            // the legacy prefs / Room rows this test is about to seed.
+            (context as? io.github.akarimarisa.tumblrdownloader.TumblrDownloaderApplication)
+                ?.startupJob?.join()
             val db = AppDatabase.getInstance(context)
             db.downloadHistoryDao().deleteAll()
             db.cookieDao().deleteAll()

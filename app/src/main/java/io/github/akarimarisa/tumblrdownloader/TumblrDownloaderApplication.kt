@@ -8,14 +8,47 @@ import io.github.akarimarisa.tumblrdownloader.utils.DownloadHistoryStore
 import io.github.akarimarisa.tumblrdownloader.utils.LocaleHelper
 import io.github.akarimarisa.tumblrdownloader.utils.TumblrCookieStore
 
+import android.util.Log
+import androidx.annotation.VisibleForTesting
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 class TumblrDownloaderApplication : Application() {
 
-    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /**
+     * The startup migration is fire-and-forget on a real IO thread, so it can
+     * outlive whatever started it (#R42). Without a handler here an uncaught
+     * failure (1) crashes the process in production, and (2) under Robolectric
+     * leaks into coroutines-test's global ExceptionCollector and fails
+     * whichever `runTest` starts next with UncaughtExceptionsBeforeTest —
+     * the four "flaky" tests were random victims of this one leak (the
+     * suppressed stack always pointed at TumblrCookieStore.migrateFromSharedPrefs
+     * NPE-ing on ContextImpl statics after the sandbox was torn down).
+     * The handler body must never throw: a throwing handler falls back to
+     * that same global path (CoroutineExceptionHandlerKt offset 37).
+     */
+    private val appScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, t ->
+            try {
+                Log.w("TumblrApp", "Startup task failed", t)
+            } catch (_: Throwable) {
+                // Logging itself may be unavailable once the sandbox or the
+                // process is going down — swallowing is the point here.
+            }
+        }
+    )
+
+    /**
+     * #R42: tests join this before seeding prefs/Room so the migration
+     * (real Dispatchers.IO) cannot interleave with their assertions.
+     */
+    @VisibleForTesting
+    internal var startupJob: Job? = null
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -27,7 +60,7 @@ class TumblrDownloaderApplication : Application() {
         // Activity is created so DayNight picks the right resources.
         AppCompatDelegate.setDefaultNightMode(ThemeModePrefs.read(this).nightMode)
         registerClipboardListener(this)
-        appScope.launch {
+        startupJob = appScope.launch {
             // Migrate old SharedPreferences data to Room (no-op if already migrated).
             DownloadHistoryStore.migrateFromSharedPrefs(this@TumblrDownloaderApplication)
             TumblrCookieStore.migrateFromSharedPrefs(this@TumblrDownloaderApplication)
