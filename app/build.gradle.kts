@@ -18,8 +18,8 @@ android {
         applicationId = "io.github.akarimarisa.tumblrdownloader"
         minSdk = 30
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.0.7"
+        versionCode = 9
+        versionName = "1.0.8"
     }
 
     signingConfigs {
