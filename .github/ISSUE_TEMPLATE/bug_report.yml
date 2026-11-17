@@ -1,0 +1,111 @@
+name: Bug report / 缺陷反馈
+description: Something is broken — give us the data needed to reproduce and fix it / 程序出了问题，请提供可复现、可定位的数据
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! **Please fill in every required field** — issues without version / system / logs are almost impossible to act on (see #24 for the kind of info we need).
+        感谢反馈！**请填完所有必填项**——缺少版本、系统、日志的报告几乎无法排查。
+
+  - type: input
+    id: version
+    attributes:
+      label: App version / 应用版本
+      description: "Settings → About (版本), or the release page you installed from / 设置 → 关于 页面的「版本」，或你安装来源的发布页"
+      placeholder: "1.0.8 (versionCode 9)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_source
+    attributes:
+      label: Install source / 安装来源
+      options:
+        - F-Droid
+        - GitHub Release APK
+        - Built from source / 自行编译
+        - Other / 其他
+    validations:
+      required: true
+
+  - type: input
+    id: android
+    attributes:
+      label: Android version / Android 版本
+      placeholder: "e.g. Android 14 (API 34)"
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device / 设备型号
+      placeholder: "e.g. Pixel 8 / Xiaomi 14 (HyperOS 1.0)"
+    validations:
+      required: true
+
+  - type: input
+    id: link
+    attributes:
+      label: Post or blog URL involved / 相关帖子或博客链接
+      description: Strongly recommended for download / parse failures — without the exact link we cannot reproduce / 下载或解析类问题**强烈建议**填写，没有链接我们无法复现
+      placeholder: "https://www.tumblr.com/… or https://tmblr.co/…"
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: What happened / 复现步骤与实际现象
+      description: Exact steps, then what actually happened / 一步步操作 + 实际结果
+      placeholder: |
+        1. …
+        2. …
+        Actual / 实际: …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior / 期望行为
+      description: What should have happened instead / 本来应该是什么结果
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        **How to capture logs / 如何抓取日志** — connect the phone with USB debugging enabled, then run on your computer:
+        ```
+        adb logcat -d -s TumblrParser:V DownloadSM:V DownloadSvc:V BlogDM:V MainActivity:D TumblrApp:V TumblrAccount:V
+        ```
+        No adb? Use Developer options → Take bug report, or paste the most relevant lines you can find.
+        没有 adb？可用「开发者选项 → 错误报告」，或直接粘贴你能找到的关键日志行。
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / 日志
+      description: Paste the command output (or the most relevant lines) / 粘贴命令输出（或最关键的日志行）
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots / 截图
+      description: Drag & drop images here — UI bugs (wrong progress, missing rows, …) are hard to diagnose without them / 直接拖入图片——界面类问题（进度错误、列表缺行等）没有截图很难判断
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist / 自检
+      options:
+        - label: I searched existing issues and this is not a duplicate / 已搜索过已有 issue，确认非重复
+          required: true
+        - label: I can reproduce this on the latest release / 在最新 Release 上仍可复现
+          required: true

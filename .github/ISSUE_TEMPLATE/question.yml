@@ -1,0 +1,52 @@
+name: Usage question / 使用疑问
+description: How do I use something? A setting is confusing / 某个功能怎么用？哪个设置没看懂
+title: "question: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check the in-app **教程 (How to use)** sidebar first — it covers the picker, blog cards and settings.
+        提交前请先查看应用内侧边栏的**使用教程**——选择器、博客卡片、设置项都在里面。
+
+  - type: input
+    id: version
+    attributes:
+      label: App version / 应用版本
+      description: "Settings → About (版本) / 设置 → 关于 页面的「版本」"
+      placeholder: "1.0.8 (versionCode 9)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do? / 你想实现什么
+      description: Describe your goal, not just the button you clicked / 描述你的目标，而不只是点了哪个按钮
+    validations:
+      required: true
+
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened instead / 实际发生了什么
+      description: What did you see or expect? Include the link involved if any / 看到了什么、期望什么？涉及链接请附上
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (if relevant) / 日志（如与问题相关）
+      description: "adb logcat -d -s TumblrParser:V DownloadSM:V DownloadSvc:V BlogDM:V MainActivity:D — paste output below"
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist / 自检
+      options:
+        - label: I searched existing issues and the in-app tutorial / 已搜索过已有 issue 并查看了应用内教程
+          required: true

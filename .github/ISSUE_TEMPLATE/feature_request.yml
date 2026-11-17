@@ -1,0 +1,53 @@
+name: Feature request / 功能建议
+description: Suggest a new feature or an improvement / 建议新功能或改进现有功能
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before asking, please check the in-app **教程 (How to use)** sidebar — batch blog download, the media picker and auto-download may already cover your case.
+        提交前请先查看应用内侧边栏的**使用教程**——博客批量下载、媒体选择器、自动下载可能已覆盖你的需求。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case / 问题或使用场景
+      description: What are you trying to do, and what gets in the way? (the "why" — this is the most important field) / 你想完成什么、目前哪里做不到？（这是最重要的字段：「为什么需要」）
+      placeholder: "e.g. I want to … but the app …"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution / 期望的方案
+      description: How should it work? / 希望它怎样工作
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered / 你考虑过的替代方案
+      description: Workarounds you use today, or other apps' approaches / 目前的变通做法，或其他应用的同类实现
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context / 补充材料
+      description: Screenshots, example posts, links to similar features elsewhere / 截图、示例帖子、其他应用同类功能的参考
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist / 自检
+      options:
+        - label: I searched existing issues and this is not a duplicate / 已搜索过已有 issue，确认非重复
+          required: true
+        - label: I checked the in-app tutorial and this feature does not exist yet / 已查看应用内教程，确认该功能尚不存在
+          required: true
