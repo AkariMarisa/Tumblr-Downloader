@@ -110,6 +110,7 @@
     <string name="parse_private_not_supported">暂不支持下载私密帖子。</string>
     <string name="parse_link_resolve_failed">无法解析短链接。</string>
     <string name="parse_post_not_found">该帖已被删除或不存在。</string>
+    <string name="parse_browser_check">站点正在执行本应用无法通过的自动访问验证。请先在浏览器中打开该链接，稍后再试。</string>
     <string name="saf_grant_title">授权下载文件夹</string>
     <string name="saf_grant_message">选择一次 TumblrDownloader 文件夹，重复下载将覆盖旧文件，而不是再存一个「(1)」副本。系统选择器只会打开这一次。</string>
     <string name="saf_grant_positive">去授权</string>

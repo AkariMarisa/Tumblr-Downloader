@@ -2,6 +2,7 @@ package io.github.akarimarisa.tumblrdownloader.utils
 
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -77,5 +78,29 @@ class TumblrParserTest {
         val html = "<html><head><meta property=\"og:image\" content=\"https://64.media.tumblr.com/404art.jpg\"/></head><body><h1>Not found</h1><img src=\"https://64.media.tumblr.com/404art.jpg\"/></body></html>"
         assertEquals("", TumblrParser.scopeToPostContent(html))
         assertTrue(TumblrParser.extractFromHtml(html).isEmpty())
+    }
+
+    @Test
+    fun `browser challenge page is recognised`() {
+        // #R44: the real 403 face captured on device — a JS proof-of-work
+        // challenge an HTTP client can never pass, logged in or out.
+        val challenge = """
+            <!DOCTYPE html><title>Checking your browser...</title>
+            <noscript><p>Javascript required</p></noscript>
+            <script src="/__challenge/probes.js?v=c3301fdb5ac5"></script>
+            <script>window.HASHCASH_CONFIG={prefix:"0000",minTime:1500,headline:"Checking your browser"};</script>
+        """.trimIndent()
+        assertTrue(TumblrParser.isBrowserChallenge(challenge))
+        // The markers must not fire on ordinary pages.
+        assertFalse(
+            "normal post page must not read as a challenge",
+            TumblrParser.isBrowserChallenge(
+                "<html><head><title>Just a post</title></head><body><article>hello</article></body></html>"
+            )
+        )
+        assertFalse(
+            "login page must not read as a challenge",
+            TumblrParser.isBrowserChallenge("<html><title>Log in</title><input type=\"password\"/></html>")
+        )
     }
 }

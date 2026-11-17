@@ -257,6 +257,13 @@ class DownloadStateManager private constructor(private val app: Application) {
                             routeParsedMedia(result.media, autoDownloadAll)
                         }
                         is TumblrShareParseResult.LoginRequired -> {
+                            // Diagnostic (#8.8 follow-up): the message is the
+                            // branch signature — log it so a login-wall from a
+                            // missing session is distinguishable from material.
+                            android.util.Log.i(
+                                "DownloadSM",
+                                "enqueueFromUrl: LoginRequired msg=\"${result.message}\" url=${result.url.take(90)} retryAfterLogin=$retryAfterLogin"
+                            )
                             if (retryAfterLogin) {
                                 retryAfterLogin = false
                                 android.util.Log.w("DownloadSM", "LoginRequired after login retry — giving up")
@@ -1415,6 +1422,8 @@ class DownloadStateManager private constructor(private val app: Application) {
                 localizedString(R.string.parse_no_new_media)
             msg.startsWith("Post not found or deleted") ->
                 localizedString(R.string.parse_post_not_found)
+            msg.startsWith("Browser verification required") ->
+                localizedString(R.string.parse_browser_check)
             else -> msg
         }
     }

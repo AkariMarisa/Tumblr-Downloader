@@ -86,6 +86,41 @@ object TumblrParser {
         "frame1"
     )
 
+    /**
+     * #R44-adjacent: Android's `getaddrinfo` is a native call that OkHttp's
+     * callTimeout cannot interrupt — under a dead-tunnel DNS blackhole the
+     * parse hung for minutes with `isParsing` stuck (every later share was
+     * rejected as "already parsing"). Bound DNS on a real thread so a stall
+     * surfaces as a normal IOException instead of a zombie parse.
+     */
+    private val boundedDns = object : okhttp3.Dns {
+        override fun lookup(host: String): List<java.net.InetAddress> {
+            val task = dnsExecutor.submit(
+                java.util.concurrent.Callable {
+                    java.net.InetAddress.getAllByName(host).toList()
+                }
+            )
+            return try {
+                task.get(8, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (e: java.util.concurrent.TimeoutException) {
+                task.cancel(true)
+                throw java.io.IOException("DNS lookup timed out for $host")
+            } catch (e: java.util.concurrent.ExecutionException) {
+                throw (e.cause as? java.io.IOException)
+                    ?: java.io.IOException("DNS failed for $host: ${e.cause?.message}")
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw java.io.IOException("DNS lookup interrupted for $host")
+            }
+        }
+    }
+
+    /** Daemon pool backing [boundedDns]; threads linger only while stalled. */
+    private val dnsExecutor: java.util.concurrent.ExecutorService =
+        java.util.concurrent.Executors.newCachedThreadPool { r ->
+            Thread(r, "tumblr-dns").apply { isDaemon = true }
+        }
+
     internal val httpClient by lazy {
         val builder = OkHttpClient.Builder()
             .followRedirects(true)
@@ -101,6 +136,10 @@ object TumblrParser {
             .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
             .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
             .callTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+            // #R44: callTimeout cannot interrupt native getaddrinfo — a dead
+            // DNS tunnel otherwise parks the parse for minutes with isParsing
+            // stuck (seen on device: >3 min zombie, later shares rejected).
+            .dns(boundedDns)
 
         resolveProxyAddress()?.let { builder.proxy(it) }
 
@@ -174,6 +213,13 @@ object TumblrParser {
                 // Don't return immediately — private posts don't have oEmbed
                 // representations even when authenticated. If cookies are
                 // present, fall through to page HTML which is more reliable.
+                // Diagnostic (#R42/8.8 follow-up): which stage bailed and
+                // whether an auth session was even attached to the request.
+                android.util.Log.i(
+                    TAG,
+                    "parseShareUrl: oEmbed LoginRequired (hasTumblrCookies=${hasTumblrCookies()}) " +
+                        "for ${normalizedUrl.take(90)}"
+                )
                 if (!hasTumblrCookies()) {
                     return@withContext oembedParsed
                 }
@@ -209,6 +255,12 @@ object TumblrParser {
 
                 in 200..299 -> {
                     val body = response.body.trimStart()
+                    // #R44: the challenge page can also land on the oEmbed
+                    // endpoint — same honest error, never a login prompt.
+                    if (isBrowserChallenge(body)) {
+                        android.util.Log.i(TAG, "parseWithOEmbed: browser-challenge for ${postUrl.take(90)}")
+                        return@runCatching TumblrShareParseResult.Error("Browser verification required")
+                    }
                     if (response.finalUrl.contains("/login_required/") ||
                         body.isBlank() ||
                         (!body.startsWith("{") && !body.startsWith("["))
@@ -295,8 +347,29 @@ object TumblrParser {
     ): TumblrShareParseResult {
         return runCatching {
             val response = httpGet(postUrl)
+            // #R44: bot-check interstitials ("Checking your browser" JS
+            // challenge) arrive as 403 — or occasionally 200 — with cookies
+            // fully attached. They are NOT a login wall: sending the user
+            // down the login/retry path (old LoginRequired behaviour) promises
+            // a fix that cannot work. Fail with the honest message instead.
+            if (isBrowserChallenge(response.body)) {
+                android.util.Log.i(
+                    TAG,
+                    "parseWithPageHtml: browser-challenge code=${response.code} finalUrl=${response.finalUrl.take(110)}"
+                )
+                return@runCatching TumblrShareParseResult.Error("Browser verification required")
+            }
             if (response.code in 200..299) {
                 if (response.finalUrl.contains("/login_required/") || response.finalUrl.contains("/login/")) {
+                    // Diagnostic (#R42/8.8 follow-up): show where the request
+                    // actually landed and whether cookies were attached, so a
+                    // login-wall (material) is distinguishable from a missing
+                    // session (bug).
+                    android.util.Log.i(
+                        TAG,
+                        "parseWithPageHtml: redirected to login finalUrl=${response.finalUrl.take(120)} " +
+                            "hasTumblrCookies=${hasTumblrCookies()}"
+                    )
                     return@runCatching TumblrShareParseResult.LoginRequired(
                         url = postUrl,
                         message = "Redirected to login — this content may be private or require authentication."
@@ -323,11 +396,19 @@ object TumblrParser {
                 }
 
                 if (candidates.isEmpty() && looksLikeLoginPage(html)) {
+                    android.util.Log.i(
+                        TAG,
+                        "parseWithPageHtml: branch=login-page hasTumblrCookies=${hasTumblrCookies()} url=${postUrl.take(90)}"
+                    )
                     TumblrShareParseResult.LoginRequired(
                         url = postUrl,
                         message = "Login page detected — this content may be private or require authentication."
                     )
                 } else if (candidates.isEmpty() && looksLikeAdultContentPage(html)) {
+                    android.util.Log.i(
+                        TAG,
+                        "parseWithPageHtml: branch=adult-interstitial hasTumblrCookies=${hasTumblrCookies()} url=${postUrl.take(90)}"
+                    )
                     // The adult content interstitial page may still contain the
                     // post's media URLs in __INITIAL_STATE__, just under JSON
                     // paths that [isLikelyPostMediaPath] rejects.  Try a relaxed
@@ -357,6 +438,10 @@ object TumblrParser {
                         )
                     }
                 } else if (candidates.isEmpty()) {
+                    android.util.Log.i(
+                        TAG,
+                        "parseWithPageHtml: branch=empty (no login/adult markers) postPresent=$postPresent url=${postUrl.take(90)}"
+                    )
                     TumblrShareParseResult.Empty("No downloadable media found")
                 } else {
                     val media = candidates.mapIndexed { index, mediaUrl ->
@@ -370,6 +455,21 @@ object TumblrParser {
                     TumblrShareParseResult.Success(media)
                 }
             } else if (response.code == 401 || response.code == 403 || response.finalUrl.contains("/login_required/") || response.finalUrl.contains("/login/")) {
+                // Diagnostic (#8.8 follow-up): 401 with cookies attached means
+                // the material itself rejects this account; 401 without cookies
+                // means the session never reached the request (a bug).
+                android.util.Log.i(
+                    TAG,
+                    "parseWithPageHtml: rejected code=${response.code} finalUrl=${response.finalUrl.take(110)} " +
+                        "hasTumblrCookies=${hasTumblrCookies()}"
+                )
+                // Face of the rejection: Cloudflare challenge / age gate /
+                // dead blog — identifies whether the material itself is the
+                // blocker (values are page markup, not user data).
+                android.util.Log.i(
+                    TAG,
+                    "parseWithPageHtml: bodyhead=${response.body.take(400).replace(Regex("\\s+"), " ")}"
+                )
                 TumblrShareParseResult.LoginRequired(
                     url = postUrl,
                     message = "HTTP 401/403 or login page — this content may be private."
@@ -636,8 +736,17 @@ object TumblrParser {
         return hasAction
     }
 
-    private fun looksLikeLoginPage(html: String): Boolean {
-        val lower = html.lowercase(Locale.ROOT)
+    /**
+     * #R44: bot-check interstitial face — Cloudflare-style JS challenges
+     * ("Checking your browser", HASHCASH proof-of-work) that an HTTP client
+     * without a JS engine can never pass, regardless of login state.
+     */
+    internal fun isBrowserChallenge(body: String): Boolean =
+        body.contains("Checking your browser") ||
+            body.contains("HASHCASH_CONFIG") ||
+            body.contains("/__challenge/")
+
+    private fun looksLikeLoginPage(html: String): Boolean {        val lower = html.lowercase(Locale.ROOT)
 
         // Strong signal: presence of a password input field indicates a real login form
         if (lower.contains("type=\"password\"") || lower.contains("type='password'")) {
