@@ -13,6 +13,13 @@ object DownloadUtils {
 
     private const val PREF_NAME_DOWNLOAD_CONFIG = "download_config"
     private const val KEY_CUSTOM_DOWNLOAD_DIR_URI = "custom_download_dir_uri"
+    private const val KEY_DEFAULT_DIR_GRANT_URI = "default_download_dir_grant_uri"
+
+    /** Precompiled once: compiling these per call ran ICU Pattern.compile on
+     *  the main thread during enqueue storms and burned 32 s of CPU → ANR
+     *  (#R43; reached via postScopedMediaKey → sanitizeFileName). */
+    private val UNSAFE_NAME_CHARS = Regex("[^\\p{L}\\p{N}._-]")
+    private val UNDERSCORE_RUN = Regex("_+")
 
     fun sanitizeFileName(sourceUrl: String): String {
         val fallback = "tumblr_media"
@@ -21,8 +28,8 @@ object DownloadUtils {
             .replace("https://", "")
             .replace("http://", "")
             // Keep Unicode letters (Chinese/Japanese/Korean, etc.), digits, . _ -; replace the rest with _
-            .replace(Regex("[^\\p{L}\\p{N}._-]"), "_")
-            .replace(Regex("_+"), "_")   // collapse consecutive underscores
+            .replace(UNSAFE_NAME_CHARS, "_")
+            .replace(UNDERSCORE_RUN, "_")   // collapse consecutive underscores
             .ifBlank { fallback }
     }
 
@@ -65,6 +72,25 @@ object DownloadUtils {
      * Media id segment of a media URL — the middle part of every file name.
      * Shared by the queue title and the saved file so they cannot drift apart.
      */
+    /**
+     * #R39: true for a MediaStore `.pending-<store-id>-<display>` name whose
+     * media no longer has any queue/history row behind it (crashed sessions,
+     * rows deleted mid-write, pendings left by older builds). Matching is a
+     * `contains` on the row's media id so both naming generations — the
+     * legacy `post-<id>` and today's `<author>-<id>` — are recognised;
+     * ids shorter than 8 chars (the "media" fallback of [mediaIdFromUrl])
+     * never protect anything, so a malformed row cannot pin every pending
+     * file forever. Non-pending names are never orphans.
+     */
+    fun isOrphanPendingFileName(pendingName: String, knownMediaIds: Collection<String>): Boolean {
+        // Full MediaStore shape `.pending-<store-id>-…` — anything else (an
+        // ordinary file, a differently prefixed dot-file) is never touched.
+        if (!pendingShapeRegex.containsMatchIn(pendingName)) return false
+        return knownMediaIds.none { it.length >= 8 && pendingName.contains(it) }
+    }
+
+    private val pendingShapeRegex = Regex("^\\.pending-\\d+-")
+
     fun mediaIdFromUrl(mediaUrl: String): String {
         val uri = runCatching { Uri.parse(mediaUrl) }.getOrNull() ?: return "media"
         val scheme = uri.scheme?.lowercase(Locale.ROOT)
@@ -167,6 +193,37 @@ object DownloadUtils {
         return runCatching { Uri.parse(raw) }.getOrNull()
     }
 
+    /**
+     * One-time persistable SAF grant on the default download folder (#R32):
+     * files whose MediaStore row lost its owner attribution are invisible to
+     * our name query and undeletable by path, so without this grant a
+     * re-download collides and the provider renames ours to "<name> (1)".
+     * The tree grant lets the app find/overwrite those files regardless of
+     * row ownership.
+     */
+    fun getDefaultDirGrant(context: Context): Uri? =
+        context.getSharedPreferences(PREF_NAME_DOWNLOAD_CONFIG, Context.MODE_PRIVATE)
+            .getString(KEY_DEFAULT_DIR_GRANT_URI, null)
+            ?.let { runCatching { Uri.parse(it) }.getOrNull() }
+
+    fun setDefaultDirGrant(context: Context, uri: Uri?) {
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
+        }
+        context.getSharedPreferences(PREF_NAME_DOWNLOAD_CONFIG, Context.MODE_PRIVATE).edit()
+            .apply {
+                if (uri == null) remove(KEY_DEFAULT_DIR_GRANT_URI)
+                else putString(KEY_DEFAULT_DIR_GRANT_URI, uri.toString())
+            }
+            .commit() // commit() so the very next download sees the grant
+    }
+
     fun getCurrentDownloadDirectory(context: Context): Uri {
         return getCustomDownloadDirectory(context)
             ?: buildDefaultDownloadTreeUri(context)
@@ -239,6 +296,28 @@ object DownloadUtils {
      * main thread into an ANR. The function is a pure function of its argument,
      * so caching cannot change any result.
      */
+    /**
+     * #R35: dedupe key scoped to the FILE a download produces. The same media
+     * URL inside a reblog lives under the reblogger's author prefix, so it is
+     * a different file on disk and must be downloaded once per post (user UX
+     * rule, case 7.10) instead of being URL-deduped away. Mirrors
+     * `DownloadService.targetFileName`: batch rows are named after their blog,
+     * single posts after the shared post's blog. Bare [normalizeMediaIdentity]
+     * stays for within-post size collapsing.
+     */
+    fun postScopedMediaKey(
+        sourceUrl: String,
+        mediaUrl: String,
+        blogName: String?,
+        inBatch: Boolean
+    ): String {
+        val identity = normalizeMediaIdentity(mediaUrl)
+        if (identity.isBlank()) return ""
+        val author = blogName?.takeIf { inBatch && it.isNotBlank() }
+            ?: authorFromSourceUrl(sourceUrl)
+        return "${sanitizeFileName(author)}|$identity"
+    }
+
     fun normalizeMediaIdentity(mediaUrl: String): String {
         identityCache[mediaUrl]?.let { return it }
         val identity = computeIdentity(mediaUrl)

@@ -24,6 +24,7 @@ object TumblrParser {
 
     private val shareUrlRegex = Regex(
         "(?i)" +
+        "https?://(?:www\\.)?tmblr\\.co/[A-Za-z0-9_-]+|" +
         "https?://(?:www\\.)?tumblr\\.com/[A-Za-z0-9_.-]+/\\d+(?:/[A-Za-z0-9_-]+)?|" +
         "https?://[A-Za-z0-9_.-]+\\.tumblr\\.com/(?:post/)?(?:private/)?\\d+(?:/[A-Za-z0-9_-]+)?"
     )
@@ -85,11 +86,60 @@ object TumblrParser {
         "frame1"
     )
 
+    /**
+     * #R44-adjacent: Android's `getaddrinfo` is a native call that OkHttp's
+     * callTimeout cannot interrupt — under a dead-tunnel DNS blackhole the
+     * parse hung for minutes with `isParsing` stuck (every later share was
+     * rejected as "already parsing"). Bound DNS on a real thread so a stall
+     * surfaces as a normal IOException instead of a zombie parse.
+     */
+    private val boundedDns = object : okhttp3.Dns {
+        override fun lookup(host: String): List<java.net.InetAddress> {
+            val task = dnsExecutor.submit(
+                java.util.concurrent.Callable {
+                    java.net.InetAddress.getAllByName(host).toList()
+                }
+            )
+            return try {
+                task.get(8, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (e: java.util.concurrent.TimeoutException) {
+                task.cancel(true)
+                throw java.io.IOException("DNS lookup timed out for $host")
+            } catch (e: java.util.concurrent.ExecutionException) {
+                throw (e.cause as? java.io.IOException)
+                    ?: java.io.IOException("DNS failed for $host: ${e.cause?.message}")
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw java.io.IOException("DNS lookup interrupted for $host")
+            }
+        }
+    }
+
+    /** Daemon pool backing [boundedDns]; threads linger only while stalled. */
+    private val dnsExecutor: java.util.concurrent.ExecutorService =
+        java.util.concurrent.Executors.newCachedThreadPool { r ->
+            Thread(r, "tumblr-dns").apply { isDaemon = true }
+        }
+
     internal val httpClient by lazy {
         val builder = OkHttpClient.Builder()
             .followRedirects(true)
             .followSslRedirects(true)
             .cookieJar(WebViewCookieJar())
+            // #R36: page-sized fetches must fail as IOException inside a hard
+            // cap — the defaults leave DNS/connect stalls long enough that the
+            // blog scan's bounded retries never exhaust and the card sits at
+            // 解析中 forever (zombie). callTimeout covers the WHOLE call
+            // including DNS; media downloads use DownloadService's own client
+            // and are unaffected.
+            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+            // #R44: callTimeout cannot interrupt native getaddrinfo — a dead
+            // DNS tunnel otherwise parks the parse for minutes with isParsing
+            // stuck (seen on device: >3 min zombie, later shares rejected).
+            .dns(boundedDns)
 
         resolveProxyAddress()?.let { builder.proxy(it) }
 
@@ -103,6 +153,11 @@ object TumblrParser {
     fun firstTumblrUrl(text: String): String? {
         return shareUrlRegex.find(normalizeText(text))?.value
     }
+
+    /** True for the `https://tmblr.co/...` share short links (#R28). */
+    private fun isTmblrShortLink(url: String): Boolean = runCatching {
+        android.net.Uri.parse(url).host?.endsWith("tmblr.co", ignoreCase = true) == true
+    }.getOrDefault(false)
 
     fun guessType(mediaUrl: String): MediaType {
         val lower = mediaUrl.lowercase(Locale.ROOT)
@@ -122,7 +177,21 @@ object TumblrParser {
         rawUrl: String,
         quality: MediaQualitySettings = MediaQualitySettings()
     ): TumblrShareParseResult = withContext(Dispatchers.IO) {
-        val normalizedUrl = normalizeShareUrl(rawUrl)
+        var normalizedUrl = normalizeShareUrl(rawUrl)
+        // tmblr.co links only redirect to the real post — follow the redirect
+        // before classifying (#R28); OkHttp resolves the chain and reports the
+        // final request URL. Anything that does not land on a recognisable
+        // Tumblr post URL fails loudly instead of silently.
+        if (isTmblrShortLink(normalizedUrl)) {
+            val resolved = runCatching { httpGet(normalizedUrl).finalUrl }
+                .getOrNull()
+                ?.let { normalizeShareUrl(it) }
+            if (resolved == null || resolved == normalizedUrl || !isTumblrShareUrl(resolved)) {
+                return@withContext TumblrShareParseResult.Error("Link resolution failed")
+            }
+            android.util.Log.i("TumblrParser", "short link resolved: $normalizedUrl -> ${resolved.take(80)}")
+            normalizedUrl = resolved
+        }
         if (!isTumblrShareUrl(normalizedUrl)) {
             return@withContext TumblrShareParseResult.Error("Not a valid Tumblr share link")
         }
@@ -144,6 +213,13 @@ object TumblrParser {
                 // Don't return immediately — private posts don't have oEmbed
                 // representations even when authenticated. If cookies are
                 // present, fall through to page HTML which is more reliable.
+                // Diagnostic (#R42/8.8 follow-up): which stage bailed and
+                // whether an auth session was even attached to the request.
+                android.util.Log.i(
+                    TAG,
+                    "parseShareUrl: oEmbed LoginRequired (hasTumblrCookies=${hasTumblrCookies()}) " +
+                        "for ${normalizedUrl.take(90)}"
+                )
                 if (!hasTumblrCookies()) {
                     return@withContext oembedParsed
                 }
@@ -179,6 +255,12 @@ object TumblrParser {
 
                 in 200..299 -> {
                     val body = response.body.trimStart()
+                    // #R44: the challenge page can also land on the oEmbed
+                    // endpoint — same honest error, never a login prompt.
+                    if (isBrowserChallenge(body)) {
+                        android.util.Log.i(TAG, "parseWithOEmbed: browser-challenge for ${postUrl.take(90)}")
+                        return@runCatching TumblrShareParseResult.Error("Browser verification required")
+                    }
                     if (response.finalUrl.contains("/login_required/") ||
                         body.isBlank() ||
                         (!body.startsWith("{") && !body.startsWith("["))
@@ -265,8 +347,29 @@ object TumblrParser {
     ): TumblrShareParseResult {
         return runCatching {
             val response = httpGet(postUrl)
+            // #R44: bot-check interstitials ("Checking your browser" JS
+            // challenge) arrive as 403 — or occasionally 200 — with cookies
+            // fully attached. They are NOT a login wall: sending the user
+            // down the login/retry path (old LoginRequired behaviour) promises
+            // a fix that cannot work. Fail with the honest message instead.
+            if (isBrowserChallenge(response.body)) {
+                android.util.Log.i(
+                    TAG,
+                    "parseWithPageHtml: browser-challenge code=${response.code} finalUrl=${response.finalUrl.take(110)}"
+                )
+                return@runCatching TumblrShareParseResult.Error("Browser verification required")
+            }
             if (response.code in 200..299) {
                 if (response.finalUrl.contains("/login_required/") || response.finalUrl.contains("/login/")) {
+                    // Diagnostic (#R42/8.8 follow-up): show where the request
+                    // actually landed and whether cookies were attached, so a
+                    // login-wall (material) is distinguishable from a missing
+                    // session (bug).
+                    android.util.Log.i(
+                        TAG,
+                        "parseWithPageHtml: redirected to login finalUrl=${response.finalUrl.take(120)} " +
+                            "hasTumblrCookies=${hasTumblrCookies()}"
+                    )
                     return@runCatching TumblrShareParseResult.LoginRequired(
                         url = postUrl,
                         message = "Redirected to login — this content may be private or require authentication."
@@ -275,6 +378,14 @@ object TumblrParser {
 
                 val html = response.body
                 val source = normalizeShareUrl(postUrl)
+                // #R30: pages without any post payload (deleted / 404 / server
+                // error pages) must fail with an explicit message instead of
+                // scraping their decorative imagery into a picker (case 2.27).
+                val postPresent = initialStateScriptRegex.containsMatchIn(html) ||
+                    applicationJsonScriptRegex.containsMatchIn(html)
+                if (!postPresent) {
+                    return@runCatching TumblrShareParseResult.Error("Post not found or deleted")
+                }
                 val candidates = run {
                     val structured = extractFromHtml(html, structuredOnly = true, quality = quality)
                     if (structured.isNotEmpty()) {
@@ -285,11 +396,19 @@ object TumblrParser {
                 }
 
                 if (candidates.isEmpty() && looksLikeLoginPage(html)) {
+                    android.util.Log.i(
+                        TAG,
+                        "parseWithPageHtml: branch=login-page hasTumblrCookies=${hasTumblrCookies()} url=${postUrl.take(90)}"
+                    )
                     TumblrShareParseResult.LoginRequired(
                         url = postUrl,
                         message = "Login page detected — this content may be private or require authentication."
                     )
                 } else if (candidates.isEmpty() && looksLikeAdultContentPage(html)) {
+                    android.util.Log.i(
+                        TAG,
+                        "parseWithPageHtml: branch=adult-interstitial hasTumblrCookies=${hasTumblrCookies()} url=${postUrl.take(90)}"
+                    )
                     // The adult content interstitial page may still contain the
                     // post's media URLs in __INITIAL_STATE__, just under JSON
                     // paths that [isLikelyPostMediaPath] rejects.  Try a relaxed
@@ -319,6 +438,10 @@ object TumblrParser {
                         )
                     }
                 } else if (candidates.isEmpty()) {
+                    android.util.Log.i(
+                        TAG,
+                        "parseWithPageHtml: branch=empty (no login/adult markers) postPresent=$postPresent url=${postUrl.take(90)}"
+                    )
                     TumblrShareParseResult.Empty("No downloadable media found")
                 } else {
                     val media = candidates.mapIndexed { index, mediaUrl ->
@@ -332,6 +455,21 @@ object TumblrParser {
                     TumblrShareParseResult.Success(media)
                 }
             } else if (response.code == 401 || response.code == 403 || response.finalUrl.contains("/login_required/") || response.finalUrl.contains("/login/")) {
+                // Diagnostic (#8.8 follow-up): 401 with cookies attached means
+                // the material itself rejects this account; 401 without cookies
+                // means the session never reached the request (a bug).
+                android.util.Log.i(
+                    TAG,
+                    "parseWithPageHtml: rejected code=${response.code} finalUrl=${response.finalUrl.take(110)} " +
+                        "hasTumblrCookies=${hasTumblrCookies()}"
+                )
+                // Face of the rejection: Cloudflare challenge / age gate /
+                // dead blog — identifies whether the material itself is the
+                // blocker (values are page markup, not user data).
+                android.util.Log.i(
+                    TAG,
+                    "parseWithPageHtml: bodyhead=${response.body.take(400).replace(Regex("\\s+"), " ")}"
+                )
                 TumblrShareParseResult.LoginRequired(
                     url = postUrl,
                     message = "HTTP 401/403 or login page — this content may be private."
@@ -345,7 +483,7 @@ object TumblrParser {
         }
     }
 
-    private fun extractFromHtml(
+    internal fun extractFromHtml(
         html: String,
         preferVideo: Boolean = false,
         structuredOnly: Boolean = false,
@@ -356,15 +494,17 @@ object TumblrParser {
             addAll(extractFromJsonScripts(html))
 
             if (!structuredOnly) {
-                addAll(extractImageCandidates(html))
-                addAll(extractVideoCandidates(html))
-                if (!preferVideo) {
-                    addAll(extractFromMeta(imageMetaRegex, html))
-                    addAll(extractFromMeta(videoMetaRegex, html))
-                } else {
-                    addAll(extractFromMeta(videoMetaRegex, html))
-                    addAll(extractFromMeta(imageMetaRegex, html))
+                // #R30: the page-wide scan used to return blog covers
+                // (og:image) and 404-page art as "post media" (cases 2.27/2.28).
+                // Scope the HTML scan to actual post containers and stop
+                // scraping head-level og:image entirely — a real post's media
+                // is already carried by the structured JSON above.
+                val postHtml = scopeToPostContent(html)
+                if (postHtml.isNotEmpty()) {
+                    addAll(extractImageCandidates(postHtml))
+                    addAll(extractVideoCandidates(postHtml))
                 }
+                addAll(extractFromMeta(videoMetaRegex, html))
             }
         }
 
@@ -376,6 +516,27 @@ object TumblrParser {
                 .distinct(),
             quality
         )
+    }
+
+    /** #R30: post-body regions of a page (articles first, figures as fallback). */
+    private val articleRegex = Regex(
+        "<article\\b[^>]*>.*?</article>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+    private val figureRegex = Regex(
+        "<figure\\b[^>]*>.*?</figure>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+
+    /**
+     * #R30: the part of [html] that may contain post media. Empty when the
+     * page has no post container at all (404 / server-error pages) — callers
+     * then skip page-wide scraping instead of collecting decorative art.
+     */
+    internal fun scopeToPostContent(html: String): String {
+        val articles = articleRegex.findAll(html).joinToString("\n") { it.value }
+        if (articles.isNotEmpty()) return articles
+        return figureRegex.findAll(html).joinToString("\n") { it.value }
     }
 
     private fun extractFromInitialState(html: String): List<String> {
@@ -400,12 +561,15 @@ object TumblrParser {
      * media.tumblr.com URLs from every JSON script block, relying on
      * [isLikelyPostMedia] (URL-level filtering) for noise removal.
      */
+    /** Shared by both JSON extractors — precompiled for the scan hot loop (#R43). */
+    private val JSON_MEDIA_URL_REGEX = Regex(
+        "https?://[^\"'\\s<>)\\]}]+media\\.tumblr\\.com[^\"'\\s<>)\\]}]+",
+        RegexOption.IGNORE_CASE
+    )
+
     private fun extractFromJsonRelaxed(html: String): List<String> {
         val urls = LinkedHashSet<String>()
-        val jsonMediaUrlRegex = Regex(
-            "https?://[^\"'\\s<>)\\]}]+media\\.tumblr\\.com[^\"'\\s<>)\\]}]+",
-            RegexOption.IGNORE_CASE
-        )
+        val jsonMediaUrlRegex = JSON_MEDIA_URL_REGEX
 
         fun extractFromText(raw: String) {
             jsonMediaUrlRegex.findAll(unescapeJsonText(raw)).forEach { m ->
@@ -468,10 +632,7 @@ object TumblrParser {
                 // relying on file extension patterns.  The JSON path filtering + noise
                 // tokens already provide sufficient precision; extension-based matching
                 // is too fragile (Tumblr uses .pnj for high-quality images).
-                val jsonMediaUrlRegex = Regex(
-                    "https?://[^\"'\\s<>)\\]}]+media\\.tumblr\\.com[^\"'\\s<>)\\]}]+",
-                    RegexOption.IGNORE_CASE
-                )
+                val jsonMediaUrlRegex = JSON_MEDIA_URL_REGEX
                 jsonMediaUrlRegex.findAll(trimmed).forEach { m ->
                     val url = m.value.trimEnd(')', ']', '}', ',', ';', '"', '\'')
                     if (url.isNotBlank()) {
@@ -575,8 +736,17 @@ object TumblrParser {
         return hasAction
     }
 
-    private fun looksLikeLoginPage(html: String): Boolean {
-        val lower = html.lowercase(Locale.ROOT)
+    /**
+     * #R44: bot-check interstitial face — Cloudflare-style JS challenges
+     * ("Checking your browser", HASHCASH proof-of-work) that an HTTP client
+     * without a JS engine can never pass, regardless of login state.
+     */
+    internal fun isBrowserChallenge(body: String): Boolean =
+        body.contains("Checking your browser") ||
+            body.contains("HASHCASH_CONFIG") ||
+            body.contains("/__challenge/")
+
+    private fun looksLikeLoginPage(html: String): Boolean {        val lower = html.lowercase(Locale.ROOT)
 
         // Strong signal: presence of a password input field indicates a real login form
         if (lower.contains("type=\"password\"") || lower.contains("type='password'")) {
@@ -772,8 +942,11 @@ object TumblrParser {
         return score + url.length
     }
 
+    /** Precompiled: per-call Pattern.compile in the per-candidate hot loop (#R43). */
+    private val SQUARE_RENDITION_REGEX = Regex("_\\d{2,4}sq(?=\\.[a-z0-9]+$)", RegexOption.IGNORE_CASE)
+
     private fun isSquareRendition(url: String): Boolean =
-        Regex("_\\d{2,4}sq(?=\\.[a-z0-9]+$)", RegexOption.IGNORE_CASE).containsMatchIn(url)
+        SQUARE_RENDITION_REGEX.containsMatchIn(url)
 
     private fun normalizeShareUrl(rawUrl: String): String {
         return sourceParamRegex.replace(normalizeText(rawUrl), "").trimEnd('?', '&', ' ')

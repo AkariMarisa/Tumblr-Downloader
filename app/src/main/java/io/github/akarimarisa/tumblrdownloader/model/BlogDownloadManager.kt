@@ -297,7 +297,13 @@ class BlogDownloadManager private constructor(
      */
     fun resume(jobId: String) {
         val job = _jobs.value.firstOrNull { it.jobId == jobId } ?: return
-        if (activeJobs.containsKey(jobId)) return
+        if (activeJobs.containsKey(jobId)) {
+            // #R36: yesterday's zombie showed exactly this no-op — the card
+            // said 解析中, 开始 did nothing, and the stuck worker was never
+            // replaced. Log it so a stuck-but-tracked worker is visible.
+            android.util.Log.i("BlogDM", "resume ignored — worker still active jobId=$jobId state=${job.state()}")
+            return
+        }
         // A finished scan (DONE) has no feed left to re-fetch: only restart
         // the batch's paused/queued downloads. Everything else relaunches the
         // scan from its persisted cursor and resumes the batch alongside it.
@@ -423,6 +429,12 @@ class BlogDownloadManager private constructor(
                 // Safety net: a worker that died before reaching the gate
                 // must not leave the list locked out of the detail screen.
                 setConfirmPending(jobId, false)
+                // #R36 diagnostics: how did the worker leave?
+                android.util.Log.i(
+                    "BlogDM",
+                    "worker exit jobId=$jobId blocked=${blocked != null} crashed=${crashed != null} " +
+                        "cancelFlag=${cancelFlags[jobId] ?: false}"
+                )
             }
             val reason = blocked
             if (reason != null) {
@@ -466,12 +478,21 @@ class BlogDownloadManager private constructor(
         val longThreshold = BlogPrefs.longThreshold(app)
 
         val fresh = job.resumeLink == null && job.pagesCompleted == 0
+        // #R36 diagnostics: entry/exit of every scan worker.
+        android.util.Log.i("BlogDM", "runWorker start jobId=$jobId fresh=$fresh")
 
         val boot = bootstrapBlog(blogName)
         val token = boot.apiToken
         var posts = if (fresh) boot.posts else emptyList()
         var nextLink = if (fresh) boot.nextLink else job.resumeLink
-        var total = job.totalPosts
+        // The bootstrap already reports the blog's post count, so a fresh job
+        // can decide about the long-blog gate before it queues anything.
+        var total = job.totalPosts ?: boot.info.numberOfPosts
+        // …but when it doesn't, the count only arrives with the first feed
+        // page: hold the bootstrap posts until then so the gate can still ask
+        // before anything is queued (#15).
+        var heldPosts: List<JSONObject> = emptyList()
+        var heldForCount = false
 
         var pages = job.pagesCompleted
         var discovered = job.postsDiscovered
@@ -487,6 +508,47 @@ class BlogDownloadManager private constructor(
         while (true) {
             if (cancelFlags.containsKey(jobId)) {
                 break
+            }
+            // #R36 diagnostics: one line per scan pass (progress heartbeat).
+            android.util.Log.i(
+                "BlogDM",
+                "scan pass jobId=$jobId pages=$pages next=${nextLink?.take(44) ?: "-"} " +
+                    "discovered=$discovered enqueued=$enqueued"
+            )
+
+            // Long-blog gate — ask BEFORE this pass queues anything. It used
+            // to run after the enqueue block, so downloads were already
+            // running by the time the dialog appeared (#15). The bootstrap's
+            // post count lets a fresh job decide before its first page is
+            // processed; a job that learns `total` later gates at the top of
+            // the following pass instead.
+            if (!gated && !opts.forceLongBlog && total != null && total >= longThreshold) {
+                gated = true
+                _events.tryEmit(
+                    BlogEvent.ConfirmLongBlog(
+                        jobId = jobId,
+                        blogName = blogName,
+                        totalPosts = total,
+                        estimatedRequests = (total / 20).coerceAtLeast(pages),
+                        mediaFilter = opts.mediaFilter
+                    )
+                )
+                val proceed = confirmGates.getOrPut(jobId) { CompletableDeferred() }.await()
+                if (!proceed) {
+                    break
+                }
+            }
+
+            if (posts.isNotEmpty()) {
+                // Hold the very first batch of a fresh job when the post count
+                // is still unknown *and* a next page exists to learn it from:
+                // the long-blog gate must be able to ask first (#15). With no
+                // next page there is nothing to learn, so queue right away.
+                if (!heldForCount && total == null && nextLink != null) {
+                    heldForCount = true
+                    heldPosts = posts
+                    posts = emptyList()
+                }
             }
             if (posts.isNotEmpty()) {
                 val snapshot = knownSources ?: DownloadHistoryStore.loadSourceUrls(app)
@@ -546,6 +608,7 @@ class BlogDownloadManager private constructor(
                     updatedAt = System.currentTimeMillis(),
                     errorCode = null
                 )
+                android.util.Log.i("BlogDM", "scan DONE jobId=$jobId pages=$pages discovered=$discovered")
                 persistAndPublish(done)
                 _events.tryEmit(BlogEvent.Finished(jobId, cancelled = false))
                 return
@@ -565,25 +628,12 @@ class BlogDownloadManager private constructor(
             )
             persistAndPublish(job)
 
-            // Long-blog gate — ask once, before pulling the next page.
-            if (!gated && !opts.forceLongBlog && total != null && total >= longThreshold) {
-                gated = true
-                _events.tryEmit(
-                    BlogEvent.ConfirmLongBlog(
-                        jobId = jobId,
-                        blogName = blogName,
-                        totalPosts = total,
-                        estimatedRequests = (total / 20).coerceAtLeast(pages),
-                        mediaFilter = opts.mediaFilter
-                    )
-                )
-                val proceed = confirmGates.getOrPut(jobId) { CompletableDeferred() }.await()
-                if (!proceed) {
-                    break
-                }
-            }
-            // Gate decision known (not needed / accepted): detail is safe again.
-            setConfirmPending(jobId, false)
+            // The gate decision is known once `total` is — or once we stopped
+            // waiting for it (first page fetched and the feed reported no
+            // count, so no dialog can come). A worker suspended in the gate
+            // never reaches this line, so the detail screen stays locked until
+            // the user decides.
+            if (total != null || heldForCount) setConfirmPending(jobId, false)
 
             if (cancelFlags.containsKey(jobId)) {
                 break
@@ -593,12 +643,14 @@ class BlogDownloadManager private constructor(
 
             val feed = fetchFeedPage(nextToFetch, token)
             if (total == null) total = feed.totalPosts
-            posts = feed.posts
+            posts = heldPosts + feed.posts
+            heldPosts = emptyList()
             nextLink = feed.nextLink
             pages++
         }
 
         // Only reachable via `break`: the job was cancelled or the user said no.
+        android.util.Log.i("BlogDM", "scan break → CANCELLED jobId=$jobId")
         cancelFlags.remove(jobId)
         markState(jobId, BlogJobState.CANCELLED)
         _events.tryEmit(BlogEvent.Finished(jobId, cancelled = true))
@@ -622,7 +674,11 @@ class BlogDownloadManager private constructor(
                 if (boot.apiToken.isBlank()) throw BlockedException("token_missing")
                 return boot
             } catch (io: IOException) {
-                if (attempts >= 3) throw BlockedException("network")
+                if (attempts >= 3) {
+                    android.util.Log.i("BlogDM", "bootstrap giving up after ${attempts + 1} IOExceptions → network BLOCKED (${io.javaClass.simpleName}: ${io.message})")
+                    throw BlockedException("network")
+                }
+                android.util.Log.i("BlogDM", "bootstrap IOException attempt=${attempts + 1} → backoff (${io.javaClass.simpleName}: ${io.message})")
                 delay(backoffMs(attempts++))
             }
         }
@@ -657,7 +713,11 @@ class BlogDownloadManager private constructor(
                 if (resp.code == 404) throw BlockedException("not_found")
                 throw BlockedException("http_${resp.code}")
             } catch (io: IOException) {
-                if (attempts >= 3) throw BlockedException("network")
+                if (attempts >= 3) {
+                    android.util.Log.i("BlogDM", "feed giving up after ${attempts + 1} IOExceptions → network BLOCKED (${io.javaClass.simpleName}: ${io.message})")
+                    throw BlockedException("network")
+                }
+                android.util.Log.i("BlogDM", "feed IOException attempt=${attempts + 1} → backoff (${io.javaClass.simpleName}: ${io.message})")
                 delay(backoffMs(attempts++))
             }
         }

@@ -1,11 +1,15 @@
 package io.github.akarimarisa.tumblrdownloader.model
 
 import android.app.Application
+import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.SystemClock
+import android.provider.MediaStore
+import java.io.File
 import androidx.annotation.VisibleForTesting
 import io.github.akarimarisa.tumblrdownloader.R
 import io.github.akarimarisa.tumblrdownloader.service.DownloadService
@@ -110,6 +114,8 @@ class DownloadStateManager private constructor(private val app: Application) {
     /** Items for which the UI pause command was sent but the service has not
      * emitted its final PAUSED checkpoint yet. */
     private val pendingPauseIds = mutableSetOf<String>()
+    /** #R41: ids with a non-explicit ACTION_START already in flight (see [sendStartIntent]). */
+    private val startIntentsInFlight = mutableSetOf<String>()
 
     private var isParsing = false
 
@@ -148,7 +154,7 @@ class DownloadStateManager private constructor(private val app: Application) {
         data class StartOrResume(val itemId: String) : Cmd()
         data class Pause(val itemId: String) : Cmd()
         data class Remove(val itemId: String) : Cmd()
-        data object ClearAll : Cmd()
+        data class ClearAll(val keepBlogNames: Set<String>) : Cmd()
         data class Progress(val item: DownloadItem) : Cmd()
         data object PauseAll : Cmd()
         data object ResumeAll : Cmd()
@@ -251,6 +257,13 @@ class DownloadStateManager private constructor(private val app: Application) {
                             routeParsedMedia(result.media, autoDownloadAll)
                         }
                         is TumblrShareParseResult.LoginRequired -> {
+                            // Diagnostic (#8.8 follow-up): the message is the
+                            // branch signature — log it so a login-wall from a
+                            // missing session is distinguishable from material.
+                            android.util.Log.i(
+                                "DownloadSM",
+                                "enqueueFromUrl: LoginRequired msg=\"${result.message}\" url=${result.url.take(90)} retryAfterLogin=$retryAfterLogin"
+                            )
                             if (retryAfterLogin) {
                                 retryAfterLogin = false
                                 android.util.Log.w("DownloadSM", "LoginRequired after login retry — giving up")
@@ -306,21 +319,27 @@ class DownloadStateManager private constructor(private val app: Application) {
      * nothing to choose between. Items already queued (or already completed
      * and kept in history) are filtered out first, so the picker only lists
      * media the user can actually gain.
+     *
+     * Keys are file-scoped (#R35): a reblog's copy of an already-queued media
+     * is a *different* file (its own author prefix) and must stay offerable.
      */
     private fun offerMediaPreview(candidates: List<ParsedTumblrMedia>) {
+        fun keyOf(sourceUrl: String, mediaUrl: String, blogName: String?, inBatch: Boolean) =
+            DownloadUtils.postScopedMediaKey(sourceUrl, mediaUrl, blogName, inBatch)
+
         val existingKeys = _items.value
             .filter { it.status != DownloadStatus.FAILED }
-            .map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }
+            .map { keyOf(it.sourceUrl, it.mediaUrl, it.blogName, it.batchId != null) }
             .toMutableSet()
         val fresh = candidates
             .asSequence()
-            .distinctBy { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }
-            .filter { existingKeys.add(DownloadUtils.normalizeMediaIdentity(it.mediaUrl)) }
+            .distinctBy { keyOf(it.sourceUrl, it.mediaUrl, null, false) }
+            .filter { existingKeys.add(keyOf(it.sourceUrl, it.mediaUrl, null, false)) }
             .toList()
 
         when {
             fresh.isEmpty() -> _parseEvent.tryEmit(
-                ParseEvent.Message(localizedString(R.string.parse_duplicate_skipped))
+                ParseEvent.Message(duplicateMessage(candidates))
             )
             // Even a single fresh file goes through the picker: with the
             // "auto-download all media" switch off the user asked to choose,
@@ -332,7 +351,29 @@ class DownloadStateManager private constructor(private val app: Application) {
         }
     }
 
-    /** Enqueue the media the user kept in the picker. */
+    /**
+     * "Already in the list" must say *where*: blog batch rows live behind
+     * their card, so a post that belongs to a blog download is not visible in
+     * the main list — users reported "the link says it exists but the list is
+     * empty" (#18).
+     */
+    private fun duplicateMessage(candidates: List<ParsedTumblrMedia>): String {
+        val keys = candidates.map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }.toSet()
+        val owner = _items.value
+            .filter { it.status != DownloadStatus.FAILED }
+            .firstOrNull {
+                it.blogName != null &&
+                    DownloadUtils.normalizeMediaIdentity(it.mediaUrl) in keys
+            }?.blogName
+        return if (owner != null) {
+            localizedString(R.string.parse_duplicate_in_blog, owner)
+        } else {
+            localizedString(R.string.parse_duplicate_skipped)
+        }
+    }
+
+    /**
+     * Enqueue the media the user kept in the picker. */
     fun confirmMediaPreview(previewId: String, selectedIndices: Set<Int>) {
         val request = _mediaPreview.value?.takeIf { it.id == previewId } ?: return
         _mediaPreview.value = null
@@ -382,7 +423,14 @@ class DownloadStateManager private constructor(private val app: Application) {
 
     fun remove(itemId: String) { cmdCh.trySend(Cmd.Remove(itemId)) }
 
-    fun clearAll() { cmdCh.trySend(Cmd.ClearAll) }
+    /**
+     * Drop every completed row the main list shows: standalone downloads plus
+     * orphans (batch rows whose card is gone). Rows belonging to a live card
+     * are kept — they back that card's record.
+     *
+     * @param keepBlogNames blogs that still have a card; their rows stay.
+     */
+    fun clearAll(keepBlogNames: Set<String>) { cmdCh.trySend(Cmd.ClearAll(keepBlogNames)) }
 
     fun pauseAll() { cmdCh.trySend(Cmd.PauseAll) }
 
@@ -460,7 +508,7 @@ class DownloadStateManager private constructor(private val app: Application) {
             is Cmd.StartOrResume -> processStartOrResume(cmd.itemId)
             is Cmd.Pause -> processPause(cmd.itemId)
             is Cmd.Remove -> processRemove(cmd.itemId)
-            is Cmd.ClearAll -> processClearAll()
+            is Cmd.ClearAll -> processClearAll(cmd.keepBlogNames)
             is Cmd.PauseAll -> processPauseAll()
             is Cmd.ResumeAll -> processResumeAll()
             is Cmd.ServicePauseAll -> processServicePauseAll()
@@ -507,15 +555,19 @@ class DownloadStateManager private constructor(private val app: Application) {
         android.util.Log.d("DownloadSM", "processAppend: ${existing.size} existing items")
         // Only deduplicate against non-FAILED items.  A failed download
         // should be retryable — the user shouldn't have to remove-and-re-add.
+        // Keys are file-scoped (#R35): batch rows are named after their blog,
+        // so candidates are keyed with the same blog context.
         val existingKeys = existing
             .filter { it.status != DownloadStatus.FAILED }
-            .map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }
+            .map { DownloadUtils.postScopedMediaKey(it.sourceUrl, it.mediaUrl, it.blogName, it.batchId != null) }
             .toMutableSet()
 
         val baseTime = System.currentTimeMillis()
         val added = candidates
             .asSequence()
-            .distinctBy { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }
+            .distinctBy {
+                DownloadUtils.postScopedMediaKey(it.sourceUrl, it.mediaUrl, cmd.blogName, cmd.batchId != null)
+            }
             .mapIndexed { index, media ->
                 DownloadItem(
                     sourceUrl = media.sourceUrl,
@@ -527,14 +579,18 @@ class DownloadStateManager private constructor(private val app: Application) {
                     blogName = cmd.blogName
                 )
             }
-            .filter { existingKeys.add(DownloadUtils.normalizeMediaIdentity(it.mediaUrl)) }
+            .filter {
+                existingKeys.add(
+                    DownloadUtils.postScopedMediaKey(it.sourceUrl, it.mediaUrl, it.blogName, it.batchId != null)
+                )
+            }
             .toList()
 
         android.util.Log.d("DownloadSM", "processAppend: ${added.size} new items after dedup")
 
         if (added.isEmpty()) {
             if (cmd.emitQueuedEvent) {
-                _parseEvent.tryEmit(ParseEvent.Message(localizedString(R.string.parse_duplicate_skipped)))
+                _parseEvent.tryEmit(ParseEvent.Message(duplicateMessage(candidates)))
             }
             return
         }
@@ -558,17 +614,133 @@ class DownloadStateManager private constructor(private val app: Application) {
     // ── Restore (from persistence) ─────────────────────────────────────
     private fun processRestore(items: List<DownloadItem>) {
         val existing = _items.value
-        val existingNormIds = existing.map { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) }.toSet()
+        // File-scoped merge keys (#R35): the same media under two posts stays
+        // two rows across restarts, while genuine same-post duplicates still
+        // collapse.
+        val existingScopedKeys = existing.map {
+            DownloadUtils.postScopedMediaKey(it.sourceUrl, it.mediaUrl, it.blogName, it.batchId != null)
+        }.toSet()
         val merged = (existing + items
-            .filterNot { DownloadUtils.normalizeMediaIdentity(it.mediaUrl) in existingNormIds }
+            .filterNot {
+                DownloadUtils.postScopedMediaKey(it.sourceUrl, it.mediaUrl, it.blogName, it.batchId != null) in existingScopedKeys
+            }
             .map { reconcileRestoredItemWithDisk(it) }
         ).sortedByDescending { it.createdAt }
         android.util.Log.d("DownloadSM", "processRestore: ${existing.size} existing + ${items.size} history = ${merged.size} merged")
         _items.value = merged
         dirty = true
+        // Sweep once per restore: today's flows clean their own pendings
+        // (finish / ENOSPC-fail / row removal — all device-verified), but
+        // orphans from crashes, deleted rows or older builds lingered
+        // forever (#R39). FAILED rows keep their partial file: their media
+        // id is in the snapshot, so Range resume (#7.9) stays intact.
+        sweepOrphanPendingFiles(merged)
         // ponytail: do NOT auto-start restored items — files from the previous
         // session still exist on disk.  Auto-starting would create "(1)" copies
         // via MediaStore's name conflict resolution.  User clicks Start manually.
+    }
+
+    /**
+     * #R39: delete the app's `.pending-*` partials whose media id matches no
+     * row (see [DownloadUtils.isOrphanPendingFileName]). Two sources feed the
+     * sweep because either can outlive the other:
+     *  - MediaStore rows, while the provider still tracks the entry, and
+     *  - a raw file walk of the app folder — `pm clear` drops the provider
+     *    rows (owner attribution) while the file itself survives, leaving a
+     *    zombie no query can see (observed on device).
+     * FAILED rows keep their partial: their media id is in the snapshot, so
+     * Range resume (#7.9) stays intact. Batch pendings live one level down in
+     * the per-blog subfolders, hence walk depth 2.
+     */
+    private fun sweepOrphanPendingFiles(rows: List<DownloadItem>) {
+        val knownIds = rows.map { DownloadUtils.mediaIdFromUrl(it.mediaUrl) }.toSet()
+        scope.launch {
+            var removed = 0
+            var walkListed = -1
+            var blocked = false
+            try {
+                withContext(Dispatchers.IO) {
+                    // (1) Entries still tracked by MediaStore.
+                    try {
+                        val projection = arrayOf(
+                            MediaStore.Downloads._ID,
+                            MediaStore.Downloads.DISPLAY_NAME
+                        )
+                        // The default folder plus any custom folder inside Download/.
+                        // Without READ_EXTERNAL the query only returns this app's own
+                        // entries anyway.
+                        val selection = "${MediaStore.Downloads.RELATIVE_PATH} LIKE ? AND " +
+                            "${MediaStore.Downloads.DISPLAY_NAME} LIKE '.pending-%'"
+                        app.contentResolver.query(
+                            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                            projection,
+                            selection,
+                            arrayOf("Download/%"),
+                            null
+                        )?.use { cursor ->
+                            val idIdx = cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID)
+                            val nameIdx = cursor.getColumnIndexOrThrow(MediaStore.Downloads.DISPLAY_NAME)
+                            while (cursor.moveToNext()) {
+                                val name = cursor.getString(nameIdx) ?: continue
+                                if (!DownloadUtils.isOrphanPendingFileName(name, knownIds)) continue
+                                val uri = ContentUris.withAppendedId(
+                                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                                    cursor.getLong(idIdx)
+                                )
+                                removed += if (app.contentResolver.delete(uri, null, null) > 0) 1 else 0
+                            }
+                        }
+                    } catch (e: Exception) {
+                        blocked = true
+                        android.util.Log.w("DownloadSM", "pending sweep (MediaStore) failed: ${e.message}")
+                    }
+
+                    // (2) Raw file walk for zombies with no provider row.
+                    try {
+                        val root = File(
+                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                            DownloadUtils.getDefaultDownloadFolderName(app)
+                        )
+                        val listing = runCatching { root.listFiles() }.getOrNull()
+                        android.util.Log.d(
+                            "DownloadSM",
+                            "sweep probe: root exists=${root.exists()} canRead=${root.canRead()} " +
+                                "list=${listing?.size ?: "null"} names=" +
+                                (listing?.take(4)?.joinToString { it.name.take(34) } ?: "-")
+                        )
+                        root.walkTopDown().maxDepth(2).forEach { f ->
+                            if (!f.isFile && !f.name.startsWith(".pending-")) return@forEach
+                            if (!f.isFile) {
+                                android.util.Log.d(
+                                    "DownloadSM",
+                                    "sweep probe: exists=${f.exists()} isFile=false name=${f.name.take(60)}"
+                                )
+                                return@forEach
+                            }
+                            if (!f.name.startsWith(".pending-")) return@forEach
+                            val orphan = DownloadUtils.isOrphanPendingFileName(f.name, knownIds)
+                            if (!orphan) return@forEach
+                            val ok = runCatching { f.delete() }.getOrDefault(false)
+                            android.util.Log.d(
+                                "DownloadSM",
+                                "sweep probe: delete=${ok} err name=${f.name.take(60)}"
+                            )
+                            if (ok) removed++ else blocked = true
+                        }
+                        walkListed = 1
+                    } catch (e: Exception) {
+                        blocked = true
+                        android.util.Log.w("DownloadSM", "pending sweep (file walk) failed: ${e.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DownloadSM", "pending sweep failed: ${e.message}")
+            }
+            android.util.Log.i(
+                "DownloadSM",
+                "pending sweep: walk=$walkListed removed=$removed blocked=$blocked (#R39)"
+            )
+        }
     }
 
     /**
@@ -582,9 +754,13 @@ class DownloadStateManager private constructor(private val app: Application) {
      * ever set after a file lands in MediaStore, so an existing mark promotes
      * the row back to COMPLETED/100 instead of showing 0% forever.
      */
+    /** #R35: [CompletedMediaStore] key for a queue row (file-scoped). */
+    private fun completedStoreKey(item: DownloadItem): String? =
+        CompletedMediaStore.keyFor(item.sourceUrl, item.mediaUrl, item.blogName, item.batchId != null)
+
     private fun reconcileRestoredItemWithDisk(item: DownloadItem): DownloadItem {
         if (item.status == DownloadStatus.COMPLETED) return item
-        if (!CompletedMediaStore.isCompleted(app, item.mediaUrl)) return item
+        if (!CompletedMediaStore.isCompleted(app, completedStoreKey(item))) return item
         android.util.Log.d(
             "DownloadSM",
             "processRestore: ${item.id.take(8)}... was ${item.status}/${item.progress}% but the file is on disk — promoting to COMPLETED"
@@ -643,7 +819,8 @@ class DownloadStateManager private constructor(private val app: Application) {
     // ── Remove ──────────────────────────────────────────────────────────
     private fun processRemove(itemId: String) {
         val item = _items.value.find { it.id == itemId }
-        item?.let { CompletedMediaStore.remove(app, it.mediaUrl) }
+        item?.let { CompletedMediaStore.remove(app, completedStoreKey(item)) }
+        startIntentsInFlight.remove(itemId) // #R41: no marker leak for removed rows
         _items.value = _items.value.filterNot { it.id == itemId }
         dirty = true
         sendRemoveIntent(itemId)
@@ -655,22 +832,25 @@ class DownloadStateManager private constructor(private val app: Application) {
      * Non-completed items (paused, failed, queued, downloading) are kept
      * so the user can retry or resume them later.
      */
-    private fun processClearAll() {
-        // Only standalone downloads belong to the main list's "clear
-        // completed" action. Blog batch items back their card's
-        // full-download/subscription state — clearing them while leaving the
-        // card behind would hollow out the record (see issue reports).
-        val toRemove = _items.value.filter {
-            it.status == DownloadStatus.COMPLETED && it.batchId == null
-        }
+    private fun processClearAll(keepBlogNames: Set<String>) {
+        // Standalone downloads **and orphans** — batch rows whose card no
+        // longer exists are listed in the main queue now, so "clear
+        // completed" has to take them too; otherwise the button does nothing
+        // visible while orphan rows sit there (#21). Rows of a live card are
+        // kept: clearing them would hollow out that card's record while the
+        // card itself stays behind.
+        fun isClearable(item: DownloadItem) =
+            item.status == DownloadStatus.COMPLETED &&
+                (item.batchId == null || item.blogName !in keepBlogNames)
+
+        val toRemove = _items.value.filter(::isClearable)
         if (toRemove.isEmpty()) return
 
         toRemove.forEach { item ->
-            CompletedMediaStore.remove(app, item.mediaUrl)
+            CompletedMediaStore.remove(app, completedStoreKey(item))
+            startIntentsInFlight.remove(item.id) // #R41
         }
-        _items.value = _items.value.filterNot {
-            it.status == DownloadStatus.COMPLETED && it.batchId == null
-        }
+        _items.value = _items.value.filterNot(::isClearable)
         dirty = true
     }
 
@@ -929,6 +1109,16 @@ class DownloadStateManager private constructor(private val app: Application) {
         }
         dirty = true
 
+        // #R41: free the in-flight start marker on terminal/manual states.
+        // A gap-wait QUEUED callback keeps it — that is exactly the state that
+        // used to make the pump re-send ACTION_START for the same item.
+        when (_items.value.find { it.id == update.id }?.status) {
+            DownloadStatus.COMPLETED,
+            DownloadStatus.FAILED,
+            DownloadStatus.PAUSED -> startIntentsInFlight.remove(update.id)
+            else -> Unit
+        }
+
         // When a terminal status (COMPLETED/FAILED/PAUSED) arrives for the
         // currently-DOWNLOADING item, try to start the next queued one.
         // There is no global-pause gate here: pause-all marks every pre-existing
@@ -982,6 +1172,11 @@ class DownloadStateManager private constructor(private val app: Application) {
             val next = _items.value
                 .filter { it.status == DownloadStatus.QUEUED }
                 .minByOrNull { it.createdAt } ?: return
+            // #R41 diagnostic
+            android.util.Log.i(
+                "DownloadSM",
+                "pump pick id=${next.id.take(8)} running=$running max=${getMaxConcurrentDownloads()}"
+            )
 
             val idx = _items.value.indexOfFirst { it.id == next.id }
             val started = next.copy(
@@ -996,6 +1191,28 @@ class DownloadStateManager private constructor(private val app: Application) {
     // ── Intent helpers ──────────────────────────────────────────────────
 
     private fun sendStartIntent(item: DownloadItem, explicitResume: Boolean = false) {
+        // #R41: the service emits status=QUEUED while an item waits for the
+        // rate-limit gap ("等待 1040ms…"), processProgress writes that back to
+        // the row, and the line-1112 pump then re-picked the SAME row — every
+        // gap emission produced another ACTION_START (up to 3 observed per
+        // item), which also re-ran the cancel-summary branch (R27-adjacent)
+        // and raced completion bookkeeping (R40). Non-explicit (pump) sends
+        // are therefore allowed only once per in-flight item; explicit user
+        // starts/resumes always bypass so a stuck row can still be restarted.
+        if (!explicitResume && item.id in startIntentsInFlight) {
+            android.util.Log.i("DownloadSM", "sendStartIntent SKIP dup id=${item.id.take(8)} (#R41)")
+            return
+        }
+        startIntentsInFlight.add(item.id)
+        // #R41 diagnostic: every duplicate ACTION_START names its callers
+        // (4 frames with line numbers — retraced against mapping.txt).
+        android.util.Log.i(
+            "DownloadSM",
+            "sendStartIntent id=${item.id.take(8)} explicit=$explicitResume " +
+                "caller=${Throwable().stackTrace.take(4).joinToString(" <- ") {
+                    "${it.className.substringAfterLast('.')}#${it.methodName}:${it.lineNumber}"
+                }}"
+        )
         val intent = Intent(app, DownloadService::class.java).apply {
             action = DownloadService.ACTION_START
             putExtra(DownloadService.EXTRA_EXPLICIT_RESUME, explicitResume)
@@ -1175,6 +1392,8 @@ class DownloadStateManager private constructor(private val app: Application) {
     /** Map known English parser error messages to localized strings. */
     private fun localizeError(msg: String): String {
         return when {
+            msg.startsWith("Link resolution failed") ->
+                localizedString(R.string.parse_link_resolve_failed)
             msg.startsWith("Not a valid Tumblr share link") ->
                 localizedString(R.string.parse_not_valid_url)
             msg.startsWith("Private Tumblr posts are not supported yet") ->
@@ -1201,6 +1420,10 @@ class DownloadStateManager private constructor(private val app: Application) {
                 localizedString(R.string.parse_error_generic, msg.substringAfter("Page parse failed: "))
             msg.startsWith("No downloadable media found") ->
                 localizedString(R.string.parse_no_new_media)
+            msg.startsWith("Post not found or deleted") ->
+                localizedString(R.string.parse_post_not_found)
+            msg.startsWith("Browser verification required") ->
+                localizedString(R.string.parse_browser_check)
             else -> msg
         }
     }

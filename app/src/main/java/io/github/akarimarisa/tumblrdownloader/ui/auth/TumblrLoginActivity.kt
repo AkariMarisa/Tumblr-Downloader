@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.webkit.CookieManager
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -28,6 +29,9 @@ private const val TAG = "TumblrLoginActivity"
 class TumblrLoginActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityTumblrLoginBinding
+
+    /** Last page URL seen in the WebView — used to detect a bounced login (#R34). */
+    private var lastSeenNavUrl: String? = null
 
     private val loginTargetUrl: String by lazy {
         intent.getStringExtra(EXTRA_LOGIN_URL) ?: DEFAULT_LOGIN_URL
@@ -58,7 +62,11 @@ class TumblrLoginActivity : AppCompatActivity() {
                 view: WebView,
                 request: WebResourceRequest
             ): WebResourceResponse? {
-                if (!request.isForMainFrame) {
+                if (request.isForMainFrame) {
+                    // Log the main-frame chain (POST /login, its redirect, …)
+                    // so a rejected login can be told apart from a client bug (#R34).
+                    Log.i(TAG, "main-frame ${request.method} ${request.url}")
+                } else {
                     val url = request.url.toString().lowercase(Locale.ROOT)
                     val host = request.url.host?.lowercase(Locale.ROOT) ?: return null
                     
@@ -85,12 +93,56 @@ class TumblrLoginActivity : AppCompatActivity() {
                 return super.shouldInterceptRequest(view, request)
             }
 
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                request?.let { Log.i(TAG, "nav ${it.method} ${it.url}") }
+                return super.shouldOverrideUrlLoading(view, request)
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?
+            ) {
+                Log.w(TAG, "http error ${errorResponse?.statusCode} for ${request?.url}")
+                super.onReceivedHttpError(view, request, errorResponse)
+            }
+
+            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                if (request?.isForMainFrame == true) {
+                    Log.w(TAG, "main-frame error ${error?.errorCode}: ${error?.description} url=${request.url}")
+                }
+                super.onReceivedError(view, request, error)
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 // Inject JS to remove any tracker elements that loaded before
                 // shouldInterceptRequest could catch them (e.g. inline scripts).
                 view?.evaluateJavascript(TRACKER_CLEANUP_JS, null)
 
-                if (isLikelyLoggedIn(url)) {
+                Log.i(TAG, "onPageFinished: $url (target=$loginTargetUrl)")
+
+                // A login attempt that lands back on the login form used to
+                // fail SILENTLY — the user just saw the page re-appear with no
+                // explanation (#R34). Surface it.
+                val loggedIn = isLikelyLoggedIn(url) || isRedirectTarget(url)
+                // Two bounce shapes: back to the plain form after leaving it,
+                // or Tumblr's own "login required again" marker on the login
+                // URL — that one means the POST was rejected server-side (#R34).
+                val rejectedMarker = (url ?: "").contains("login_register_required") &&
+                    lastSeenNavUrl?.contains("login_register_required") != true
+                val bouncedBack = !loggedIn && isLoginUrl(url) &&
+                    lastSeenNavUrl?.let { !isLoginUrl(it) } == true
+                if (!loggedIn && (rejectedMarker || bouncedBack)) {
+                    Log.w(TAG, "login rejected/bounced: $url")
+                    android.widget.Toast.makeText(
+                        this@TumblrLoginActivity,
+                        getString(R.string.login_rejected),
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+                lastSeenNavUrl = url
+
+                if (loggedIn) {
                     Log.i(TAG, "Detected Tumblr logged-in state from URL: $url")
                     view?.evaluateJavascript(
                         "(function() { try { return window.__INITIAL_STATE__; } catch(e) { return null; } })()"
@@ -216,9 +268,34 @@ class TumblrLoginActivity : AppCompatActivity() {
     private fun isLikelyLoggedIn(url: String?): Boolean {
         val lower = (url ?: "").lowercase(Locale.getDefault())
         return lower.contains("/dashboard") ||
-            lower.endsWith("https://www.tumblr.com/") ||
+            // was `endsWith(...)` — an all-lowercase string never contains
+            // the uppercase "H" of "https", so this never matched (#R34).
+            lower == "https://www.tumblr.com/" ||
+            lower == "https://www.tumblr.com" ||
             lower.contains("/settings") ||
             lower.contains("/blog/")
+    }
+
+    private fun isLoginUrl(url: String?): Boolean = (url ?: "").contains("/login")
+
+    /**
+     * After a successful login Tumblr redirects to the `redirect_to` target
+     * (usually the original post URL) — none of the [isLikelyLoggedIn]
+     * heuristics match that, so a perfectly successful login looked like a
+     * no-op (#R34). Only applies when the activity was launched with an
+     * explicit EXTRA_LOGIN_URL.
+     */
+    private fun isRedirectTarget(url: String?): Boolean {
+        val target = loginTargetUrl.trim()
+        if (target.isBlank() || target == DEFAULT_LOGIN_URL || url.isNullOrBlank()) return false
+        fun norm(s: String) = s.substringBefore('?').substringBefore('#').trimEnd('/')
+        val t = norm(target)
+        val u = norm(url)
+        // Tumblr canonicalises the bare post URL to a slug-suffixed one
+        // (`/8243…/slug`), so exact equality missed the real redirect and the
+        // user had to press 完成 by hand (#R34 follow-up, seen in trace
+        // `nav GET /ntn888/8243…` → `onPageFinished /ntn888/8243…/slug`).
+        return u == t || u.startsWith("$t/") || t.startsWith("$u/")
     }
 
     companion object {

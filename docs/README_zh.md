@@ -315,6 +315,13 @@ cd Tumblr-Downloader
 
 ---
 
+## 测试
+
+* JVM 单测 + lint：`./gradlew testDebugUnitTest lintDebug assembleDebug`（212 个）
+* 完整手工/实机用例清单（每条含当前状态）：[docs/test-plan_zh.md](test-plan_zh.md)
+
+---
+
 ## 许可证
 
 本项目基于 MIT 许可证。详见 [LICENSE](../LICENSE) 文件。

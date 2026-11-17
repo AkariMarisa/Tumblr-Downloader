@@ -47,6 +47,7 @@ import okhttp3.Request
 import android.provider.MediaStore
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import java.io.File
 import java.io.IOException
 import java.io.OutputStream
 import java.util.Collections
@@ -87,7 +88,9 @@ class DownloadService : Service() {
     }
 
     companion object {
-        private const val CHANNEL_ID = "tumblr_download_channel"
+        private const val CHANNEL_ID = "tumblr_download_channel_v2"
+        private const val LEGACY_CHANNEL_ID = "tumblr_download_channel"
+        private const val KEY_LEGACY_CHANNEL_DELETED = "notification_legacy_channel_deleted"
         private const val NOTIFICATION_ID = 10001
         private const val SUMMARY_NOTIFICATION_ID = 10002
         private const val IDLE_TIMEOUT_MS = 5_000L
@@ -406,6 +409,9 @@ class DownloadService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Trace late intents: a stray ACTION_START arriving right after the
+        // queue drains cancels the summary notification at its branch (#R27).
+        android.util.Log.i("DownloadSvc", "onStartCommand action=${intent?.action ?: ACTION_START} item=${intent?.let { parseIntent(it)?.id }}")
         when (intent?.action ?: ACTION_START) {
             ACTION_START -> {
                 // MUST run before any return path below.
@@ -423,9 +429,19 @@ class DownloadService : Service() {
                 if (intent?.getBooleanExtra(EXTRA_EXPLICIT_RESUME, false) == true) {
                     globalPauseRequested = false
                 }
+                // A new session opens only from the SUMMARY state — i.e. the
+                // previous batch was finished and summarized. The old emptiness
+                // check misfired with a serial queue: each next item's START
+                // landed in a momentary all-idle window and wiped the
+                // completions recorded so far (#R40: the summary read 成功:1
+                // while all 4 rows had finished — every inter-item START called
+                // "session CLEAR sizeBefore=1/2").
+                val openingNewSession = notificationMode == NotificationMode.SUMMARY
                 notificationMode = NotificationMode.ACTIVE
                 notificationManager.cancel(SUMMARY_NOTIFICATION_ID)
-                if (activeJobs.isEmpty() && queuedItemIds.isEmpty() && inHandItemIds.isEmpty()) {
+                android.util.Log.i("DownloadSvc", "cancel summary: ACTION_START path")
+                if (openingNewSession) {
+                    android.util.Log.i("DownloadSvc", "session CLEAR reason=new-session sizeBefore=${sessionCompletedIds.size}")
                     sessionCompletedIds.clear()
                     sessionFailedIds.clear()
                     notificationItems.clear()
@@ -484,6 +500,8 @@ class DownloadService : Service() {
             ACTION_CLEAR_ALL -> {
                 globalPauseRequested = false
                 notificationMode = NotificationMode.ACTIVE
+                // #R40 diagnostic
+                android.util.Log.i("DownloadSvc", "session CLEAR reason=ACTION_CLEAR_ALL sizeBefore=${sessionCompletedIds.size}")
                 sessionCompletedIds.clear()
                 sessionFailedIds.clear()
                 // Cancel all active downloads
@@ -507,6 +525,7 @@ class DownloadService : Service() {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 notificationManager.cancel(NOTIFICATION_ID)
                 notificationManager.cancel(SUMMARY_NOTIFICATION_ID)
+                android.util.Log.i("DownloadSvc", "cancel summary: ACTION_CLEAR path")
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -556,6 +575,7 @@ class DownloadService : Service() {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 notificationManager.cancel(NOTIFICATION_ID)
                 publishSummaryNotification()
+                android.util.Log.i("DownloadSvc", "posted summary via pause-all path")
                 return START_STICKY
             }
 
@@ -745,8 +765,10 @@ class DownloadService : Service() {
         // ponytail: pre-download check — if this media URL is already marked as
         // completed, skip the download flow entirely. This is a second line of
         // defense beyond the `processAppend` dedup, preventing the same media
-        // URL from being downloaded again due to ordering/restarts.
-        if (CompletedMediaStore.isCompleted(this@DownloadService, current.mediaUrl)) {
+        // URL from being downloaded again due to ordering/restarts. Keyed by
+        // the file identity (#R35): a reblog's copy is another file and must
+        // download.
+        if (CompletedMediaStore.isCompleted(this@DownloadService, completedStoreKey(current))) {
             emitProgress(current.copy(status = DownloadStatus.COMPLETED, progress = 100, errorMessage = null))
             return
         }
@@ -763,6 +785,9 @@ class DownloadService : Service() {
             // This also prevents queued items behind this one from being
             // blocked longer than necessary.
             if (!isNetworkConnected()) {
+                // #R36 observability: the deliberate pause-with-message path
+                // must be visible in logs (6.6 was judged "silent" without it).
+                android.util.Log.i("DownloadSvc", "network guard → PAUSED id=${current.id.take(8)} (waiting for network)")
                 // Save partial state so user can resume later.
                 val uri = downloadTargetMap[current.id]?.toString() ?: current.downloadFileUri
                 val savedBytes = bytesThisSession.coerceAtLeast(current.downloadedBytes)
@@ -986,7 +1011,7 @@ class DownloadService : Service() {
                 // the real type, so rename the file (and the queue title).
                 val (finalUri, finalTitle) = applyDetectedExtension(output.uri, contentType, current)
                 if (finalUri != output.uri) downloadTargetMap[current.id] = finalUri
-                CompletedMediaStore.markCompleted(this@DownloadService, current.mediaUrl)
+                CompletedMediaStore.markCompleted(this@DownloadService, completedStoreKey(current))
                 emitProgress(
                     current.copy(
                         status = DownloadStatus.COMPLETED,
@@ -1083,6 +1108,8 @@ class DownloadService : Service() {
                 // of waiting for the next heartbeat cycle.
                 probeNetworkNow()
                 if (!isNetworkConnected()) {
+                    // #R36 observability (6.6): the deliberate pause-with-message path.
+                    android.util.Log.i("DownloadSvc", "post-error network check → PAUSED id=${current.id.take(8)}")
                     val uri = downloadTargetMap[current.id]?.toString() ?: current.downloadFileUri
                     val savedBytes = bytesThisSession.coerceAtLeast(current.downloadedBytes)
                     if (uri != null && savedBytes > 0L) {
@@ -1307,7 +1334,38 @@ class DownloadService : Service() {
         val custom = createCustomDirTarget(item, fileName, mimeType)
         if (custom != null) return custom
 
+        // #R32: with the one-time folder grant, find an already existing file
+        // through SAF — this sees files whose MediaStore row lost its owner
+        // attribution (invisible to our name query, undeletable by path), so
+        // a re-download overwrites in place instead of colliding into "(1)".
+        createDefaultDirSafTarget(item, fileName)?.let { return it }
+
         return createMediaStoreTarget(item, fileName, mimeType)
+    }
+
+    /**
+     * #R32 SAF leg: overwrite an existing file under the granted default
+     * folder. Returns null (→ normal MediaStore insert) when no grant is
+     * stored or the file does not exist — with the folder granted, "file does
+     * not exist" is authoritative, so the insert below cannot collide either.
+     */
+    private fun createDefaultDirSafTarget(item: DownloadItem, fileName: String): DownloadTarget? {
+        val tree = DownloadUtils.getDefaultDirGrant(this) ?: return null
+        val root = runCatching { DocumentFile.fromTreeUri(this, tree) }.getOrNull() ?: return null
+        if (!root.isDirectory) return null
+        val existing = runCatching { blogSubDir(root, item).findFile(fileName) }.getOrNull()
+        if (existing == null || !existing.isFile) return null
+        val output = contentResolver.openOutputStream(existing.uri, "wt")
+            ?: return null
+        android.util.Log.i("DownloadSvc", "R32: SAF overwrite name=$fileName")
+        return DownloadTarget(
+            uri = existing.uri,
+            outputStream = output,
+            onSuccess = {
+                // Already published — no IS_PENDING flip needed.
+            },
+            onFailure = { /* the next attempt overwrites again */ }
+        )
     }
 
     /**
@@ -1480,6 +1538,22 @@ class DownloadService : Service() {
             )
         }
 
+        // #R32: the name query above can miss files whose MediaStore row lost
+        // its owner attribution (verified on device: owner=NULL rows while
+        // the file is plainly visible by path) — without READ permission our
+        // query only sees rows attributed to us, yet the provider's insert
+        // conflict check sees every row and renames our fresh insert to
+        // "<name> (1)". When the query found nothing, delete whatever already
+        // sits at the target path so the insert below cannot collide.
+        val directFile = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "${relativePath.removePrefix("${Environment.DIRECTORY_DOWNLOADS}/")}/$fileName"
+        )
+        if (runCatching { directFile.isFile }.getOrDefault(false)) {
+            val removed = runCatching { directFile.delete() }.getOrDefault(false)
+            android.util.Log.i("DownloadSvc", "R32: pre-insert path delete ok=$removed name=$fileName")
+        }
+
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
             put(MediaStore.Downloads.MIME_TYPE, mimeType)
@@ -1515,6 +1589,10 @@ class DownloadService : Service() {
      * duplicating (#4). Prefers a published row over a stale pending one so a
      * fresh download never appends to somebody else's partial file.
      */
+    /** #R35: [CompletedMediaStore] key for a queue row (file-scoped). */
+    private fun completedStoreKey(item: DownloadItem): String? =
+        CompletedMediaStore.keyFor(item.sourceUrl, item.mediaUrl, item.blogName, item.batchId != null)
+
     private fun findExistingDownload(fileName: String, relativePath: String): Uri? {
         // minSdk 30 → always the Q+ collection.
         val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -1608,7 +1686,11 @@ class DownloadService : Service() {
 
     private fun emitProgress(item: DownloadItem) {
         when (item.status) {
-            DownloadStatus.COMPLETED -> sessionCompletedIds.add(item.id)
+            DownloadStatus.COMPLETED -> {
+                sessionCompletedIds.add(item.id)
+                // #R40 diagnostic
+                android.util.Log.i("DownloadSvc", "session add COMPLETED id=${item.id.take(8)} size=${sessionCompletedIds.size}")
+            }
             DownloadStatus.FAILED -> sessionFailedIds.add(item.id)
             else -> Unit
         }
@@ -1669,6 +1751,7 @@ class DownloadService : Service() {
     }
 
     private fun publishSummaryNotification() {
+        android.util.Log.i("DownloadSvc", "publishSummary enter mode=$notificationMode completed=${sessionCompletedIds.size}")
         notificationMode = NotificationMode.SUMMARY
         val content = try {
             LocaleHelper.contextForAppLocale(this).getString(R.string.download_summary_notification, sessionCompletedIds.size, sessionFailedIds.size)
@@ -1826,11 +1909,34 @@ class DownloadService : Service() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 resolveString(R.string.download_channel_name),
-                NotificationManager.IMPORTANCE_LOW
+                // #R29: the legacy `tumblr_download_channel` was IMPORTANCE_LOW,
+                // which buried the progress and summary notifications in the OS
+                // "silent" group (EMUI folds them into an untappable chip row).
+                // A fresh channel id is used because an existing channel's
+                // importance can never be changed by its app, and deleting it
+                // does not stick while a notification still references it
+                // (observed on device) — first creation wins, so DEFAULT is
+                // honoured on every install. The sound plays only on the first
+                // post of a session; updates never re-alert.
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
                 description = resolveString(R.string.download_channel_desc)
             }
+            // Create the v2 channel first, then drop the legacy one exactly
+            // once (#R29) — notifications posted from here on use v2 even if
+            // the legacy deletion is deferred by an active reference.
             notificationManager.createNotificationChannel(channel)
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            if (!prefs.getBoolean(KEY_LEGACY_CHANNEL_DELETED, false)) {
+                notificationManager.deleteNotificationChannel(LEGACY_CHANNEL_ID)
+                prefs.edit().putBoolean(KEY_LEGACY_CHANNEL_DELETED, true).apply()
+                android.util.Log.i("DownloadSvc", "channel: legacy channel deleted (#R29)")
+            }
+            android.util.Log.i(
+                "DownloadSvc",
+                "channel ready: id=$CHANNEL_ID importance=" +
+                    notificationManager.getNotificationChannel(CHANNEL_ID)?.importance
+            )
         }
     }
 

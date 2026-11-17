@@ -34,3 +34,6 @@ out/
 
 .loom/
 .worktrees/
+
+# pulled by bare  (cwd trap) — never commit these
+bugreport*.zip

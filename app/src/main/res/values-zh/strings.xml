@@ -22,6 +22,7 @@
     <string name="cookie_security_message">当前已检测到本地保存的 Tumblr 登录 Cookie，仅用于当前设备内访问解析，不会上传到任何服务器；请勿在公共设备长期保留，并可随时点击"清除登录 Cookie"移除。</string>
     <string name="login_cookie_saved">登录状态已保存到本地，解析私密内容可直接复用。</string>
     <string name="login_cookie_not_found">未检测到可保存的登录 Cookie，请确认已完成登录。</string>
+    <string name="login_rejected">Tumblr 未接受此次登录，请稍后重试或检查网络。</string>
     <string name="cookies_cleared_toast">已清除本地 Cookie 记录</string>
     <string name="cookie_sync_timeout">登录成功，但 Cookie 同步有延迟。链接已保留——请稍后重试。</string>
     <string name="login_retry_failed">已检测到登录，但无法访问此帖子。请尝试重新粘贴链接。</string>
@@ -103,9 +104,17 @@
     <string name="parse_oembed_unavailable">oEmbed 不可用：%1$s</string>
     <string name="parse_login_required">登录后可重试。</string>
     <string name="parse_duplicate_skipped">该链接中的媒体已在下载列表中，已跳过重复项。</string>
+    <string name="parse_duplicate_in_blog">已在下载列表中：属于博客「%1$s」</string>
     <string name="parse_no_new_media">该链接未识别到可下载媒体</string>
     <string name="parse_page_request_failed">页面请求失败，HTTP %1$d</string>
     <string name="parse_private_not_supported">暂不支持下载私密帖子。</string>
+    <string name="parse_link_resolve_failed">无法解析短链接。</string>
+    <string name="parse_post_not_found">该帖已被删除或不存在。</string>
+    <string name="parse_browser_check">站点正在执行本应用无法通过的自动访问验证。请先在浏览器中打开该链接，稍后再试。</string>
+    <string name="saf_grant_title">授权下载文件夹</string>
+    <string name="saf_grant_message">选择一次 TumblrDownloader 文件夹，重复下载将覆盖旧文件，而不是再存一个「(1)」副本。系统选择器只会打开这一次。</string>
+    <string name="saf_grant_positive">去授权</string>
+    <string name="saf_grant_negative">暂不</string>
     <string name="parse_oembed_redirect_error">oEmbed 重定向错误（HTTP %1$d）</string>
     <string name="parse_oembed_http_error">oEmbed 请求失败，HTTP %1$d</string>
     <string name="parse_oembed_parsed_empty">oEmbed 响应中未找到可下载媒体</string>
@@ -194,7 +203,10 @@
     <string name="blog_job_state_paused">已暂停</string>
     <string name="blog_job_interrupted">未完成</string>
     <plurals name="blog_job_stats">
-        <item quantity="other">%1$d 帖 · %2$d 个媒体</item>
+        <item quantity="other">已扫描 %1$d/%2$d 帖 · %3$d 个媒体</item>
+    </plurals>
+    <plurals name="blog_job_stats_open">
+        <item quantity="other">已扫描 %1$d 帖 · %2$d 个媒体</item>
     </plurals>
     <string name="blog_job_download_progress">已下载 %1$d/%2$d 个媒体</string>
     <string name="blog_job_download_complete">全部 %1$d 个媒体已下载</string>

@@ -70,8 +70,11 @@ class BlogDetailActivity : AppCompatActivity() {
 
         // Batch controls: pause/start every unfinished item of this blog job
         // at once, instead of tapping each row.
-        binding.btnPauseAll.setOnClickListener { viewModel.pauseBlogBatch(jobId) }
-        binding.btnResumeAll.setOnClickListener { viewModel.resumeBlogBatch(jobId) }
+        // Card-level pause/resume: stopping this blog's downloads must stop
+        // its scan too — pausing only the rows left the card saying "parsing"
+        // with nothing moving and a Pause button that did nothing (#16).
+        binding.btnPauseAll.setOnClickListener { viewModel.pauseBlogCard(jobId) }
+        binding.btnResumeAll.setOnClickListener { viewModel.resumeBlogJob(jobId) }
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {

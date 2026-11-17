@@ -42,6 +42,9 @@ class BlogFeedParserTest {
     @Test
     fun `blog url - subdomain form`() {
         assertEquals("bonesbunns", BlogFeedParser.parseBlogIdentifier("https://bonesbunns.tumblr.com"))
+        assertEquals("akari-test-blog", BlogFeedParser.parseBlogIdentifier("https://www.tumblr.com/blog/akari-test-blog"))
+        assertEquals("akari-test-blog", BlogFeedParser.parseBlogIdentifier("https://www.tumblr.com/blog/akari-test-blog/"))
+        assertTrue(BlogFeedParser.isBlogUrl("https://www.tumblr.com/blog/akari-test-blog"))
         assertEquals("bonesbunns", BlogFeedParser.parseBlogIdentifier("https://bonesbunns.tumblr.com/"))
     }
 
@@ -65,6 +68,25 @@ class BlogFeedParserTest {
         assertNull(BlogFeedParser.parseBlogIdentifier("not a url"))
         assertNull(BlogFeedParser.parseBlogIdentifier("https://example.com/blog"))
         assertNull(BlogFeedParser.parseBlogIdentifier(""))
+    }
+
+    @Test
+    fun `findBlogUrlInText - commented share routes to the blog`() {
+        assertEquals(
+            "https://www.tumblr.com/bonesbunns",
+            BlogFeedParser.findBlogUrlInText("看看这个 https://www.tumblr.com/bonesbunns，推荐！")
+        )
+        assertEquals(
+            "https://bonesbunns.tumblr.com/",
+            BlogFeedParser.findBlogUrlInText("（https://bonesbunns.tumblr.com/） very nice")
+        )
+        assertEquals(
+            "https://www.tumblr.com/blog/akari-test-blog",
+            BlogFeedParser.findBlogUrlInText("check https://www.tumblr.com/blog/akari-test-blog now")
+        )
+        assertNull(BlogFeedParser.findBlogUrlInText("no links in this text"))
+        // a post URL is not a blog URL
+        assertNull(BlogFeedParser.findBlogUrlInText("https://www.tumblr.com/bonesbunns/828871589032558592/hi"))
     }
 
     // ── bootstrap parsing ────────────────────────────────────────────

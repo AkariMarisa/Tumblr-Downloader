@@ -1,6 +1,7 @@
 package io.github.akarimarisa.tumblrdownloader.utils
 
 import android.content.Context
+import android.util.Log
 import io.github.akarimarisa.tumblrdownloader.R
 import okhttp3.Request
 import org.json.JSONObject
@@ -13,6 +14,7 @@ data class TumblrAccount(
 )
 
 object TumblrAccountStore {
+    private const val TAG = "TumblrAccount"
     private const val PREF_NAME = "tumblr_account"
     private const val KEY_USERNAME = "username"
     private const val KEY_AVATAR_URL = "avatar_url"
@@ -58,20 +60,40 @@ object TumblrAccountStore {
     /**
      * Fetch account info via the same API the Tumblr web dashboard uses.
      * Falls back to dashboard HTML parsing if the API call fails.
+     *
+     * Returns `null` only when **every** attempt failed at the transport
+     * level (offline / timeout / 5xx) — i.e. we learned nothing about the
+     * session. A definitive "not logged in" answer is a non-logged-in
+     * [TumblrAccount]. Callers keep their cached state on `null` instead of
+     * flipping the UI to logged-out for a flaky network (#R34).
      */
-    fun fetchAccountInfo(context: Context): TumblrAccount {
+    fun fetchAccountInfo(context: Context): TumblrAccount? {
         // Always try the API first — never return stale cached data without re-validation
         val apiAccount = fetchFromApi(context)
-        if (apiAccount.isLoggedIn) return apiAccount
+        if (apiAccount != null) {
+            if (apiAccount.isLoggedIn) {
+                Log.i(TAG, "fetch: api ok (${apiAccount.username})")
+                return apiAccount
+            }
+            Log.i(TAG, "fetch: api answered logged-out, trying dashboard")
+        } else {
+            Log.w(TAG, "fetch: api transport failure, trying dashboard")
+        }
 
         // Fallback: parse dashboard HTML
         val dashboardAccount = fetchFromDashboard(context)
-        if (dashboardAccount.isLoggedIn) return dashboardAccount
+        if (dashboardAccount != null) {
+            Log.i(TAG, "fetch: dashboard " + if (dashboardAccount.isLoggedIn) "ok (${dashboardAccount.username})" else "answered logged-out")
+            return dashboardAccount
+        }
 
-        return TumblrAccount()
+        Log.w(TAG, "fetch: both attempts failed at transport level, keeping cache")
+        // API gave a definitive answer even though the dashboard fallback failed.
+        return apiAccount
     }
 
-    private fun fetchFromApi(context: Context): TumblrAccount {
+    /** `null` = transport-level failure (told us nothing); [TumblrAccount] = a definitive answer. */
+    private fun fetchFromApi(context: Context): TumblrAccount? {
         val request = Request.Builder()
             .url("https://www.tumblr.com/api/v2/user/info?fields%5Bblogs%5D=%3Favatar%2Cname%2C%3Ftitle%2Curl%2C%3Fblog_view_url%2C%3Fcan_message%2C%3Fdescription%2C%3Fis_adult%2C%3Fuuid%2C%3Fis_private_channel%2C%3Fposts%2C%3Fis_group_channel%2C%3Fprimary%2C%3Fadmin%2C%3Fdrafts%2C%3Ffollowers%2C%3Fqueue%2C%3Fhas_flagged_posts%2C%3Fmessages%2C%3Fask%2C%3Fcan_submit%2C%3Fmention_key%2C%3Ftimezone_offset%2C%3Fanalytics_url%2C%3Fis_premium_partner%2C%3Fis_blogless_advertiser%2C%3Fis_tumblrpay_onboarded%2C%3Ftheme%2C%3Ftumblrmart_orders")
             .get()
@@ -83,17 +105,33 @@ object TumblrAccountStore {
             .addHeader("X-Version", "redpop/3/0//redpop/")
             .build()
 
-        val response = runCatching { TumblrParser.httpClient.newCall(request).execute() }.getOrNull() ?: return TumblrAccount()
+        val response = runCatching { TumblrParser.httpClient.newCall(request).execute() }.getOrElse {
+            Log.w(TAG, "api request failed: ${it.javaClass.simpleName}: ${it.message}")
+            return null
+        }
         if (!response.isSuccessful) {
+            val code = response.code
             response.close()
+            Log.w(TAG, "api HTTP $code")
+            // Rate limits and server errors say nothing about the session.
+            if (code == 429 || code >= 500) return null
             return TumblrAccount()
         }
         val body = response.body?.string().orEmpty()
         response.close()
 
-        val json = runCatching { JSONObject(body) }.getOrNull() ?: return TumblrAccount()
+        val json = runCatching { JSONObject(body) }.getOrNull()
+        if (json == null) {
+            Log.w(TAG, "api: unparseable body (${body.take(80)})")
+            return null
+        }
         val meta = json.optJSONObject("meta")
-        if (meta?.optInt("status", 0) != 200) return TumblrAccount()
+        if (meta?.optInt("status", 0) != 200) {
+            val s = meta?.optInt("status", 0) ?: 0
+            Log.w(TAG, "api meta status=$s")
+            if (s == 429 || s >= 500) return null
+            return TumblrAccount()
+        }
 
         val resp = json.optJSONObject("response") ?: return TumblrAccount()
         val user = resp.optJSONObject("user") ?: return TumblrAccount()
@@ -120,7 +158,8 @@ object TumblrAccountStore {
         return account
     }
 
-    private fun fetchFromDashboard(context: Context): TumblrAccount {
+    /** `null` = transport-level failure; [TumblrAccount] = a definitive answer. */
+    private fun fetchFromDashboard(context: Context): TumblrAccount? {
         val request = okhttp3.Request.Builder()
             .url("https://www.tumblr.com/dashboard")
             .get()
@@ -129,15 +168,25 @@ object TumblrAccountStore {
             .addHeader("Accept-Language", "en-US,en;q=0.9")
             .build()
 
-        val response = runCatching { TumblrParser.httpClient.newCall(request).execute() }.getOrNull() ?: return TumblrAccount()
+        val response = runCatching { TumblrParser.httpClient.newCall(request).execute() }.getOrElse {
+            Log.w(TAG, "dashboard request failed: ${it.javaClass.simpleName}: ${it.message}")
+            return null
+        }
         if (!response.isSuccessful) {
+            val code = response.code
             response.close()
+            Log.w(TAG, "dashboard HTTP $code")
+            if (code == 429 || code >= 500) return null
             return TumblrAccount()
         }
         val html = response.body?.string().orEmpty()
         response.close()
         val name = extractUsernameFromDashboard(html)
-        if (name.isBlank()) return TumblrAccount()
+        if (name.isBlank()) {
+            // A200 dashboard response without a username = login page/challenge.
+            Log.w(TAG, "dashboard: no username in HTML (len=${html.length}) — session rejected")
+            return TumblrAccount()
+        }
 
         val account = TumblrAccount(
             username = name,

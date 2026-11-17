@@ -39,7 +39,10 @@ object BlogFeedParser {
 
     private val blogUrlRegex = Regex(
         "(?i)^https?://" +
-            "(?:(?:www\\.)?tumblr\\.com/([a-z0-9][a-z0-9_.-]{0,40})" +
+            // `blog/` is accepted as a prefix: Tumblr's own blog switcher
+            // produces www.tumblr.com/blog/<name>, which the single-segment
+            // anchor rejected as an invalid link (user-reported, #R38).
+            "(?:(?:www\\.)?tumblr\\.com/(?:blog/)?([a-z0-9][a-z0-9_.-]{0,40})" +
             "|([a-z0-9][a-z0-9_.-]{0,40})\\.tumblr\\.com)/?$"
     )
 
@@ -82,6 +85,23 @@ object BlogFeedParser {
 
     /** True when [text] is exactly a Tumblr blog URL (www or subdomain form). */
     fun isBlogUrl(text: String): Boolean = parseBlogIdentifier(text) != null
+
+    /**
+     * Finds a standalone blog URL inside free-form text — a commented share
+     * such as `看看这个 https://www.tumblr.com/name，推荐` used to fail
+     * [isBlogUrl] (which needs the bare URL), fall into the post path and die
+     * silently (#R31). The candidate stops at the first character that cannot
+     * occur in a blog link (so glued CJK punctuation is dropped); post URLs
+     * are NOT matched (they are not blog URLs).
+     */
+    fun findBlogUrlInText(text: String): String? {
+        return urlTokenRegex.findAll(text)
+            .map { it.value.trimEnd('.') }
+            .firstOrNull { isBlogUrl(it) }
+    }
+
+    /** URL-shaped runs of characters that a Tumblr link can be made of. */
+    private val urlTokenRegex = Regex("https?://[A-Za-z0-9./?&=_~%+#-]+")
 
     /**
      * Extract the bare blog name from a blog URL:
@@ -331,8 +351,11 @@ object BlogFeedParser {
         return best
     }
 
+    /** Precompiled: a per-call Pattern.compile here ran inside the parse hot loop (#R43). */
+    private val SQUARE_RENDITION_REGEX = Regex("_\\d{2,4}sq(?=\\.[a-z0-9]+$)", RegexOption.IGNORE_CASE)
+
     private fun isSquareRendition(url: String): Boolean =
-        Regex("_\\d{2,4}sq(?=\\.[a-z0-9]+$)", RegexOption.IGNORE_CASE).containsMatchIn(url)
+        SQUARE_RENDITION_REGEX.containsMatchIn(url)
 
     /** Only real post media is downloadable — reject avatars/posters/background noise. */
     fun isDownloadableMedia(url: String): Boolean {

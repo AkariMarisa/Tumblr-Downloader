@@ -23,6 +23,7 @@
     <string name="cookie_security_message">A Tumblr login cookie has been detected. It is stored locally on this device and used only for parsing. It will never be uploaded. Do not keep it on public devices. You can clear it anytime.</string>
     <string name="login_cookie_saved">Login saved locally. Private content can be parsed automatically.</string>
     <string name="login_cookie_not_found">No login cookie found. Please make sure you are logged in.</string>
+    <string name="login_rejected">Tumblr did not accept the login. Please try again later or check your network.</string>
     <string name="cookies_cleared_toast">Local cookies cleared</string>
     <string name="cookie_sync_timeout">Login successful, but cookie sync is delayed. The URL has been preserved — please try again.</string>
     <string name="login_retry_failed">Login was detected but couldn\'t access this post. Please try pasting the link again.</string>
@@ -105,9 +106,17 @@
     <string name="parse_oembed_unavailable">oEmbed unavailable: %1$s</string>
     <string name="parse_login_required">Login required to retry.</string>
     <string name="parse_duplicate_skipped">Media already in download list, duplicates skipped.</string>
+    <string name="parse_duplicate_in_blog">Already in the download list — belongs to the %1$s blog</string>
     <string name="parse_no_new_media">No downloadable media found</string>
     <string name="parse_page_request_failed">Page request failed, HTTP %1$d</string>
     <string name="parse_private_not_supported">Private Tumblr posts are not supported yet.</string>
+    <string name="parse_link_resolve_failed">Could not resolve the short link.</string>
+    <string name="parse_post_not_found">This post was deleted or does not exist.</string>
+    <string name="parse_browser_check">The site is running an automated-access check that this app cannot pass. Open the link in a browser and try again later.</string>
+    <string name="saf_grant_title">Authorize the download folder</string>
+    <string name="saf_grant_message">Pick the TumblrDownloader folder once so re-downloads overwrite the previous file instead of saving another \"(1)\" copy. The folder picker opens only one time.</string>
+    <string name="saf_grant_positive">Choose folder</string>
+    <string name="saf_grant_negative">Not now</string>
     <string name="parse_oembed_redirect_error">oEmbed redirect error (HTTP %1$d)</string>
     <string name="parse_oembed_http_error">oEmbed request failed, HTTP %1$d</string>
     <string name="parse_oembed_parsed_empty">No downloadable media found in oEmbed response</string>
@@ -198,8 +207,12 @@
     <string name="blog_job_state_paused">Paused</string>
     <string name="blog_job_interrupted">Not finished</string>
     <plurals name="blog_job_stats">
-        <item quantity="one">%1$d post · %2$d media</item>
-        <item quantity="other">%1$d posts · %2$d media</item>
+        <item quantity="one">%1$d/%2$d post scanned · %3$d media</item>
+        <item quantity="other">%1$d/%2$d posts scanned · %3$d media</item>
+    </plurals>
+    <plurals name="blog_job_stats_open">
+        <item quantity="one">%1$d post scanned · %2$d media</item>
+        <item quantity="other">%1$d posts scanned · %2$d media</item>
     </plurals>
     <string name="blog_job_download_progress">Downloaded %1$d/%2$d media</string>
     <string name="blog_job_download_complete">All %1$d media downloaded</string>
