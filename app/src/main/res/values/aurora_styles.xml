@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Aurora Glass theme + shape overlays.
+  NOT referenced by the manifest or any layout until the Phase 1 atomic
+  switch — AndroidManifest keeps android:theme=@style/Theme.TumblrDownloader.
+  Dark-mode window-bar flags are overridden in values-night/aurora_styles.xml.
+-->
+<resources>
+
+    <!-- ============ Theme (unused until Phase 1) ============ -->
+    <style name="Theme.TumblrDownloader.Aurora" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- M3 color roles mapped to aurora tokens: Material widgets
+             (buttons, chips, switches, sliders, sheets) pick these up
+             automatically once the theme is applied -->
+        <item name="colorPrimary">@color/aurora_accent</item>
+        <item name="colorOnPrimary">@color/aurora_on_gradient</item>
+        <item name="colorPrimaryContainer">@color/aurora_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/aurora_on_primary_container</item>
+        <item name="colorSecondary">@color/aurora_gradient_end</item>
+        <item name="colorOnSecondary">@color/aurora_on_gradient</item>
+        <item name="colorSurface">@color/aurora_root</item>
+        <item name="colorOnSurface">@color/aurora_ink</item>
+        <item name="android:colorBackground">@color/aurora_root</item>
+
+        <!-- Edge-to-edge: aurora blobs run under the system bars -->
+        <item name="android:windowBackground">@color/aurora_root</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <!-- ============ Shape language (rounded family, from mockups) ============ -->
+    <style name="ShapeAppearanceOverlay.TumblrDownloader.Aurora.Small" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">12dp</item>
+    </style>
+
+    <style name="ShapeAppearanceOverlay.TumblrDownloader.Aurora.Card" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">16dp</item>
+    </style>
+
+    <style name="ShapeAppearanceOverlay.TumblrDownloader.Aurora.CardLarge" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">24dp</item>
+    </style>
+
+    <style name="ShapeAppearanceOverlay.TumblrDownloader.Aurora.Sheet" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">28dp</item>
+    </style>
+
+    <style name="ShapeAppearanceOverlay.TumblrDownloader.Aurora.Pill" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">50%</item>
+    </style>
+
+</resources>
