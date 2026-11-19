@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Aurora Glass design tokens — DARK overrides (values-night).
+  Same names as values/aurora_colors.xml; alpha values match the dark
+  mockups (cards 7-14% white, sheet near-solid #12151D, scrim 0.50).
+-->
+<resources>
+    <!-- Text roles -->
+    <color name="aurora_ink">#FFEDEEF2</color>
+    <color name="aurora_secondary">#FF6E7486</color>
+    <color name="aurora_body">#FFA9AEBD</color>
+    <color name="aurora_soft">#FF565B6B</color>
+    <color name="aurora_hint">#FF8E93A3</color>
+
+    <!-- Accent / status -->
+    <color name="aurora_accent">#FFFF8FAC</color>
+    <color name="aurora_success">#FF4ADE80</color>
+
+    <!-- Surfaces: dark glass -->
+    <color name="aurora_root">#FF0B0E14</color>
+    <color name="aurora_glass_fill">#12FFFFFF</color>
+    <color name="aurora_glass_fill_card">#1AFFFFFF</color>
+    <color name="aurora_glass_fill_strong">#F712151D</color>
+    <color name="aurora_glass_fill_nav">#14FFFFFF</color>
+    <color name="aurora_glass_stroke">#24FFFFFF</color>
+
+    <!-- Tonal container -->
+    <color name="aurora_primary_container">#1FFFFFFF</color>
+    <color name="aurora_on_primary_container">#FFCDD1DC</color>
+
+    <!-- Tracks -->
+    <color name="aurora_track">#1FFFFFFF</color>
+    <color name="aurora_track_strong">#2EFFFFFF</color>
+    <color name="aurora_switch_off">#30FFFFFF</color>
+
+    <!-- Scrim behind bottom sheets / dialogs (mockups: 0.50 veil) -->
+    <color name="aurora_scrim">#8006070D</color>
+
+    <!-- aurora_gradient_* / aurora_on_gradient / aurora_blob_* are theme-neutral,
+         inherited from values/aurora_colors.xml -->
+</resources>

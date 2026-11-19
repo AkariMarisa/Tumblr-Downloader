@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Dark-mode overrides for Theme.TumblrDownloader.Aurora.
+  Merged item-by-item over the base theme; everything not listed here
+  (colors, surfaces) already resolves through values-night/aurora_colors.xml.
+-->
+<resources>
+    <style name="Theme.TumblrDownloader.Aurora" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

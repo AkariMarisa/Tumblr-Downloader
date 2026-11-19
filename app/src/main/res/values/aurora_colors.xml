@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Aurora Glass design tokens — LIGHT (default).
+  Source of truth: docs/design/README.md (SVG mockups draw these exact values).
+  All names are prefixed `aurora_` so nothing can collide with legacy palette,
+  and nothing outside this file references them until the Phase 1 atomic switch.
+-->
+<resources>
+    <!-- Gradient accent: the one brand gradient, used for buttons / progress /
+         active pills / selected checkmarks -->
+    <color name="aurora_gradient_start">#FFFF5C8A</color>
+    <color name="aurora_gradient_end">#FF8B5CF6</color>
+
+    <!-- Text roles -->
+    <color name="aurora_ink">#FF1D1B20</color>
+    <color name="aurora_secondary">#FF9A939E</color>
+    <color name="aurora_body">#FF5F5866</color>
+    <color name="aurora_soft">#FFA79FB5</color>
+    <color name="aurora_hint">#FF8A8490</color>
+    <color name="aurora_on_gradient">#FFFFFFFF</color>
+
+    <!-- Accent / status -->
+    <color name="aurora_accent">#FFB02E5C</color>
+    <color name="aurora_success">#FF1B7A3F</color>
+
+    <!-- Surfaces (alpha baked in; values-night overrides with dark glass) -->
+    <color name="aurora_root">#FFFFFFFF</color>
+    <color name="aurora_glass_fill">#BFFFFFFF</color>
+    <color name="aurora_glass_fill_card">#C7FFFFFF</color>
+    <color name="aurora_glass_fill_strong">#FBFFFFFF</color>
+    <color name="aurora_glass_fill_nav">#E0FFFFFF</color>
+    <color name="aurora_glass_stroke">#FFE7E0EF</color>
+
+    <!-- Tonal container (chips, tonal buttons) -->
+    <color name="aurora_primary_container">#FFFCE7EF</color>
+    <color name="aurora_on_primary_container">#FFB02E5C</color>
+
+    <!-- Tracks (progress / slider / switch off) -->
+    <color name="aurora_track">#FFEDE7F3</color>
+    <color name="aurora_track_strong">#FFE4DEEC</color>
+    <color name="aurora_switch_off">#FFD9D3E2</color>
+
+    <!-- Scrim behind bottom sheets / dialogs (mockups: 0.64 veil) -->
+    <color name="aurora_scrim">#A6EFE9F7</color>
+
+    <!-- Aurora blobs: radial gradient paint, alpha handled per stop -->
+    <color name="aurora_blob_violet">#FF8B5CF6</color>
+    <color name="aurora_blob_pink">#FFFF5C8A</color>
+</resources>
