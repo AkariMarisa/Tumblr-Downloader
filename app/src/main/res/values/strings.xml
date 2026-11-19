@@ -275,4 +275,8 @@
     <string name="media_preview_type_image">Image</string>
     <string name="media_preview_type_video">Video</string>
     <string name="media_preview_type_gif">GIF</string>
+    <!-- Theme picker (Aurora settings segmented control) -->
+    <string name="theme_option_system">Follow system</string>
+    <string name="theme_option_light">Light</string>
+    <string name="theme_option_dark">Dark</string>
 </resources>
