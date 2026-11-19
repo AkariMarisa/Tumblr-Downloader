@@ -37,7 +37,7 @@ updated: "2026-11-18"
 1. **工作区隔离**：用 worktree 开工（`worktree_create` name=`aurora-ui`），主工作区留 master 应对日常杂活；分支 `feature/aurora-ui`
 2. **范围**（全部换用 Phase 0 已铺好的样式）：
    - 16 个 layout 逐屏换肤（对照 `docs/design/svg/` 逐屏核对）
-   - **⚠️ 决策检查点（开工第一天先问用户）**：抽屉 → 底部导航后，`退出登录 / 使用教程 / 关于` 三个入口挪到哪（建议：设置列表加行，账号区放退出；用户拍板后才动 `MainActivity`）
+   - **信息架构（✅ 已拍板 2026-11-19，动 `MainActivity` 前以此为准）**：抽屉移除后 —— 首页右上**头像圆圈 → 账号底部浮层**（用户名 / 登录态 / 退出登录）；**`使用教程`、`关于` 作为设置页列表行**；**`关于` 页按设计稿完整升级**（GitHub / F-Droid / Ko-fi 三链接 chip + Ko-fi 支持卡，内容不缩水）
    - 顶部 TabLayout+ViewPager2 保留结构，指示改设计稿样式；或按设计稿评估是否需要 Fragment 切换
    - `MediaPreviewDialog` → `BottomSheetDialogFragment`（复用现有状态/回调，只动 UI 壳；**旋转行 3.7 是高危回归点**）
    - 设置页加 Theme 分段选择器（`settings_theme` 已存在，接 `AppCompatDelegate`）
