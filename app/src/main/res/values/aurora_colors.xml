@@ -43,7 +43,16 @@
     <!-- Scrim behind bottom sheets / dialogs (mockups: 0.64 veil) -->
     <color name="aurora_scrim">#A6EFE9F7</color>
 
-    <!-- Aurora blobs: radial gradient paint, alpha handled per stop -->
+    <!-- Aurora blobs: radial gradient paint, alpha handled per stop.
+         inner = circle center (~36%/28% alpha), mid = 45% radius falloff -->
     <color name="aurora_blob_violet">#FF8B5CF6</color>
     <color name="aurora_blob_pink">#FFFF5C8A</color>
+    <color name="aurora_blob_violet_inner">#5C8B5CF6</color>
+    <color name="aurora_blob_violet_outer">#248B5CF6</color>
+    <color name="aurora_blob_pink_inner">#47FF5C8A</color>
+    <color name="aurora_blob_pink_outer">#21FF5C8A</color>
+
+    <!-- Mid blend of the gradient (switch-on track, nav active indicator —
+         places where a ColorStateList cannot carry a gradient) -->
+    <color name="aurora_gradient_mid">#FFC55CBF</color>
 </resources>

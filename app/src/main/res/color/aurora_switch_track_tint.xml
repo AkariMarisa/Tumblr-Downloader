@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Switch track: gradient mid-tone when on (ColorStateList cannot carry a
+     linear gradient; the 46dp track makes the mid blend read as the brand
+     gradient), neutral off otherwise. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="@color/aurora_gradient_mid" android:state_checked="true" />
+    <item android:color="@color/aurora_switch_off" />
+</selector>

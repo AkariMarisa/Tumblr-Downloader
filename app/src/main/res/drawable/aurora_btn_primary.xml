@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Primary pill button: brand gradient + ripple. Radius 100dp renders as a
+     stadium at any height (GradientDrawable scales radii to bounds). -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="?attr/colorControlHighlight">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="0"
+                android:endColor="@color/aurora_gradient_end"
+                android:startColor="@color/aurora_gradient_start"
+                android:type="linear" />
+            <corners android:radius="100dp" />
+        </shape>
+    </item>
+</ripple>
