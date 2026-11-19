@@ -57,4 +57,61 @@
         <item name="cornerSize">50%</item>
     </style>
 
+    <!-- ============ Widgets (referenced from layouts only in Phase 1) ============ -->
+
+    <!-- Glass card. MaterialCardView stroke attrs are strokeColor/strokeWidth. -->
+    <style name="Widget.TumblrDownloader.Aurora.Card" parent="Widget.Material3.CardView.Elevated">
+        <item name="cardBackgroundColor">@color/aurora_glass_fill_card</item>
+        <item name="strokeColor">@color/aurora_glass_stroke</item>
+        <item name="strokeWidth">1dp</item>
+        <item name="cardElevation">0dp</item>
+        <item name="rippleColor">@color/aurora_primary_container</item>
+        <item name="shapeAppearanceOverlay">@style/ShapeAppearanceOverlay.TumblrDownloader.Aurora.Card</item>
+    </style>
+
+    <!-- Primary gradient pill button.
+         backgroundTint=@null keeps MaterialButton from tinting our gradient
+         drawable solid; verify visually when first applied (Phase 1). -->
+    <style name="Widget.TumblrDownloader.Aurora.Button.Primary" parent="Widget.Material3.Button">
+        <item name="android:background">@drawable/aurora_btn_primary</item>
+        <item name="backgroundTint">@null</item>
+        <item name="android:textColor">@color/aurora_on_gradient</item>
+        <item name="strokeWidth">0dp</item>
+        <item name="elevation">0dp</item>
+        <item name="shapeAppearanceOverlay">@style/ShapeAppearanceOverlay.TumblrDownloader.Aurora.Pill</item>
+    </style>
+
+    <!-- Tonal pill button (Pause / Cancel / chips) -->
+    <style name="Widget.TumblrDownloader.Aurora.Button.Tonal" parent="Widget.Material3.Button">
+        <item name="android:background">@drawable/aurora_btn_tonal</item>
+        <item name="backgroundTint">@null</item>
+        <item name="android:textColor">@color/aurora_on_primary_container</item>
+        <item name="strokeWidth">0dp</item>
+        <item name="elevation">0dp</item>
+        <item name="shapeAppearanceOverlay">@style/ShapeAppearanceOverlay.TumblrDownloader.Aurora.Pill</item>
+    </style>
+
+    <!-- Floating pill bottom navigation with active indicator -->
+    <style name="Widget.TumblrDownloader.Aurora.NavigationBar" parent="Widget.Material3.BottomNavigationView">
+        <item name="android:background">@drawable/aurora_nav_pill</item>
+        <item name="itemIconTint">@color/aurora_nav_item_tint</item>
+        <item name="itemTextColor">@color/aurora_nav_item_tint</item>
+        <item name="itemRippleColor">@color/aurora_primary_container</item>
+        <item name="itemActiveIndicatorStyle">@style/Widget.TumblrDownloader.Aurora.NavigationBar.Indicator</item>
+        <item name="labelVisibilityMode">labeled</item>
+    </style>
+
+    <!-- Active indicator: pill behind the selected icon (Material 1.11 uses
+         android:color + shapeAppearance on Widget...BottomNavigationView.ActiveIndicator) -->
+    <style name="Widget.TumblrDownloader.Aurora.NavigationBar.Indicator" parent="Widget.Material3.BottomNavigationView.ActiveIndicator">
+        <item name="android:color">@color/aurora_gradient_mid</item>
+        <item name="shapeAppearance">@style/ShapeAppearanceOverlay.TumblrDownloader.Aurora.Pill</item>
+    </style>
+
+    <!-- Switch (trackStroke* not available in Material 1.11) -->
+    <style name="Widget.TumblrDownloader.Aurora.Switch" parent="Widget.Material3.CompoundButton.Switch">
+        <item name="trackTint">@color/aurora_switch_track_tint</item>
+        <item name="thumbTint">@color/aurora_switch_thumb_tint</item>
+    </style>
+
 </resources>

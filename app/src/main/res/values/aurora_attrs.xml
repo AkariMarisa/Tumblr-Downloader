@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Aurora custom view attributes. Defined once at top level so both
+     styleables can share auroraProgress. -->
+<resources>
+    <attr name="auroraProgress" format="float" />
+    <attr name="auroraTrackColor" format="color" />
+
+    <declare-styleable name="GradientProgressView">
+        <attr name="auroraProgress" />
+        <attr name="auroraTrackColor" />
+    </declare-styleable>
+
+    <declare-styleable name="RingProgressView">
+        <attr name="auroraProgress" />
+    </declare-styleable>
+</resources>

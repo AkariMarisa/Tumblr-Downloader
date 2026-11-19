@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Bottom nav item tint: accent when selected, secondary otherwise. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="@color/aurora_accent" android:state_checked="true" />
+    <item android:color="@color/aurora_secondary" />
+</selector>
